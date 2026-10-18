@@ -5308,6 +5308,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "openstack-keystone-common"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "openstack-keystone-config"
 version = "0.1.0"
 dependencies = [
@@ -5459,6 +5466,7 @@ dependencies = [
  "mockall",
  "nix 0.31.3",
  "openraft",
+ "openstack-keystone-common",
  "openstack-keystone-config",
  "openstack-keystone-local-emergency-store",
  "openstack-keystone-storage-api",
@@ -5879,6 +5887,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "openstack-keystone-common",
  "rmp-serde",
  "serde",
  "serde_bytes",

@@ -41,6 +41,7 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use openstack_keystone_common::StorageUnavailable;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -152,7 +153,7 @@ pub enum StoreError {
     /// read, since that could return revoked credentials, deleted users, or
     /// other stale sensitive data (security invariant 4).
     #[error("storage temporarily unavailable: {0}")]
-    Unavailable(String),
+    Unavailable(#[source] StorageUnavailable),
 
     /// Invalid UTF-8 string.
     #[error("invalid utf-8")]

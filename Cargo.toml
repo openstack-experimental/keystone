@@ -51,6 +51,7 @@ members = [
   "crates/trust-driver-sql",
   "crates/webauthn",
   "crates/cli-manage",
+  "crates/common",
   "tests/api",
   "tests/integration",
   "tests/federation",
@@ -147,6 +148,7 @@ openstack-keystone-domain-config-driver-sql = { version = "0.1", path = "crates/
 openstack-keystone-auth-plugin-core = { version = "0.1.0", path = "crates/auth-plugin-core" }
 openstack-keystone-auth-plugin-identity-driver-raft = { version = "0.1.0", path = "crates/auth-plugin-identity-driver-raft" }
 openstack-keystone-auth-plugin-runtime = { version = "0.1.0", path = "crates/auth-plugin-runtime" }
+openstack-keystone-common = { version = "0.1.0", path = "crates/common" }
 openstack-keystone-storage-api = { version = "0.1.0", path = "crates/storage-api" }
 openstack-keystone-storage-crypto = { version = "0.1.0", path = "crates/storage-crypto" }
 openstack-keystone-storage-crypto-pkcs11 = { version = "0.1.0", path = "crates/storage-crypto-pkcs11" }

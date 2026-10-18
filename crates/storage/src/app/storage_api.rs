@@ -300,26 +300,14 @@ impl StorageApi for Storage {
         // we forward the entire read to the leader – which already has the
         // committed data. The retry loop also handles transient QuorumNotEnough
         // errors that occur during concurrent Raft activity.
-        match self.ensure_linearizable_with_retry().await? {
-            EnsureLinearizableOutcome::Leader => {}
-            EnsureLinearizableOutcome::Forward(lead_id, leader_addr) => {
-                debug!(
-                    leader_id = lead_id,
-                    leader_addr = %leader_addr,
-                    "ensure_linearizable (ReadIndex) returned ForwardToLeader; \
-                     forwarding get_by_key to leader"
-                );
-
-                // The leader has already confirmed linearizability for us;
-                // its response is authoritative. If forwarding itself fails
-                // (leader unreachable, TLS error, timeout), propagate the
-                // error rather than falling back to a non-linearizable local
-                // read (security invariant 4 — no stale reads for sensitive
-                // data).
-                return self
-                    .forwarded_get_by_key(lead_id, leader_addr, key, keyspace)
-                    .await;
-            }
+        if let Some(res) = self
+            .route_read(|lead_id, leader_addr| async move {
+                self.forwarded_get_by_key(lead_id, leader_addr, key, keyspace)
+                    .await
+            })
+            .await?
+        {
+            return Ok(res);
         }
 
         // Leader path: local metadata + data read of any tier.
@@ -405,22 +393,14 @@ impl StorageApi for Storage {
         // the leader via gRPC. The retry loop also handles transient
         // QuorumNotEnough errors that occur during concurrent Raft
         // activity.
-        match self.ensure_linearizable_with_retry().await? {
-            EnsureLinearizableOutcome::Leader => {}
-            EnsureLinearizableOutcome::Forward(lead_id, leader_addr) => {
-                debug!(
-                    leader_id = lead_id,
-                    leader_addr = %leader_addr,
-                    "ensure_linearizable (ReadIndex) returned ForwardToLeader; \
-                     forwarding prefix to leader"
-                );
-
-                // See get_by_key: propagate forward failures rather than
-                // falling back to a non-linearizable local read.
-                return self
-                    .forwarded_prefix_read(lead_id, leader_addr, prefix, keyspace)
-                    .await;
-            }
+        if let Some(res) = self
+            .route_read(|lead_id, leader_addr| async move {
+                self.forwarded_prefix_read(lead_id, leader_addr, prefix, keyspace)
+                    .await
+            })
+            .await?
+        {
+            return Ok(res);
         }
 
         Ok(self
@@ -438,22 +418,14 @@ impl StorageApi for Storage {
         // ReadIndex returns ForwardToLeader, so we forward the prefix-index
         // scan to the leader via gRPC. The retry loop also handles transient
         // QuorumNotEnough errors that occur during concurrent Raft activity.
-        match self.ensure_linearizable_with_retry().await? {
-            EnsureLinearizableOutcome::Leader => {}
-            EnsureLinearizableOutcome::Forward(lead_id, leader_addr) => {
-                debug!(
-                    leader_id = lead_id,
-                    leader_addr = %leader_addr,
-                    "ensure_linearizable (ReadIndex) returned ForwardToLeader \
-                     for prefix_index; forwarding to leader"
-                );
-
-                // See get_by_key: propagate forward failures rather than
-                // falling back to a non-linearizable local read.
-                return self
-                    .forwarded_prefix_index(lead_id, leader_addr, prefix)
-                    .await;
-            }
+        if let Some(res) = self
+            .route_read(|lead_id, leader_addr| async move {
+                self.forwarded_prefix_index(lead_id, leader_addr, prefix)
+                    .await
+            })
+            .await?
+        {
+            return Ok(res);
         }
 
         // Leader path: local index scan.

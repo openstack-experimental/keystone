@@ -44,6 +44,7 @@ use tonic::service::Routes;
 use tonic::transport::Channel;
 use tracing::debug;
 
+use openstack_keystone_common::StorageUnavailable;
 use openstack_keystone_config::ConfigManager;
 
 use crate::config::{DistributedStorageConfiguration, LocalReadsMode, RaftTlsConfiguration};
@@ -172,6 +173,49 @@ impl Storage {
     /// 503 — and MUST NOT substitute a non-linearizable local read: this node
     /// cannot tell whether its local state machine has applied the latest
     /// committed entries.
+    /// Resolve read routing, forwarding to the leader when this node is a
+    /// follower.
+    ///
+    /// Returns `Ok(Some(_))` with the forwarded result, or `Ok(None)` when
+    /// this node is the leader and must read locally. A forward that fails
+    /// with `Unavailable` (stale leader hint, e.g. the old leader was just
+    /// killed) re-runs the ReadIndex check to pick up the new leader, within
+    /// the same retry budget. Every attempt is linearizable; there is never a
+    /// local fallback.
+    pub(crate) async fn route_read<T, F, Fut>(&self, forward: F) -> Result<Option<T>, ApiStoreError>
+    where
+        F: Fn(NodeId, String) -> Fut,
+        Fut: std::future::Future<Output = Result<T, ApiStoreError>>,
+    {
+        let mut last_err = None;
+        for attempt in 0..self.ensure_linearizable_retries.max(1) {
+            match self.ensure_linearizable_with_retry().await? {
+                EnsureLinearizableOutcome::Leader => return Ok(None),
+                EnsureLinearizableOutcome::Forward(id, addr) => match forward(id, addr).await {
+                    Ok(v) => return Ok(Some(v)),
+                    Err(ApiStoreError::Unavailable(msg)) => {
+                        debug!(
+                            attempt = attempt + 1,
+                            leader_id = id,
+                            "forward to leader failed ({msg}); re-resolving leader"
+                        );
+                        last_err = Some(ApiStoreError::Unavailable(msg));
+                        TypeConfig::sleep(Duration::from_millis(
+                            self.ensure_linearizable_retry_delay_ms,
+                        ))
+                        .await;
+                    }
+                    Err(e) => return Err(e),
+                },
+            }
+        }
+        Err(last_err.unwrap_or_else(|| {
+            ApiStoreError::Unavailable(StorageUnavailable::new(
+                "leader forward retry budget exhausted",
+            ))
+        }))
+    }
+
     #[tracing::instrument(name = "storage.ensure_linearizable", level = "debug", skip_all)]
     async fn ensure_linearizable_with_retry(
         &self,
@@ -224,11 +268,13 @@ impl Storage {
         // security invariant 4, refuse the read rather than serve a
         // possibly-stale local copy — the caller must retry/fail the
         // request, not silently read local (possibly unreplicated) state.
-        Err(ApiStoreError::Unavailable(format!(
-            "ensure_linearizable (ReadIndex) did not resolve after {} attempts \
+        Err(ApiStoreError::Unavailable(StorageUnavailable::new(
+            format!(
+                "ensure_linearizable (ReadIndex) did not resolve after {} attempts \
              ({} ms budget); refusing non-linearizable local read",
-            self.ensure_linearizable_retries,
-            self.ensure_linearizable_retries as u64 * self.ensure_linearizable_retry_delay_ms,
+                self.ensure_linearizable_retries,
+                self.ensure_linearizable_retries as u64 * self.ensure_linearizable_retry_delay_ms,
+            ),
         )))
     }
 }

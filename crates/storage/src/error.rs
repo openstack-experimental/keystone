@@ -20,6 +20,7 @@
 //! consumers do not depend on Raft, Fjall or gRPC types.
 //use std::io;
 
+use openstack_keystone_common::StorageUnavailable;
 use openstack_keystone_storage_crypto::CryptoError;
 use thiserror::Error;
 
@@ -208,7 +209,7 @@ pub enum StoreError {
     /// (Raft `ReadIndex`/forwarding failed or was exhausted). Callers MUST
     /// NOT substitute a non-linearizable local read (security invariant 4).
     #[error("storage temporarily unavailable: {0}")]
-    Unavailable(String),
+    Unavailable(#[source] StorageUnavailable),
 
     /// URI error.
     #[error(transparent)]
@@ -267,7 +268,7 @@ impl From<StoreError> for crate::ApiStoreError {
                     "write rate exceeded at version {version}; DEK rotation required"
                 ),
             },
-            StoreError::Unavailable(msg) => Self::Unavailable(msg),
+            StoreError::Unavailable(m) => Self::Unavailable(m),
             _ => Self::Other(Box::new(e)),
         }
     }
