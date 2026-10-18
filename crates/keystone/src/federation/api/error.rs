@@ -19,6 +19,23 @@ use crate::api::error::KeystoneApiError;
 
 #[derive(Error, Debug)]
 pub enum OidcError {
+    /// The token is not a well-formed JWT.
+    #[error("malformed token: {0}")]
+    MalformedToken(String),
+
+    /// The token has no usable `iss` claim.
+    #[error("token has no `iss` claim")]
+    MissingIssuer,
+
+    /// The token issuer is not a trusted issuer. The issuer is not carried here
+    /// on purpose: it is attacker-controlled and must not end up in the logs.
+    #[error("token issuer is not trusted")]
+    UntrustedIssuer,
+
+    /// No audience was given to verify an external JWT against.
+    #[error("at least one audience is required to verify an external JWT")]
+    AudienceRequired,
+
     /// OIDC Discovery error.
     #[error("discovery error for {url}: {msg}")]
     Discovery {
@@ -214,6 +231,18 @@ impl From<OidcError> for KeystoneApiError {
                 KeystoneApiError::BadRequest(format!(
                     "ID token iat ({iat}) is in the future (current: {now})"
                 ))
+            }
+            OidcError::MalformedToken(msg) => {
+                KeystoneApiError::BadRequest(format!("Malformed token: {msg}"))
+            }
+            OidcError::MissingIssuer => {
+                KeystoneApiError::BadRequest("Token has no `iss` claim.".to_string())
+            }
+            OidcError::UntrustedIssuer => {
+                KeystoneApiError::unauthorized(value, Some("untrusted issuer"))
+            }
+            e @ OidcError::AudienceRequired => {
+                KeystoneApiError::InternalError(format!("Error in OIDC logic: {e}"))
             }
         }
     }
