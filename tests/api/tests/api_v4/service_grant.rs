@@ -77,6 +77,7 @@ async fn fixture() -> Result<Fixture> {
     fixture_with_svid(None).await
 }
 
+
 /// SVID of the harness SPIRE entry the redeeming test owns, and one that no
 /// client is ever registered for (`tools/start-spire.sh`).
 const REDEEM_SVID: &str = "spiffe://example.org/service/it-redeem/host/h1";
