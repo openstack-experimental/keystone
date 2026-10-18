@@ -133,6 +133,7 @@ impl StorageServiceImpl {
     /// read that is no longer guaranteed linearizable (e.g. a competing
     /// leader committed writes this node hasn't seen), silently breaking
     /// read-your-writes for the forwarded caller.
+    #[tracing::instrument(name = "storage.leader_ensure_linearizable", level = "debug", skip_all)]
     async fn ensure_leader_linearizable(&self) -> Result<(), Status> {
         self.raft_node
             .ensure_linearizable(ReadPolicy::ReadIndex)

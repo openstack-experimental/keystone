@@ -113,6 +113,7 @@ impl Storage {
     /// Forward a `get_by_key` read to the leader via gRPC.
     /// Leader decrypts and returns plaintext; follower wraps it in
     /// StoreDataEnvelope.
+    #[tracing::instrument(name = "storage.forwarded_get_by_key", level = "debug", skip_all)]
     pub(super) async fn forwarded_get_by_key(
         &self,
         leader_id: u64,
@@ -155,6 +156,7 @@ impl Storage {
     }
 
     /// Forward a `prefix_index` scan to the leader via gRPC.
+    #[tracing::instrument(name = "storage.forwarded_prefix_index", level = "debug", skip_all)]
     pub(super) async fn forwarded_prefix_index(
         &self,
         leader_id: u64,
@@ -235,6 +237,7 @@ impl Storage {
     ///
     /// # Returns
     /// A `Result` containing the `Channel`, or a `StoreError`.
+    #[tracing::instrument(name = "storage.get_or_create_channel", level = "debug", skip_all)]
     async fn get_or_create_channel(
         &self,
         target: u64,

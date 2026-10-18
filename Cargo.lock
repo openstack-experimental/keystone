@@ -5116,6 +5116,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "dashmap",
  "inventory",
  "openstack-keystone-core",
  "openstack-keystone-core-types",

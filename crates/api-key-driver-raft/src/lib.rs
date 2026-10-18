@@ -17,6 +17,9 @@ use async_trait::async_trait;
 use chrono::Utc;
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use dashmap::DashMap;
 
 use openstack_keystone_core::api_key::backend::ApiKeyBackend;
 use openstack_keystone_core::api_key::error::ApiKeyProviderError;
@@ -34,8 +37,26 @@ use openstack_keystone_distributed_storage::{
 /// authentication hot path. The public `client_id` UUID used by
 /// administrative CRUD is resolved through a secondary index whose key
 /// embeds the target `lookup_hash` as a suffix.
+///
+/// The `client_id` to `lookup_hash` mapping is immutable for the lifetime of a
+/// record, so it is cached for [`LOOKUP_HASH_CACHE_TTL`] to avoid a second
+/// linearizable `prefix_index` read on every [`get_by_client_id`] call. The
+/// record itself is always read linearizably, so a stale mapping can never
+/// serve outdated key state: when the record is gone the entry is evicted and
+/// the index is consulted again.
+///
+/// [`get_by_client_id`]: ApiKeyBackend::get_by_client_id
 #[derive(Default)]
-pub struct RaftBackend {}
+pub struct RaftBackend {
+    /// `(domain_id, client_id)` to `(lookup_hash, cached_at)`.
+    lookup_hash_cache: DashMap<(String, String), (String, Instant)>,
+}
+
+/// How long a resolved `client_id` to `lookup_hash` mapping is trusted.
+const LOOKUP_HASH_CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// Upper bound of cached mappings; the cache is dropped when it is reached.
+const LOOKUP_HASH_CACHE_MAX: usize = 4096;
 
 impl RaftBackend {
     /// Primary storage key: `api_client:v1:<domain_id>:<lookup_hash>`.
@@ -88,6 +109,11 @@ impl RaftBackend {
 
     /// Resolve `client_id` to its current `lookup_hash` via the secondary
     /// index.
+    #[tracing::instrument(
+        name = "driver.raft.api_key.resolve_lookup_hash",
+        level = "debug",
+        skip_all
+    )]
     async fn resolve_lookup_hash(
         &self,
         storage: &dyn StorageApi,
@@ -141,6 +167,11 @@ impl RaftBackend {
         Ok(obj)
     }
 
+    #[tracing::instrument(
+        name = "driver.raft.api_key.get_by_lookup_hash_impl",
+        level = "debug",
+        skip_all
+    )]
     async fn get_by_lookup_hash_impl(
         &self,
         storage: &dyn StorageApi,
@@ -165,12 +196,34 @@ impl RaftBackend {
         domain_id: &str,
         client_id: &str,
     ) -> Result<Option<ApiClientResource>, StoreError> {
+        let cache_key = (domain_id.to_string(), client_id.to_string());
+        let cached = self
+            .lookup_hash_cache
+            .get(&cache_key)
+            .filter(|e| e.1.elapsed() < LOOKUP_HASH_CACHE_TTL)
+            .map(|e| e.0.clone());
+        if let Some(lookup_hash) = cached {
+            if let Some(res) = self
+                .get_by_lookup_hash_impl(storage, domain_id, &lookup_hash)
+                .await?
+            {
+                return Ok(Some(res));
+            }
+            // Record is gone (purged): the mapping is stale.
+            self.lookup_hash_cache.remove(&cache_key);
+        }
+
         let Some(lookup_hash) = self
             .resolve_lookup_hash(storage, domain_id, client_id)
             .await?
         else {
             return Ok(None);
         };
+        if self.lookup_hash_cache.len() >= LOOKUP_HASH_CACHE_MAX {
+            self.lookup_hash_cache.clear();
+        }
+        self.lookup_hash_cache
+            .insert(cache_key, (lookup_hash.clone(), Instant::now()));
         self.get_by_lookup_hash_impl(storage, domain_id, &lookup_hash)
             .await
     }
@@ -262,6 +315,8 @@ impl RaftBackend {
             )),
         ];
         storage.transaction(mutations).await?;
+        self.lookup_hash_cache
+            .remove(&(domain_id.to_string(), client_id.to_string()));
         Ok(())
     }
 
@@ -664,6 +719,38 @@ mod tests {
             .await
             .unwrap();
         assert!(missing.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_by_client_id_cache_evicted_on_purge() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+
+        backend
+            .create_impl(&storage, make_create("client-1", "domain-1", "hash-1"))
+            .await
+            .unwrap();
+        assert!(
+            backend
+                .get_by_client_id_impl(&storage, "domain-1", "client-1")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(backend.lookup_hash_cache.len(), 1);
+
+        backend
+            .purge_impl(&storage, "domain-1", "client-1")
+            .await
+            .unwrap();
+        assert!(backend.lookup_hash_cache.is_empty());
+        assert!(
+            backend
+                .get_by_client_id_impl(&storage, "domain-1", "client-1")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

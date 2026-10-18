@@ -172,6 +172,7 @@ impl Storage {
     /// 503 — and MUST NOT substitute a non-linearizable local read: this node
     /// cannot tell whether its local state machine has applied the latest
     /// committed entries.
+    #[tracing::instrument(name = "storage.ensure_linearizable", level = "debug", skip_all)]
     async fn ensure_linearizable_with_retry(
         &self,
     ) -> Result<EnsureLinearizableOutcome, ApiStoreError> {
