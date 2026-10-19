@@ -47,6 +47,7 @@ mis = "mis"
 COSE = "COSE"
 BA = "BA"
 UE = "UE"
+TYP = "TYP"
 
 [type.lock]
 extend-glob = []

@@ -19,6 +19,7 @@
 
 pub mod backend;
 pub mod crypto;
+pub mod dpop;
 pub mod error;
 pub mod id_token;
 pub mod pkce;
