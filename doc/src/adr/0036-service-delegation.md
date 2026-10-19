@@ -2,13 +2,11 @@
 
 **Date:** 2026-09-10
 
-**Updated:** 2026-10-15
+**Updated:** 2026-10-13
 
 ## Status
 
-Proposed. Phase 1 (§11) is implemented; see
-[Service grants](../admin/features/service-grants.md) for operation and the
-phase 1 implementation notes below for where it differs from this text.
+Proposed.
 
 Supersedes the trust mechanism (`/v3/OS-TRUST`, `AuthenticationContext::Trust`,
 `ScopeInfo::TrustProject`, `trust-driver-sql`) once the phases in §11 are
@@ -325,13 +323,10 @@ client lives in the operator's infrastructure domain. Therefore:
   is permitted **only** when `client.delegation.cross_domain == true`. Every
   other client authentication path at `/v4/oauth2/{domain_id}/token` keeps
   today's same-domain-only rule.
-- The minted token is signed by the key of the **target project's** domain and
-  carries `aud = openstack-apis` with `iss` naming that domain (ADR 0026 §5
-  domain key isolation: isolation rests on `iss` + the issuer's own JWKS, so a
-  domain's key only vouches for that domain's projects). The grantor may belong
-  to another domain, exactly as a user may hold roles on projects of other
-  domains; the token's user claims name the grantor's own domain. The grantee's
-  own domain never appears in the token; it is a registry fact only.
+- The minted token is still signed by the **grantor's** domain key and carries
+  `aud = openstack-apis` with `iss` naming the grantor's domain (ADR 0026 §5
+  domain key isolation: isolation rests on `iss` + the issuer's own JWKS). The
+  grantee's own domain never appears in the token; it is a registry fact only.
 
 ### 4. Service grant resource
 
@@ -341,7 +336,7 @@ client lives in the operator's infrastructure domain. Therefore:
 pub struct ServiceGrant {
     pub id: String,
     pub version: u64,                  // bumped on every change; compared by the resolver (§7)
-    pub domain_id: String,             // target project's domain; the token endpoint the grant is redeemed at
+    pub domain_id: String,             // grantor's domain; the token endpoint the grant is redeemed at
     pub grantor_user_id: String,
     pub grantee: Grantee,              // v1: Client { client_id, client_domain_id } (§3.2); later: User { user_id } (§9)
     pub target: GrantTarget,           // v1: Project { project_id }; the I2 delegation boundary
@@ -514,8 +509,8 @@ The endpoint checks, in order:
 3. `grant.domain_id == {domain_id}` from the request path — a grant is only ever
    redeemable at its own domain's token endpoint.
 4. Grant exists, `enabled`, not expired, `grantee` is this client, and either
-   the client's domain equals both `grant.domain_id` and the grantor's domain,
-   or `client.delegation.cross_domain` (§3.2).
+   `grant.grantee.client_domain_id == grant.domain_id` or
+   `client.delegation.cross_domain` (§3.2).
 5. Grantor is enabled and the grantor's domain is enabled.
 6. Effective roles =
    `grant.role_ids ∩ grantor's live effective roles on target ∩ roles narrowing`.
@@ -726,9 +721,15 @@ not grow two answers to any of them:
   parameter of `verify_openstack_access_token`). #1018 still breaks on a fixed
   audience because an external token's `aud` is never `openstack-apis`; this ADR
   needs §7.1 narrowing (`openstack-apis:<service type>`) accepted when §6.3
-  re-exchanges such a token as `subject_token`. One refactor to a
-  per-subject-kind validation profile (expected issuers, accepted audiences,
-  required claims) serves both; doing it twice guarantees divergence.
+  re-exchanges such a token as `subject_token`. A per-subject-kind profile
+  captures expected issuers, accepted audiences, required claims, and
+  time-limits so both paths can use one verifier. The shared profile API and
+  Keystone-native compatibility profile are now implemented in
+  `crates/core/src/oauth2_client/verify.rs`; the external-assertion profile
+  enforces the configured audience, required claims, 300-second maximum age
+  and lifetime, and 60-second clock skew. Endpoint dispatch, external issuer
+  key discovery, replay-cache checks, and mapping-engine integration remain
+  separate work.
 - **Confused-deputy replay gets one rule.** #1018's concern (an external token
   minted for someone else replayed at Keystone) is the same one §5.1 answers for
   JWT-SVID client assertions: pin `aud` to the fixed Keystone token-endpoint
