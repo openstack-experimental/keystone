@@ -20,6 +20,8 @@
 pub mod backend;
 pub mod crypto;
 pub mod dpop;
+pub mod dpop_nonce;
+pub mod dpop_replay;
 pub mod error;
 pub mod id_token;
 pub mod pkce;

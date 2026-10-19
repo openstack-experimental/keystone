@@ -124,9 +124,10 @@ pub struct DpopProofContext<'a> {
     /// Access token presented with the request. When set, the proof must carry
     /// the matching `ath`; when `None` (token endpoint) `ath` is not allowed.
     pub access_token: Option<&'a str>,
-    /// Nonce the server demands. `None` means no nonce is required (a nonce
-    /// present in the proof is then ignored).
-    pub expected_nonce: Option<&'a str>,
+    /// Nonces the server accepts (see `DpopNonceGenerator::accepted`). `None`
+    /// means no nonce is required (a nonce present in the proof is then
+    /// ignored); `Some` requires the proof to carry one of them.
+    pub accepted_nonces: Option<&'a [String]>,
     /// Accepted distance of `iat` from `now`, in both directions.
     pub max_skew_secs: u64,
     /// HTTP method of the request (`htm`).
@@ -487,10 +488,15 @@ pub fn verify_dpop_proof(
         (None, None) => {}
     }
 
-    if let Some(expected) = ctx.expected_nonce {
-        match claims.nonce.as_deref() {
-            Some(nonce) if bool::from(expected.as_bytes().ct_eq(nonce.as_bytes())) => {}
-            _ => return Err(DpopProofError::NonceRequired),
+    if let Some(accepted) = ctx.accepted_nonces {
+        // Nonces are fixed-length server values; `ct_eq` of unequal lengths
+        // is false, so an absent nonce never matches.
+        let nonce = claims.nonce.as_deref().unwrap_or_default().as_bytes();
+        if !accepted
+            .iter()
+            .any(|expected| bool::from(expected.as_bytes().ct_eq(nonce)))
+        {
+            return Err(DpopProofError::NonceRequired);
         }
     }
 
@@ -637,7 +643,7 @@ iInRUT3PWlw/HKU=
             method: "POST",
             uri,
             access_token: None,
-            expected_nonce: None,
+            accepted_nonces: None,
             now: NOW,
             max_skew_secs: 60,
         }
@@ -830,7 +836,8 @@ iInRUT3PWlw/HKU=
     fn test_nonce() {
         let uri = token_url();
         let mut context = ctx(&uri);
-        context.expected_nonce = Some("n-1");
+        let accepted = ["n-1".to_string(), "n-0".to_string()];
+        context.accepted_nonces = Some(&accepted);
 
         let without = es256_proof(es256_header(), claims());
         assert_eq!(
@@ -846,10 +853,12 @@ iInRUT3PWlw/HKU=
             DpopProofError::NonceRequired
         );
 
-        let mut c = claims();
-        c["nonce"] = json!("n-1");
-        let good = es256_proof(es256_header(), c);
-        assert!(verify_dpop_proof(&good, &context).is_ok());
+        for nonce in ["n-1", "n-0"] {
+            let mut c = claims();
+            c["nonce"] = json!(nonce);
+            let good = es256_proof(es256_header(), c);
+            assert!(verify_dpop_proof(&good, &context).is_ok());
+        }
     }
 
     #[test]
