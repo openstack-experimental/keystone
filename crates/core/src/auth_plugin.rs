@@ -180,6 +180,15 @@ pub(crate) async fn emit_wasm_plugin_audit(
     dispatcher.dispatch_critical(event).await.map_err(|_| ())
 }
 
+/// Per-decision fields of a `route`-mode audit record, see
+/// [`emit_wasm_route_audit`].
+pub(crate) struct RouteAudit<'a> {
+    pub decision: &'a str,
+    pub outcome: Outcome,
+    pub target_method: Option<&'a str>,
+    pub reason: Option<OutcomeReason>,
+}
+
 /// Emit a mandatory CADF audit record for a `route`-mode invocation (ADR
 /// 0025 §4 "Guest Contract - `route` Mode", "Audit"), distinct from the
 /// eventually-dispatched method's own audit trail, so an operator
@@ -196,19 +205,24 @@ pub(crate) async fn emit_wasm_route_audit(
     correlation_id: Option<&str>,
     plugin_name: &str,
     requested_methods: &[String],
-    decision: &str,
-    outcome: Outcome,
-    target_method: Option<&str>,
-    reason: Option<OutcomeReason>,
+    audit: RouteAudit<'_>,
 ) -> Result<(), ()> {
     tracing::info!(
         plugin = plugin_name,
-        decision,
+        decision = audit.decision,
         requested_methods = ?requested_methods,
-        target_method = ?target_method,
+        target_method = ?audit.target_method,
         "wasm route plugin decision"
     );
-    emit_wasm_plugin_audit(state, correlation_id, plugin_name, "route", outcome, reason).await
+    emit_wasm_plugin_audit(
+        state,
+        correlation_id,
+        plugin_name,
+        "route",
+        audit.outcome,
+        audit.reason,
+    )
+    .await
 }
 
 /// Why a `authenticate` invocation was rejected before ever reaching the

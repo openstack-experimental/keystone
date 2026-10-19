@@ -34,7 +34,7 @@ async fn test_create() -> Result<()> {
         &tc,
         &user_id,
         ApplicationCredentialCreateBuilder::default()
-            .name(&format!("test-cred-{}", uuid::Uuid::new_v4().simple()))
+            .name(format!("test-cred-{}", uuid::Uuid::new_v4().simple()))
             .roles(vec![])
             .build()?,
     )
@@ -63,7 +63,7 @@ async fn test_create_with_description() -> Result<()> {
         &tc,
         &user_id,
         ApplicationCredentialCreateBuilder::default()
-            .name(&format!("test-cred-{}", uuid::Uuid::new_v4().simple()))
+            .name(format!("test-cred-{}", uuid::Uuid::new_v4().simple()))
             .description("my description")
             .roles(vec![])
             .build()?,

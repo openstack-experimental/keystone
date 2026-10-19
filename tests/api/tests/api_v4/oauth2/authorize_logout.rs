@@ -24,6 +24,7 @@ use test_api::oauth2_browser::*;
 
 const SSO_COOKIE: &str = "keystone_oauth2_sso";
 
+#[allow(dead_code)]
 struct Fixture {
     domain_id: String,
     client: BrowserClient,

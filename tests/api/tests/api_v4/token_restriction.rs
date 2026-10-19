@@ -56,7 +56,6 @@
 use std::sync::Arc;
 
 use eyre::Result;
-use reqwest::StatusCode;
 
 use openstack_keystone_api_types::v4::token_restriction::{
     TokenRestrictionCreate, TokenRestrictionUpdate,

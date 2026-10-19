@@ -16,7 +16,7 @@
 //! each with allow, policy-deny and unauthenticated cases.
 
 use eyre::{Result, eyre};
-use reqwest::{Client, RequestBuilder, StatusCode};
+use reqwest::{RequestBuilder, StatusCode};
 use serde_json::{Value, json};
 use tracing_test::traced_test;
 use uuid::Uuid;

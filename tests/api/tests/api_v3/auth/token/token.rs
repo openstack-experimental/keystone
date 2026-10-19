@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Live token rescoping coverage for issue #994.
-
 use std::sync::Arc;
 
 use eyre::{OptionExt, Result};
@@ -68,13 +67,13 @@ async fn test_rescope_between_authorized_projects() -> Result<()> {
             .ok_or_eyre("the bootstrap member role must exist")?;
         add_project_grant(&admin, &project_b.id, &target.user.id, &member_role_id).await?;
 
-        let mut by_id = target.session.as_ref().clone();
+        let by_id = target.session.as_ref().clone();
         by_id
             .authorize(Some(project_scope_id(&project_b.id)), false, false)
             .await?;
         let project_by_id = current_sdk_project_id(&by_id)?;
 
-        let mut by_name = target.session.as_ref().clone();
+        let by_name = target.session.as_ref().clone();
         by_name
             .authorize(
                 Some(project_scope_name(&project_b.name, &project_b.domain_id)),

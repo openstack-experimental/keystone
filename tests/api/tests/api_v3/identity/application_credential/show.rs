@@ -35,7 +35,7 @@ async fn test_show() -> Result<()> {
         &tc,
         &user_id,
         ApplicationCredentialCreateBuilder::default()
-            .name(&format!("test-cred-{}", uuid::Uuid::new_v4().simple()))
+            .name(format!("test-cred-{}", uuid::Uuid::new_v4().simple()))
             .roles(vec![])
             .build()?,
     )

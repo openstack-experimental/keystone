@@ -44,7 +44,6 @@
 use std::sync::Arc;
 
 use eyre::Result;
-use reqwest::StatusCode;
 use secrecy::SecretString;
 use uuid::Uuid;
 

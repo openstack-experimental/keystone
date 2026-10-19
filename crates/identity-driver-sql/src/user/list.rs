@@ -270,11 +270,9 @@ pub async fn list(
         user_opts.into_iter().zip(
             locals.into_iter().zip(
                 local_users_passwords.into_iter().zip(
-                    nonlocals.into_iter().zip(
-                        federated_users
-                            .context("fetching federated users data")?
-                            .into_iter(),
-                    ),
+                    nonlocals
+                        .into_iter()
+                        .zip(federated_users.context("fetching federated users data")?),
                 ),
             ),
         ),
@@ -295,7 +293,7 @@ pub async fn list(
         if let Some(local) = l {
             user_builder.merge_local_user_data(&local);
             if let Some(pass) = p {
-                user_builder.merge_passwords_data(pass.into_iter());
+                user_builder.merge_passwords_data(pass);
             }
         } else if let Some(nonlocal) = n {
             user_builder.merge_nonlocal_user_data(&nonlocal);

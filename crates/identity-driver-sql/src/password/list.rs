@@ -21,7 +21,7 @@ use openstack_keystone_core::identity::IdentityProviderError;
 
 use crate::entity::{password, prelude::Password as DbPassword};
 
-/// Lists passwords of the local user
+/// Lists passwords of the local user.
 ///
 /// # Parameters
 /// - `db`: The database connection.

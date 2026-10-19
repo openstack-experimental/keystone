@@ -234,7 +234,7 @@ impl FernetTokenProvider {
     where
         I: IntoIterator<Item = String>,
     {
-        let me: HashSet<String> = HashSet::from_iter(methods.into_iter());
+        let me: HashSet<String> = HashSet::from_iter(methods);
         let res = self
             .auth_map
             .iter()

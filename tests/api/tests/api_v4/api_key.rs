@@ -45,7 +45,6 @@ use std::sync::Arc;
 
 use chrono::{Duration, Utc};
 use eyre::Result;
-use reqwest::StatusCode;
 use secrecy::ExposeSecret;
 use uuid::Uuid;
 

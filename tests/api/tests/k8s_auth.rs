@@ -28,7 +28,10 @@ use tokio::fs;
 use uuid::Uuid;
 
 use openstack_sdk::config::CloudConfig;
-use openstack_sdk::{AsyncOpenStack, api::RawQueryAsync};
+use openstack_sdk::{
+    AsyncOpenStack,
+    api::{QueryAsync, raw},
+};
 
 use openstack_keystone_api_types::k8s_auth::{K8sAuthRequest, instance::*};
 use openstack_keystone_api_types::v3::auth::token::{Token, TokenResponse};
@@ -49,12 +52,12 @@ async fn k8s_auth<I: AsRef<str>>(
     instance_id: I,
     obj: K8sAuthRequest,
 ) -> Result<(Token, SecretString)> {
-    let rsp: http::Response<bytes::Bytes> = K8sAuthenticationRequestBuilder::default()
+    let rsp: http::Response<bytes::Bytes> = raw(K8sAuthenticationRequestBuilder::default()
         .instance_id(instance_id.as_ref())
         .auth(obj)
-        .build()?
-        .raw_query_async(client.as_ref())
-        .await?;
+        .build()?)
+    .query_async(client.as_ref())
+    .await?;
 
     if rsp.status() != http::StatusCode::OK {
         return Err(eyre!(
@@ -218,15 +221,15 @@ async fn test_k8s_auth_invalid_jwt_format() -> Result<()> {
 
     // Test with invalid JWT format - should fail with
     // unauthorized/bad_request/forbidden
-    let res = K8sAuthenticationRequestBuilder::default()
+    let res = raw(K8sAuthenticationRequestBuilder::default()
         .instance_id(&instance.id)
         .auth(K8sAuthRequest {
             jwt: "not-a-jwt-token-format".into(),
             rule_name: None,
         })
-        .build()?
-        .raw_query_async(test_client.as_ref())
-        .await;
+        .build()?)
+    .query_async(test_client.as_ref())
+    .await;
 
     // The SDK may return the response or an error for non-2xx status codes;
     // in either case we expect the authentication to be rejected.
@@ -471,15 +474,15 @@ async fn test_k8s_auth_cannot_rescope_to_other_project() -> Result<()> {
     .await?;
 
     let k8s_token = read_pod_k8s_token().await?;
-    let res = K8sAuthenticationRequestBuilder::default()
+    let res = raw(K8sAuthenticationRequestBuilder::default()
         .instance_id(&instance_id)
         .auth(K8sAuthRequest {
             jwt: k8s_token.into(),
             rule_name: None,
         })
-        .build()?
-        .raw_query_async(test_client.as_ref())
-        .await;
+        .build()?)
+    .query_async(test_client.as_ref())
+    .await;
 
     // The SDK converts non-2xx to an error; in either case the disabled
     // instance must be rejected.

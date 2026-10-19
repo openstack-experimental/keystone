@@ -15,7 +15,7 @@
 //! (application credential) for an OAuth2 access token.
 
 use eyre::{Result, eyre};
-use reqwest::{Client, StatusCode};
+use reqwest::StatusCode;
 use serde_json::{Value, json};
 use tracing_test::traced_test;
 

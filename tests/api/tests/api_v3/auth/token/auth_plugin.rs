@@ -45,7 +45,10 @@ use openstack_keystone_api_types::v4::mapping::ruleset::{
     MatchCondition, MatchCriteria,
 };
 use openstack_sdk::config::CloudConfig;
-use openstack_sdk::{AsyncOpenStack, api::RawQueryAsync};
+use openstack_sdk::{
+    AsyncOpenStack,
+    api::{QueryAsync, raw},
+};
 
 use test_api::asserts::assert_unauthorized;
 use test_api::auth::auth_plugin::*;
@@ -303,7 +306,10 @@ async fn test_revoke_all_requires_system_scope() -> Result<()> {
     let ep = AuthPluginRevokeAllRequest {
         plugin_name: "hacked_appcred_handler".into(),
     };
-    let res = ep.raw_query_async_ll(&test_client, Some(false)).await?;
+    let res = raw(ep)
+        .skip_error_check(true)
+        .query_async(&test_client)
+        .await?;
 
     assert_eq!(
         res.status().as_u16(),

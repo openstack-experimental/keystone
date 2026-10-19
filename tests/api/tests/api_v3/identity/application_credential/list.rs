@@ -9,7 +9,7 @@ use test_api::identity::application_credential::{
 use tracing_test::traced_test;
 
 pub async fn get_project_scoped_client() -> Result<Arc<AsyncOpenStack>> {
-    let mut tc = AsyncOpenStack::new(&CloudConfig::from_env()?).await?;
+    let tc = AsyncOpenStack::new(&CloudConfig::from_env()?).await?;
 
     tc.authorize(
         Some(openstack_sdk::auth::authtoken::AuthTokenScope::Project(
@@ -45,7 +45,7 @@ async fn test_list() -> Result<()> {
         &tc,
         &user_id,
         ApplicationCredentialCreateBuilder::default()
-            .name(&format!("test-cred-{}", uuid::Uuid::new_v4().simple()))
+            .name(format!("test-cred-{}", uuid::Uuid::new_v4().simple()))
             .roles(vec![])
             .build()?,
     )
@@ -55,7 +55,7 @@ async fn test_list() -> Result<()> {
         &tc,
         &user_id,
         ApplicationCredentialCreateBuilder::default()
-            .name(&format!("test-cred-{}", uuid::Uuid::new_v4().simple()))
+            .name(format!("test-cred-{}", uuid::Uuid::new_v4().simple()))
             .roles(vec![])
             .build()?,
     )

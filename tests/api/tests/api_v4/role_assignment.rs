@@ -53,7 +53,6 @@
 use std::sync::Arc;
 
 use eyre::{OptionExt, Result};
-use reqwest::StatusCode;
 
 use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 

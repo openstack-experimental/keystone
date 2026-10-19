@@ -84,8 +84,8 @@ pub struct DistributedStorageConfiguration {
     /// The retry budget (`ensure_linearizable_retries` *
     /// `ensure_linearizable_retry_delay_ms`) should comfortably exceed the
     /// Raft election timeout (`raft_election_timeout_min_ms`/`_max_ms`,
-    /// default 1.5-3s) so a leader election in progress does not routinely exhaust
-    /// the budget.
+    /// default 1.5-3s) so a leader election in progress does not routinely
+    /// exhaust the budget.
     #[serde(default = "default_ensure_linearizable_retries")]
     pub ensure_linearizable_retries: u32,
 

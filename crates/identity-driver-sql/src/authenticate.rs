@@ -185,7 +185,7 @@ pub async fn authenticate_by_password(
 ///
 /// Checks whether the account is locked temporarily due to the failed login
 /// attempts as described by
-/// [ADR-10](https://openstack-experimental.github.io/keystone/adr/0010-pci-dss-failed-auth-protection.html)
+/// [ADR-10](https://openstack-experimental.github.io/keystone/adr/0010-pci-dss-failed-auth-protection.html).
 ///
 /// # Parameters
 /// - `config`: The system configuration.

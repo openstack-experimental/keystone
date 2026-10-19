@@ -25,7 +25,7 @@ use axum::extract::{FromRef, FromRequestParts, Path};
 use axum::http::request::Parts;
 use governor::clock::Clock as _;
 use ipnet::IpNet;
-use tracing::{debug, warn};
+use tracing::warn;
 
 use openstack_keystone_core_types::api_key::ApiClientResource;
 use openstack_keystone_core_types::auth::AuthenticationError;

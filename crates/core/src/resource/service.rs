@@ -245,7 +245,7 @@ impl ResourceService {
             .filter(|x| x.id != domain_id)
             .map(|x| (depth(&x.id), x.id.as_str()))
             .collect();
-        ordered.sort_by(|a, b| b.0.cmp(&a.0));
+        ordered.sort_by_key(|a| std::cmp::Reverse(a.0));
         for (_, id) in ordered {
             match self.delete_project(ctx, id).await {
                 Ok(()) | Err(ResourceProviderError::ProjectNotFound(_)) => {}

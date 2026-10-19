@@ -46,7 +46,6 @@
 use std::sync::Arc;
 
 use eyre::Result;
-use reqwest::StatusCode;
 use uuid::Uuid;
 
 use openstack_keystone_api_types::v3::role::{

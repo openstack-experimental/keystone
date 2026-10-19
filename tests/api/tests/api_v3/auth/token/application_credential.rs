@@ -65,26 +65,35 @@ fn app_cred_identity_by_name(name: &str, secret: &str, user_id: &str) -> Identit
         .unwrap()
 }
 
+/// User credentials and scope used to create an application credential.
+struct AppCredOwner<'a> {
+    user_id: &'a str,
+    user_name: &'a str,
+    password: &'a str,
+    user_domain_id: &'a str,
+    project_id: &'a str,
+    project_domain_id: &'a str,
+}
+
 /// Authenticate the user with password, then create an application credential
 /// via raw HTTP, sending the secret only when given. Returns the creation
 /// response.
 async fn create_app_cred_raw(
-    user_id: &str,
-    user_name: &str,
-    password: &str,
-    user_domain_id: &str,
-    project_id: &str,
-    project_domain_id: &str,
+    owner: &AppCredOwner<'_>,
     app_cred_secret: Option<&str>,
     roles: &[serde_json::Value],
 ) -> Result<serde_json::Value> {
     let mut tc = common::TestClient::new()?;
     tc.auth_password(
-        common::get_password_auth(user_name, password, user_domain_id)?,
+        common::get_password_auth(owner.user_name, owner.password, owner.user_domain_id)?,
         Some(Scope::Project(
             ScopeProjectBuilder::default()
-                .id(project_id)
-                .domain(DomainBuilder::default().id(project_domain_id).build()?)
+                .id(owner.project_id)
+                .domain(
+                    DomainBuilder::default()
+                        .id(owner.project_domain_id)
+                        .build()?,
+                )
                 .build()?,
         )),
     )
@@ -101,7 +110,7 @@ async fn create_app_cred_raw(
     }
     let rsp = common::raw_request(
         http::Method::POST,
-        &format!("v3/users/{}/application_credentials", user_id),
+        &format!("v3/users/{}/application_credentials", owner.user_id),
         Some(tc.token.as_ref().unwrap().expose_secret()),
         Some(create_body),
     )
@@ -113,26 +122,11 @@ async fn create_app_cred_raw(
 /// Create an application credential with the given secret. Returns the
 /// credential ID and name.
 async fn create_app_cred_for_user(
-    user_id: &str,
-    user_name: &str,
-    password: &str,
-    user_domain_id: &str,
-    project_id: &str,
-    project_domain_id: &str,
+    owner: &AppCredOwner<'_>,
     app_cred_secret: &str,
     roles: &[serde_json::Value],
 ) -> Result<(String, String)> {
-    let cred_resp = create_app_cred_raw(
-        user_id,
-        user_name,
-        password,
-        user_domain_id,
-        project_id,
-        project_domain_id,
-        Some(app_cred_secret),
-        roles,
-    )
-    .await?;
+    let cred_resp = create_app_cred_raw(owner, Some(app_cred_secret), roles).await?;
     let cred = &cred_resp["application_credential"];
     Ok((
         cred["id"]
@@ -183,12 +177,14 @@ async fn test_auth_by_application_credential_id() -> Result<()> {
 
     let app_cred_secret = "my_app_cred_secret_value";
     let (cred_id, _) = create_app_cred_for_user(
-        &user.id,
-        &user.name,
-        password,
-        &user.domain_id,
-        &project.id,
-        "default",
+        &AppCredOwner {
+            user_id: &user.id,
+            user_name: &user.name,
+            password,
+            user_domain_id: &user.domain_id,
+            project_id: &project.id,
+            project_domain_id: "default",
+        },
         app_cred_secret,
         &[serde_json::json!({"id": member, "name": "member"})],
     )
@@ -347,12 +343,14 @@ async fn test_auth_by_application_credential_wrong_secret() -> Result<()> {
     add_project_grant(&admin, &project.id, &user.id, member).await?;
 
     let (cred_id, _) = create_app_cred_for_user(
-        &user.id,
-        &user.name,
-        password,
-        &user.domain_id,
-        &project.id,
-        "default",
+        &AppCredOwner {
+            user_id: &user.id,
+            user_name: &user.name,
+            password,
+            user_domain_id: &user.domain_id,
+            project_id: &project.id,
+            project_domain_id: "default",
+        },
         "correct_secret",
         &[serde_json::json!({"id": member, "name": "member"})],
     )
@@ -425,12 +423,14 @@ async fn test_auth_by_application_credential_disabled_user() -> Result<()> {
 
     let app_cred_secret = "disabled_user_secret";
     let (cred_id, _) = create_app_cred_for_user(
-        &user.id,
-        &user.name,
-        password,
-        &user.domain_id,
-        &project.id,
-        "default",
+        &AppCredOwner {
+            user_id: &user.id,
+            user_name: &user.name,
+            password,
+            user_domain_id: &user.domain_id,
+            project_id: &project.id,
+            project_domain_id: "default",
+        },
         app_cred_secret,
         &[serde_json::json!({"id": member, "name": "member"})],
     )
@@ -508,12 +508,14 @@ async fn test_auth_by_application_credential_disabled_project() -> Result<()> {
 
     let app_cred_secret = "disabled_project_secret";
     let (cred_id, _) = create_app_cred_for_user(
-        &user.id,
-        &user.name,
-        password,
-        &user.domain_id,
-        &project.id,
-        "default",
+        &AppCredOwner {
+            user_id: &user.id,
+            user_name: &user.name,
+            password,
+            user_domain_id: &user.domain_id,
+            project_id: &project.id,
+            project_domain_id: "default",
+        },
         app_cred_secret,
         &[serde_json::json!({"id": member, "name": "member"})],
     )
@@ -600,12 +602,14 @@ async fn test_auth_by_application_credential_disabled_domain() -> Result<()> {
 
     let app_cred_secret = "disabled_domain_secret";
     let (cred_id, _) = create_app_cred_for_user(
-        &user.id,
-        &user.name,
-        password,
-        &domain.id,
-        &project.id,
-        &domain.id,
+        &AppCredOwner {
+            user_id: &user.id,
+            user_name: &user.name,
+            password,
+            user_domain_id: &domain.id,
+            project_id: &project.id,
+            project_domain_id: &domain.id,
+        },
         app_cred_secret,
         &[serde_json::json!({"id": member, "name": "member"})],
     )
@@ -713,12 +717,14 @@ async fn setup_user_with_app_cred(
     let member = roles.get("member").expect("member role must exist");
     add_project_grant(&admin, &project.id, &user.id, member).await?;
     let (cred_id, cred_name) = create_app_cred_for_user(
-        &user.id,
-        &user.name,
-        password,
-        &user.domain_id,
-        &project.id,
-        "default",
+        &AppCredOwner {
+            user_id: &user.id,
+            user_name: &user.name,
+            password,
+            user_domain_id: &user.domain_id,
+            project_id: &project.id,
+            project_domain_id: "default",
+        },
         secret,
         &[serde_json::json!({"id": member, "name": "member"})],
     )
@@ -863,12 +869,14 @@ async fn test_auth_by_application_credential_generated_secret() -> Result<()> {
     add_project_grant(&admin, &project.id, &user.id, member).await?;
 
     let cred_resp = create_app_cred_raw(
-        &user.id,
-        &user.name,
-        password,
-        &user.domain_id,
-        &project.id,
-        "default",
+        &AppCredOwner {
+            user_id: &user.id,
+            user_name: &user.name,
+            password,
+            user_domain_id: &user.domain_id,
+            project_id: &project.id,
+            project_domain_id: "default",
+        },
         None,
         &[serde_json::json!({"id": member, "name": "member"})],
     )
