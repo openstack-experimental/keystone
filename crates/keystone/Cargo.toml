@@ -80,7 +80,7 @@ openstack-keystone-token-driver-jws.workspace = true
 openstack-keystone-token-restriction-driver-sql.workspace = true
 openstack-keystone-trust-driver-sql.workspace = true
 openstack-keystone-webauthn.workspace = true
-pem = "4"
+pem.workspace = true
 rand.workspace = true
 reqwest = { workspace = true, features = ["json", "form", "http2", "gzip", "deflate"] }
 sha2.workspace = true
@@ -122,7 +122,7 @@ toml = { version = "1.1", default-features = false, features = ["parse", "serde"
 openstack-keystone-telemetry = { workspace = true, features = ["golden"] }
 rcgen.workspace = true
 http-body-util.workspace = true
-httpmock = { version = "0.8", features = ["http2"] }
+httpmock = { workspace = true, features = ["http2"] }
 cadf = { workspace = true, features = ["testing"] }
 openstack-keystone-core = { workspace = true, features = ["api", "mock"] }
 openstack-keystone-core-types = { workspace = true, features = ["mock"] }

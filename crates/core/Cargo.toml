@@ -38,10 +38,10 @@ openstack-keystone-storage-api.workspace = true
 openstack-keystone-telemetry.workspace = true
 jsonwebtoken.workspace = true
 mockall = { workspace = true, optional = true }
-p256 = { version = "0.14", features = ["ecdsa", "pkcs8"] }
+p256 = { workspace = true, features = ["ecdsa", "pkcs8"] }
 percent-encoding.workspace = true
 rand.workspace = true
-rsa = "0.9"
+rsa.workspace = true
 regex.workspace = true
 regex-syntax.workspace = true
 sea-orm.workspace = true
@@ -52,13 +52,13 @@ sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
+subtle = "2.6"
 thiserror.workspace = true
 tokio = { workspace = true, default-features = false, features = ["net", "rt-multi-thread"] }
 tracing.workspace = true
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4"] }
 validator.workspace = true
-subtle = "2.6.1"
 
 [dev-dependencies]
 openstack-keystone-telemetry = { workspace = true, features = ["golden"] }

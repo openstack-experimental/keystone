@@ -67,7 +67,7 @@ pub fn generate_keypair(algorithm: SigningAlgorithm) -> Result<KeyMaterial, KeyR
     Ok(KeyMaterial {
         algorithm,
         private_key_der: SecretBox::new(Box::new(private_key_der)),
-        public_key_der,
+        public_key_der: public_key_der.to_vec(),
         kid,
         created_at: Utc::now(),
         demoted_at: None,

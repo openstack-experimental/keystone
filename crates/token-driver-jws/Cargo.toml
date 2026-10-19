@@ -17,8 +17,8 @@ openstack-keystone-core.workspace = true
 openstack-keystone-core-types.workspace = true
 openstack-keystone-key-repository.workspace = true
 oslo-config.workspace = true
-p256 = { version = "0.14", features = ["ecdsa", "pkcs8"] }
-rsa = "0.9"
+p256 = { workspace = true, features = ["ecdsa", "pkcs8"] }
+rsa.workspace = true
 secrecy.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

@@ -55,7 +55,7 @@ tracing-subscriber.workspace = true
 workspace = true
 
 [dev-dependencies]
-httpmock = { version = "0.8", features = ["http2"] }
+httpmock = { workspace = true, features = ["http2"] }
 openstack-keystone-credential-driver-sql = { version = "0.1", path = "../credential-driver-sql", features = ["test-support"] }
 serde.workspace = true
 temp-env.workspace = true

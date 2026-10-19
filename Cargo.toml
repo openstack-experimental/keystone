@@ -128,6 +128,7 @@ ldap3 = { version = "0.12", default-features = false }
 mockall = { version = "0.15" }
 mockall_double = { version = "0.3" }
 nix = { version = "0.31", default-features = false }
+notify = { version = "8.2" }
 openidconnect = { version = "4.0" }
 openraft = { version = "=0.10.0-alpha.34" }
 openstack-keystone-api-key-driver-raft = { version = "0.1", path = "crates/api-key-driver-raft/" }
@@ -183,7 +184,9 @@ openstack-keystone-token-driver-jws = { version = "0.1.0", path = "crates/token-
 openstack-keystone-token-restriction-driver-sql = { version = "0.1", path = "crates/token-restriction-driver-sql/" }
 openstack-keystone-trust-driver-sql = { version = "0.1", path = "crates/trust-driver-sql/" }
 openstack-keystone-webauthn = { version = "0.1", path = "crates/webauthn/"}
+p256 = { version = "0.14", default-features = false, features = ["alloc"] }
 percent-encoding = { version = "2.3" }
+pem = "4"
 prost = { version = "0.14" }
 proptest = { version = "1" }
 rand = { version = "0.10" }
@@ -196,6 +199,7 @@ aws-lc-rs = { version = "1.18", default-features = false, features = ["alloc"] }
 rmp = { version = "0.8" }
 rstest = { version = "0.27" }
 rmp-serde = "1.3"
+rsa = "0.9"
 rust-ini = { version = "0.21" }
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "logging"] }
 rustls-native-certs = { version = "0.8" }
