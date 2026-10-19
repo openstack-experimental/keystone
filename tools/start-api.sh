@@ -75,6 +75,22 @@ cleanup() {
 trap cleanup ERR INT TERM
 
 
+# Token provider under test. fernet is the default; KEYSTONE_TEST_TOKEN_PROVIDER=jws
+# runs the whole live suite against the ES256 JWS provider (Python-compatible
+# `[token] provider = jws`) with a freshly generated keypair.
+TOKEN_PROVIDER="${KEYSTONE_TEST_TOKEN_PROVIDER:-fernet}"
+case "$TOKEN_PROVIDER" in
+  fernet) ;;
+  jws)
+    mkdir -p "$STATE_DIR/etc/jws-keys"
+    openssl ecparam -name prime256v1 -genkey -noout \
+      | openssl pkcs8 -topk8 -nocrypt -out "$STATE_DIR/etc/jws-keys/private.pem"
+    openssl pkey -in "$STATE_DIR/etc/jws-keys/private.pem" -pubout \
+      -out "$STATE_DIR/etc/jws-keys/public.pem"
+    ;;
+  *) echo "unsupported KEYSTONE_TEST_TOKEN_PROVIDER: $TOKEN_PROVIDER" >&2; exit 1 ;;
+esac
+
 cat << EOF > "$CONFIG_FILE"
 
 [api_policy]
@@ -113,6 +129,12 @@ templates_dir = ${OAUTH2_FIXTURES}/templates
 static_dir = ${OAUTH2_FIXTURES}/static
 ui_product_name = Fixture Cloud
 ui_logo_url = /v4/oauth2/static/logo.svg
+
+[token]
+provider = ${TOKEN_PROVIDER}
+
+[jws_tokens]
+key_repository = ${STATE_DIR}/etc/jws-keys
 
 [database]
 connection = sqlite::memory:
