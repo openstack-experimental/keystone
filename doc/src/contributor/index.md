@@ -15,6 +15,8 @@ This section is for developers changing Keystone-NG itself.
   input.
 - [Security architecture review](security-review.md) records additional threat
   analysis and proposed gates.
+- [Cyber Resilience Act requirements](cra-requirements.md) derives EU CRA
+  obligations and compares the Python and Rust implementations.
 - [Architecture Decision Records](../adr/index.md) contain accepted and proposed
   design decisions.
 
