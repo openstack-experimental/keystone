@@ -277,6 +277,14 @@ async fn test_sso_ends_when_domain_disabled() -> Result<()> {
 
 #[tokio::test]
 #[traced_test]
+async fn test_sso_ends_when_domain_deleted() -> Result<()> {
+    let f = fixture().await?;
+    let browser = signed_in(&f).await?;
+    assert_session_ends(&f, &browser, || delete_domain(&f.domain_id)).await
+}
+
+#[tokio::test]
+#[traced_test]
 async fn test_sso_session_does_not_resume_on_other_domain() -> Result<()> {
     let f = fixture().await?;
     let browser = signed_in(&f).await?;

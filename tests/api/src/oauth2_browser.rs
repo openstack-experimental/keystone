@@ -850,6 +850,23 @@ pub async fn patch_domain(domain_id: &str, domain: Value) -> Result<()> {
     Ok(())
 }
 
+/// `DELETE /v3/domains/{id}` as system admin. A domain must be disabled
+/// before it can be deleted.
+pub async fn delete_domain(domain_id: &str) -> Result<()> {
+    patch_domain(domain_id, json!({"enabled": false})).await?;
+    let mut admin = TestClient::new()?;
+    admin.auth_admin_system().await?;
+    let rsp = admin
+        .client
+        .delete(admin.base_url.join(&format!("v3/domains/{domain_id}"))?)
+        .send()
+        .await?;
+    if !rsp.status().is_success() {
+        return Err(eyre!("domain delete failed with {}", rsp.status()));
+    }
+    Ok(())
+}
+
 /// Self-service password change (`POST /v3/users/{id}/password`).
 pub async fn change_password(user_id: &str, old: &str, new: &str) -> Result<()> {
     let rsp = crate::common::http_client()
