@@ -63,7 +63,8 @@ pub enum TokenVerificationError {
         "delegated auth_method `{auth_method}` requires project scope, got `{scope_type}` (I5)"
     )]
     DelegatedScopeNotProject {
-        /// The delegated auth method (`trust`, `app_cred`, or `ec2`).
+        /// The delegated auth method (`trust`, `app_cred`, `ec2`, or
+        /// `service_grant`).
         auth_method: String,
         /// The token's actual `scope_type`.
         scope_type: String,
@@ -248,10 +249,7 @@ impl SubjectTokenValidationProfile {
     /// It preserves acceptance of the control-plane audience and, when
     /// supplied, a token narrowed to this service type. The 60-second skew
     /// matches the verifier's previous `jsonwebtoken` default.
-    pub fn keystone_native(
-        expected_issuers: &[String],
-        service_type: Option<&str>,
-    ) -> Self {
+    pub fn keystone_native(expected_issuers: &[String], service_type: Option<&str>) -> Self {
         let mut accepted_audiences = vec![OPENSTACK_APIS_AUDIENCE.to_string()];
         if let Some(service_type) = service_type {
             accepted_audiences.push(openstack_service_audience(service_type));
@@ -279,10 +277,7 @@ impl SubjectTokenValidationProfile {
     /// not exceed 300 seconds, and registered time claims allow 60 seconds of
     /// clock skew. Replay detection for the required `jti` remains the
     /// caller's responsibility.
-    pub fn external_assertion(
-        expected_issuers: &[String],
-        token_endpoint_audience: &str,
-    ) -> Self {
+    pub fn external_assertion(expected_issuers: &[String], token_endpoint_audience: &str) -> Self {
         Self {
             expected_issuers: expected_issuers.to_vec(),
             accepted_audiences: vec![token_endpoint_audience.to_string()],
@@ -339,7 +334,8 @@ fn enforce_delegation_invariants(
         } => project_id,
         DelegationContext::Trust { project_id }
         | DelegationContext::AppCred { project_id }
-        | DelegationContext::Ec2 { project_id } => project_id,
+        | DelegationContext::Ec2 { project_id }
+        | DelegationContext::ServiceGrant { project_id, .. } => project_id,
     };
 
     let OpenStackScope::Project {
@@ -430,8 +426,7 @@ where
         return Err(TokenVerificationError::InvalidProfile);
     }
 
-    let (expected_alg, decoding_key) =
-        resolve_decoding_key(token, jwks, expected_algorithm)?;
+    let (expected_alg, decoding_key) = resolve_decoding_key(token, jwks, expected_algorithm)?;
     let mut validation = Validation::new(expected_alg);
     validation.set_required_spec_claims(&profile.required_claims);
     validation.set_audience(&profile.accepted_audiences);
@@ -441,6 +436,13 @@ where
     let data = decode::<T>(token, &decoding_key, &validation)?;
     let serialized = serde_json::to_value(&data.claims)
         .map_err(|e| TokenVerificationError::MalformedClaims(e.to_string()))?;
+    for claim in &profile.required_claims {
+        if serialized.get(claim).is_none_or(serde_json::Value::is_null) {
+            return Err(TokenVerificationError::MalformedClaims(format!(
+                "missing required claim `{claim}`"
+            )));
+        }
+    }
     let issuer = serialized
         .get("iss")
         .and_then(serde_json::Value::as_str)
@@ -448,9 +450,10 @@ where
     ensure_trusted_issuer(issuer, &profile.expected_issuers)?;
     if profile.require_exact_audience {
         let exact_audience = match serialized.get("aud") {
-            Some(serde_json::Value::String(audience)) => {
-                profile.accepted_audiences.iter().any(|accepted| audience == accepted)
-            }
+            Some(serde_json::Value::String(audience)) => profile
+                .accepted_audiences
+                .iter()
+                .any(|accepted| audience == accepted),
             Some(serde_json::Value::Array(audiences)) if audiences.len() == 1 => audiences[0]
                 .as_str()
                 .is_some_and(|audience| profile.accepted_audiences.iter().any(|a| a == audience)),
@@ -535,8 +538,12 @@ pub fn verify_openstack_access_token(
     revoked_jtis: &HashSet<String>,
 ) -> Result<OpenStackAccessTokenClaims, TokenVerificationError> {
     let profile = SubjectTokenValidationProfile::keystone_native(expected_issuers, service_type);
-    let claims: OpenStackAccessTokenClaims =
-        verify_subject_token_jwt(token, jwks, expected_algorithm, &profile)?;
+    let claims = verify_subject_token_jwt::<OpenStackAccessTokenClaims>(
+        token,
+        jwks,
+        expected_algorithm,
+        &profile,
+    )?;
 
     if claims.token_use != "access" {
         return Err(TokenVerificationError::WrongTokenUse(claims.token_use));
@@ -630,8 +637,8 @@ fn verify_openstack_access_token_inner(
 /// scope. `aud` is the (unknown to the caller) `client_id`, so it is not
 /// validated here: the caller must resolve `claims.aud` to a registered
 /// client of the domain. OpenStack access tokens (`aud` ==
-/// `openstack-apis` or a service-type narrowing of it) carry no `scope` claim and are therefore
-/// structurally rejected.
+/// `openstack-apis` or a service-type narrowing of it) carry no `scope` claim
+/// and are therefore structurally rejected.
 ///
 /// # Errors
 /// See [`TokenVerificationError`] for each rejection reason.
@@ -775,8 +782,8 @@ struct RevocableClaims {
 /// In both cases the token must belong to `authenticated_client_id`; the
 /// signature, configured algorithm, issuer, `exp`/`nbf` and
 /// `token_use == "access"` are enforced exactly as in
-/// [`verify_openstack_access_token`]. Tokens without a `jti` (e.g. ID tokens) are rejected with
-/// [`TokenVerificationError::WrongTokenUse`].
+/// [`verify_openstack_access_token`]. Tokens without a `jti` (e.g. ID tokens)
+/// are rejected with [`TokenVerificationError::WrongTokenUse`].
 ///
 /// # Errors
 /// See [`TokenVerificationError`]. The revocation endpoint maps every error
@@ -964,7 +971,7 @@ mod tests {
     }
     use jsonwebtoken::{EncodingKey, Header, encode};
     use openstack_keystone_core_types::oauth2_client::{
-        IdTokenClaims, OpenStackContext, OpenStackScope,
+        ActClaim, ActSubType, IdTokenClaims, OpenStackContext, OpenStackScope,
     };
     use openstack_keystone_core_types::role::RoleRef;
     use openstack_keystone_key_repository::asymmetric::{generate_keypair, to_encoding_key};
@@ -986,6 +993,7 @@ mod tests {
             amr: vec!["client_credentials".to_string()],
             token_use: "access".to_string(),
             delegation_context: DelegationContext::Plain,
+            act: None,
             openstack_context: OpenStackContext {
                 user_id: "shadow-user".to_string(),
                 user_name: "client-1".to_string(),
@@ -1164,7 +1172,7 @@ mod tests {
 
         assert!(matches!(
             verify_assertion(&claims, &profile),
-            Err(TokenVerificationError::Malformed(_))
+            Err(TokenVerificationError::MalformedClaims(_))
         ));
     }
 
@@ -1191,7 +1199,7 @@ mod tests {
         ));
 
         let mut future = assertion_claims(now);
-        future["iat"] = (now + 61).into();
+        future["iat"] = (now + 120).into();
         assert!(matches!(
             verify_assertion(&future, &profile),
             Err(TokenVerificationError::IssuedInFuture)
@@ -1533,6 +1541,43 @@ mod tests {
         };
         // Token's own scope claims a *different* project than the
         // delegation it carries -- the exact drift I3 exists to catch.
+        claims.openstack_context.scope = OpenStackScope::Project {
+            project_id: "project-2".to_string(),
+            project_domain_id: DOMAIN_ID.to_string(),
+            roles: vec![],
+        };
+        let (token, jwks, _kid) = sign(&claims);
+        let err = verify_openstack_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            None,
+            &HashSet::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TokenVerificationError::ScopeDrift {
+                token_project_id,
+                delegated_project_id,
+            } if token_project_id == "project-2" && delegated_project_id == "project-1"
+        ));
+    }
+
+    #[test]
+    fn test_service_grant_scope_drift_tripwire_trips() {
+        let now = chrono::Utc::now().timestamp();
+        let mut claims = valid_claims(now);
+        claims.delegation_context = DelegationContext::ServiceGrant {
+            project_id: "project-1".to_string(),
+            grant_id: "grant-1".to_string(),
+        };
+        claims.act = Some(ActClaim {
+            client_id: "service-1".to_string(),
+            sub_type: ActSubType::Spiffe,
+            sub: "spiffe://example/service-1".to_string(),
+        });
         claims.openstack_context.scope = OpenStackScope::Project {
             project_id: "project-2".to_string(),
             project_domain_id: DOMAIN_ID.to_string(),
