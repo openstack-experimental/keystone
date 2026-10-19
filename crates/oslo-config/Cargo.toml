@@ -11,7 +11,7 @@ homepage.workspace = true
 exclude.workspace = true
 
 [features]
-default = ["vault"]
+default = []
 # Resolution of `vault://` references and the `[vault]` section.
 vault = [
   "dep:openstack-keystone-tls-provider",
@@ -28,7 +28,8 @@ derive_builder.workspace = true
 eyre.workspace = true
 inventory.workspace = true
 ipnet = { workspace = true }
-notify = "8.2"
+notify.workspace = true
+openstack-keystone-tls-provider = { workspace = true, optional = true }
 secrecy = { workspace = true, features = ["serde"] }
 serde_json = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
@@ -38,7 +39,6 @@ tokio-util.workspace = true
 tracing.workspace = true
 url = { workspace = true, features = ["serde"], optional = true }
 vaultrs = { workspace = true, optional = true }
-openstack-keystone-tls-provider = { workspace = true, optional = true }
 
 [dev-dependencies]
 httpmock.workspace = true
