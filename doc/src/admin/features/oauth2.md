@@ -77,6 +77,11 @@ header instead of a 500.
 | `session_janitor_interval_seconds`      | 300     | Interval of the leader-only janitor that purges expired pre-auth sessions, authorization codes, device grants and refresh tokens from Raft.      |
 | `token_rate_limit_burst_size`           | 10      | `/token` rate-limit burst, keyed on unverified `client_id`.                                                                                      |
 | `token_rate_limit_replenish_per_minute` | 60      | `/token` sustained rate after burst is exhausted.                                                                                                |
+| `dpop`                                  | `disabled` | Global DPoP enforcement (ADR 0043): `disabled`, `optional` or `required`. A floor that domains and clients can only raise. Anything but `disabled` needs `[mapping] cluster_salt`. |
+| `dpop_proof_lifetime_seconds`           | 60      | Accepted distance of a DPoP proof's `iat` from the server time, in both directions (1 to 600).                                                   |
+| `dpop_nonce_lifetime_seconds`           | 300     | Length of one DPoP nonce slot. A nonce is valid for the rest of its slot and the next one.                                                       |
+| `dpop_replay_cache_max_entries`         | 100000  | Live entries of the DPoP replay cache. When full, new proofs are rejected instead of evicting entries.                                           |
+| `dpop_replay_cache_max_entries_per_key` | 256     | Live replay cache entries one proof key may hold.                                                                                                |
 | `allow_host_header_issuer`              | `false` | **Development only.** Lets the issuer and cookie `Secure` flag follow the request `Host`/`X-Forwarded-Proto` headers when `[DEFAULT] public_endpoint` is unset. |
 | `templates_dir`                         | unset   | Directory with operator-supplied page templates (see [Customising the login pages](#customising-the-login-pages)). Read once at startup. |
 | `static_dir`                            | unset   | Directory with operator static assets (stylesheets, logos) served at `/v4/oauth2/static/`.                                                       |

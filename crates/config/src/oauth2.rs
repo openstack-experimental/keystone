@@ -48,6 +48,32 @@ impl std::fmt::Display for SigningAlgorithm {
     }
 }
 
+/// DPoP enforcement mode (RFC 9449, ADR 0043 §1).
+///
+/// The variants are ordered by strictness: the effective mode of a request is
+/// the maximum of the global, domain and client modes.
+#[derive(Debug, Default, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum DpopMode {
+    /// Proofs are ignored and tokens are issued as bearer tokens.
+    #[default]
+    Disabled,
+    /// A token is bound to the proof key whenever the client sends a proof.
+    Optional,
+    /// `/token` rejects requests without a valid proof.
+    Required,
+}
+
+impl std::fmt::Display for DpopMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Disabled => write!(f, "disabled"),
+            Self::Optional => write!(f, "optional"),
+            Self::Required => write!(f, "required"),
+        }
+    }
+}
+
 /// OAuth2/OIDC provider configuration.
 #[derive(Debug, Deserialize, Clone, Validate)]
 pub struct Oauth2Provider {
@@ -321,6 +347,52 @@ pub struct Oauth2Provider {
     /// locale bundles.
     #[serde(default = "default_ui_default_locale")]
     pub ui_default_locale: String,
+
+    /// Global DPoP enforcement mode (ADR 0043 §1). It is a floor: a domain
+    /// or a client can only raise it. Anything but `disabled` needs
+    /// `[mapping] cluster_salt`, which the DPoP nonces are derived from.
+    #[serde(default)]
+    pub dpop: DpopMode,
+
+    /// Accepted distance, in seconds, of the `iat` of a DPoP proof from the
+    /// server time, in both directions. Also the time a proof is remembered
+    /// by the replay cache.
+    #[serde(default = "default_dpop_proof_lifetime_seconds")]
+    #[validate(range(min = 1, max = 600))]
+    pub dpop_proof_lifetime_seconds: u32,
+
+    /// Length, in seconds, of one DPoP nonce slot. A nonce stays valid for
+    /// the rest of its slot and the whole next one.
+    #[serde(default = "default_dpop_nonce_lifetime_seconds")]
+    #[validate(range(min = 1))]
+    pub dpop_nonce_lifetime_seconds: u32,
+
+    /// Maximum number of live entries of the DPoP replay cache. When it is
+    /// full new proofs are rejected rather than evicting older entries.
+    #[serde(default = "default_dpop_replay_cache_max_entries")]
+    #[validate(range(min = 1))]
+    pub dpop_replay_cache_max_entries: u32,
+
+    /// Maximum number of live replay cache entries held for one proof key.
+    #[serde(default = "default_dpop_replay_cache_max_entries_per_key")]
+    #[validate(range(min = 1))]
+    pub dpop_replay_cache_max_entries_per_key: u32,
+}
+
+fn default_dpop_proof_lifetime_seconds() -> u32 {
+    60
+}
+
+fn default_dpop_nonce_lifetime_seconds() -> u32 {
+    300
+}
+
+fn default_dpop_replay_cache_max_entries() -> u32 {
+    100_000
+}
+
+fn default_dpop_replay_cache_max_entries_per_key() -> u32 {
+    256
 }
 
 fn default_sso_session_lifetime_minutes() -> u32 {
@@ -466,6 +538,11 @@ impl Default for Oauth2Provider {
             sso_session_lifetime_minutes: default_sso_session_lifetime_minutes(),
             ui_show_client_logos: false,
             ui_default_locale: default_ui_default_locale(),
+            dpop: DpopMode::default(),
+            dpop_proof_lifetime_seconds: default_dpop_proof_lifetime_seconds(),
+            dpop_nonce_lifetime_seconds: default_dpop_nonce_lifetime_seconds(),
+            dpop_replay_cache_max_entries: default_dpop_replay_cache_max_entries(),
+            dpop_replay_cache_max_entries_per_key: default_dpop_replay_cache_max_entries_per_key(),
         }
     }
 }
@@ -485,6 +562,30 @@ impl Oauth2Provider {
             Some(enabled) => Ok(enabled),
             None => Ok(raft_configured),
         }
+    }
+
+    /// Cross-section check of the DPoP settings: `cluster_salt_configured`
+    /// states whether `[mapping] cluster_salt` is set.
+    ///
+    /// A global mode other than `disabled` needs the salt for the nonces. A
+    /// domain or client that turns DPoP on while the global mode is
+    /// `disabled` is checked when it is configured (ADR 0043 §1).
+    pub fn validate_dpop(&self, cluster_salt_configured: bool) -> Result<(), String> {
+        if self.dpop != DpopMode::Disabled && !cluster_salt_configured {
+            return Err(format!(
+                "[oauth2] dpop = {} requires [mapping] cluster_salt: the DPoP nonces are \
+                 derived from it",
+                self.dpop
+            ));
+        }
+        if self.dpop_replay_cache_max_entries_per_key > self.dpop_replay_cache_max_entries {
+            return Err(
+                "[oauth2] dpop_replay_cache_max_entries_per_key must not exceed \
+                 dpop_replay_cache_max_entries"
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 
     /// Whether requests for `domain_id` may be served, per `enabled_domains`.
@@ -570,6 +671,81 @@ impl Oauth2Provider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_dpop_mode_strictness_order() {
+        assert!(DpopMode::Disabled < DpopMode::Optional);
+        assert!(DpopMode::Optional < DpopMode::Required);
+        assert_eq!(
+            DpopMode::Optional.max(DpopMode::Required),
+            DpopMode::Required
+        );
+    }
+
+    #[test]
+    fn test_dpop_defaults() {
+        let cfg = Oauth2Provider::default();
+        assert_eq!(cfg.dpop, DpopMode::Disabled);
+        assert_eq!(cfg.dpop_proof_lifetime_seconds, 60);
+        assert_eq!(cfg.dpop_nonce_lifetime_seconds, 300);
+        assert!(cfg.validate().is_ok());
+        assert!(cfg.validate_dpop(false).is_ok());
+    }
+
+    #[test]
+    fn test_dpop_mode_deserializes_lowercase() {
+        let mode: DpopMode = serde_json::from_str("\"required\"").unwrap();
+        assert_eq!(mode, DpopMode::Required);
+        assert!(serde_json::from_str::<DpopMode>("\"Required\"").is_err());
+    }
+
+    #[test]
+    fn test_validate_dpop_requires_cluster_salt() {
+        let cfg = Oauth2Provider {
+            dpop: DpopMode::Optional,
+            ..Default::default()
+        };
+        assert!(
+            cfg.validate_dpop(false)
+                .unwrap_err()
+                .contains("cluster_salt")
+        );
+        assert!(cfg.validate_dpop(true).is_ok());
+    }
+
+    #[test]
+    fn test_validate_dpop_per_key_cache_bound() {
+        let cfg = Oauth2Provider {
+            dpop_replay_cache_max_entries: 10,
+            dpop_replay_cache_max_entries_per_key: 11,
+            ..Default::default()
+        };
+        assert!(cfg.validate_dpop(false).is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_bad_dpop_windows() {
+        for cfg in [
+            Oauth2Provider {
+                dpop_proof_lifetime_seconds: 0,
+                ..Default::default()
+            },
+            Oauth2Provider {
+                dpop_proof_lifetime_seconds: 601,
+                ..Default::default()
+            },
+            Oauth2Provider {
+                dpop_nonce_lifetime_seconds: 0,
+                ..Default::default()
+            },
+            Oauth2Provider {
+                dpop_replay_cache_max_entries: 0,
+                ..Default::default()
+            },
+        ] {
+            assert!(cfg.validate().is_err());
+        }
+    }
 
     #[test]
     fn test_default() {
