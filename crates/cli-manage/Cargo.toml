@@ -24,7 +24,7 @@ futures.workspace = true
 inventory.workspace = true
 openstack-keystone-api-types.workspace = true
 cadf.workspace = true
-openstack-keystone = { version = "0.1", path = "../keystone" }
+openstack-keystone = { version = "0.1", path = "../keystone", default-features = false }
 openstack-keystone-config.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-credential-driver-sql.workspace = true
@@ -36,8 +36,8 @@ openstack-keystone-token-restriction-driver-sql.workspace = true
 openstack-keystone-webauthn.workspace = true
 oslo-config.workspace = true
 percent-encoding.workspace = true
-sea-orm = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-rustls"] }
-sea-orm-migration = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-rustls"] }
+sea-orm = { workspace = true, features = ["runtime-tokio", "runtime-tokio-rustls"] }
+sea-orm-migration = { workspace = true, features = ["runtime-tokio", "runtime-tokio-rustls"] }
 reqwest = { workspace = true, features = ["json", "query"] }
 openstack-keystone-tls-provider.workspace = true
 rustls.workspace = true
@@ -51,10 +51,18 @@ tonic.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[features]
+default = ["mysql", "postgres"]
+# Database backends. SQLite is not part of the default set.
+mysql = ["sea-orm/sqlx-mysql", "sea-orm-migration/sqlx-mysql", "openstack-keystone/mysql"]
+postgres = ["sea-orm/sqlx-postgres", "sea-orm-migration/sqlx-postgres", "openstack-keystone/postgres"]
+sqlite = ["sea-orm/sqlx-sqlite", "sea-orm-migration/sqlx-sqlite", "openstack-keystone/sqlite"]
+
 [lints]
 workspace = true
 
 [dev-dependencies]
+sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
 httpmock = { workspace = true, features = ["http2"] }
 openstack-keystone-credential-driver-sql = { version = "0.1", path = "../credential-driver-sql", features = ["test-support"] }
 serde.workspace = true

@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 use sea_orm::ConnectOptions;
+#[cfg(any(feature = "postgres", feature = "mysql"))]
 use secrecy::ExposeSecret;
 
 use crate::config::{Config, TlsConfiguration};
@@ -54,8 +55,13 @@ pub fn db_tls_mtimes(cfg: &Config) -> HashMap<PathBuf, Option<SystemTime>> {
 /// backend-specific connect-option hooks. Both hooks are registered
 /// unconditionally; sea-orm only invokes the one matching the DSN's actual
 /// scheme (`postgres://` vs `mysql://`), so no backend detection is needed
-/// here. A no-op when no `[database]` TLS material is configured, so
+/// here. Each hook is compiled only with its `postgres`/`mysql` feature. A
+/// no-op when no `[database]` TLS material is configured, so
 /// deployments not using it see no behavior change.
+#[cfg_attr(
+    not(any(feature = "postgres", feature = "mysql")),
+    allow(unused_variables)
+)]
 pub fn apply_db_tls(opt: &mut ConnectOptions, tls: &TlsConfiguration) {
     if tls.tls_cert_content.is_none()
         && tls.tls_key_content.is_none()
@@ -68,6 +74,7 @@ pub fn apply_db_tls(opt: &mut ConnectOptions, tls: &TlsConfiguration) {
     let cert = tls.tls_cert_content.clone();
     let key = tls.tls_key_content.clone();
 
+    #[cfg(feature = "postgres")]
     opt.map_sqlx_postgres_opts({
         let (ca, cert, key) = (ca.clone(), cert.clone(), key.clone());
         move |mut o| {
@@ -83,6 +90,7 @@ pub fn apply_db_tls(opt: &mut ConnectOptions, tls: &TlsConfiguration) {
             o
         }
     });
+    #[cfg(feature = "mysql")]
     opt.map_sqlx_mysql_opts(move |mut o| {
         if let Some(ca) = &ca {
             o = o.ssl_ca_from_pem(ca.expose_secret().to_vec());

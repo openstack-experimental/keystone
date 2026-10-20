@@ -15,14 +15,14 @@ async-trait.workspace = true
 inventory.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-core-types.workspace = true
-sea-orm = { workspace = true, features = ["default"] }
+sea-orm = { workspace = true, features = ["macros"] }
 sea-orm-migration.workspace = true
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 openstack-keystone-core = { workspace = true, features = ["mock"] }
-sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
+sea-orm = { workspace = true, features = ["mock"] }
 tokio = { workspace = true, features = ["macros"] }
 uuid = { workspace = true, features = ["v4"] }
 

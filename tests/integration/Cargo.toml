@@ -36,9 +36,12 @@ openstack-keystone-distributed-storage.workspace = true
 openstack-keystone-storage-api.workspace = true
 openstack-keystone = { version = "0.1", path = "../../crates/keystone/", features = [
     "openfga",
+    "mysql",
+    "postgres",
+    "sqlite",
 ] }
 rcgen.workspace = true
-sea-orm = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-rustls"] }
+sea-orm = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio-rustls"] }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 sha2.workspace = true

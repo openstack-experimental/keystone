@@ -19,7 +19,7 @@ openstack-keystone-config.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-core-types.workspace = true
 openstack-keystone-key-repository.workspace = true
-sea-orm = { workspace = true, features = ["default"] }
+sea-orm = { workspace = true, features = ["macros"] }
 secrecy = { workspace = true }
 serde_json.workspace = true
 sha2.workspace = true
