@@ -42,4 +42,4 @@ nix = { workspace = true, features = ["mman", "feature"] }
 ring = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
-zeroize = "1"
+zeroize.workspace = true

@@ -14,10 +14,10 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-cryptoki = "0.12"
+cryptoki.workspace = true
 openstack-keystone-storage-crypto.workspace = true
 tracing.workspace = true
-zeroize = "1"
+zeroize.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

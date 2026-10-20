@@ -19,7 +19,7 @@ rand.workspace = true
 subtle = "2.6"
 tracing.workspace = true
 tss-esapi = "7.7"
-zeroize = "1"
+zeroize.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -48,7 +48,6 @@ futures.workspace = true
 http.workspace = true
 http-serde = "2.1"
 hyper-util = { workspace = true, features = ["tokio"] }
-mockall.workspace = true
 nix = { workspace = true, features = ["process", "resource"] }
 openraft = { workspace = true, features = ["serde", "type-alias"] }
 openstack-keystone-common.workspace = true
@@ -75,7 +74,6 @@ spiffe-rustls.workspace = true
 thiserror.workspace = true
 tokio-rustls.workspace = true
 tonic = { workspace = true, features = ["router", "_tls-any"] }
-zeroize = "1"
 tonic-prost.workspace = true
 tower.workspace = true
 tracing.workspace = true
@@ -84,14 +82,15 @@ chrono.workspace = true
 uuid.workspace = true
 validator = { workspace = true, features = ["derive"] }
 x509-parser.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 openstack-keystone-telemetry = { workspace = true, features = ["golden"] }
 config = { workspace = true, features = ["ini"] }
 criterion = { workspace = true, features = ["async_tokio"] }
-cryptoki = "0.12"
+cryptoki.workspace = true
 rcgen.workspace = true
-reserve-port = "2.5.0"
+reserve-port.workspace = true
 rustls.workspace = true
 serial_test.workspace = true
 temp-env.workspace = true
