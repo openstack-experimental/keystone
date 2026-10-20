@@ -18,6 +18,7 @@ use openstack_sdk::{
     AsyncOpenStack,
     config::{CloudConfig, ConfigFile},
 };
+use secrecy::ExposeSecret;
 use std::env;
 use std::time::Duration;
 
@@ -387,7 +388,7 @@ pub async fn openstack_login(user: &mut GooseUser) -> TransactionResult {
         .expect("cannot connect to the cloud");
     let token = session.get_auth_token().expect("no auth token in session");
     user.set_session_data(Session {
-        token,
+        token: token.expose_secret().to_string(),
         user_id: None,
         project_id: None,
         role_id: None,
@@ -415,5 +416,9 @@ async fn get_admin_token() -> String {
     let session = AsyncOpenStack::new(&profile)
         .await
         .expect("cannot authenticate");
-    session.get_auth_token().expect("no auth token")
+    session
+        .get_auth_token()
+        .expect("no auth token")
+        .expose_secret()
+        .to_string()
 }
