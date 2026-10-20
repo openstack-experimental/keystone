@@ -6,6 +6,17 @@ who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-deploy"
 delta = "1.0.103 -> 1.0.104"
 
+[[audits.comfy-table]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "8.0.0 -> 8.0.1"
+
+[[audits.crc32fast]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "1.5.2 -> 1.5.3"
+notes = "Deps update, no new unsafe code, changes to existing unsafe look sane"
+
 [[audits.futures]]
 who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-deploy"
@@ -53,6 +64,16 @@ who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-deploy"
 delta = "2.24.0 -> 3.0.1"
 
+[[audits.openraft-macros]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "0.10.0-alpha.34 -> 0.10.0-alpha.37"
+
+[[audits.opentelemetry-http]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "0.33.0 -> 0.33.1"
+
 [[audits.proptest]]
 who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-run"
@@ -69,15 +90,46 @@ who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-run"
 delta = "0.4.0 -> 0.5.0"
 
+[[audits.sea-orm-arrow]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "2.0.0-rc.4 -> 2.0.0-rc.5"
+
+[[audits.sea-orm-cli]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "2.0.3 -> 2.0.4"
+
+[[audits.thirtyfour-macros]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "0.3.0 -> 0.3.1"
+
 [[audits.tokio-rustls]]
 who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-deploy"
 delta = "0.26.5 -> 0.26.6"
 
+[[audits.utoipa-swagger-ui]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "10.0.1 -> 10.0.2"
+notes = "Only zip dep is updated"
+
 [[audits.uuid]]
 who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-deploy"
 delta = "1.27.0 -> 1.28.0"
+
+[[audits.wasm-bindgen-shared]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "0.2.128 -> 0.2.129"
+
+[[audits.webpki-root-certs]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "1.0.9 -> 1.0.10"
 
 [[trusted.aho-corasick]]
 criteria = "safe-to-deploy"
@@ -246,6 +298,12 @@ criteria = "safe-to-deploy"
 user-id = 3618 # David Tolnay (dtolnay)
 start = "2020-01-06"
 end = "2027-10-15"
+
+[[trusted.ff]]
+criteria = "safe-to-deploy"
+user-id = 6289 # Jack Grigg (str4d)
+start = "2021-08-11"
+end = "2027-10-20"
 
 [[trusted.filetime]]
 criteria = "safe-to-deploy"
@@ -769,6 +827,12 @@ user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-04-26"
 end = "2027-10-15"
 
+[[trusted.serde_spanned]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-01-20"
+end = "2027-10-20"
+
 [[trusted.slab]]
 criteria = "safe-to-deploy"
 user-id = 6741 # Alice Ryhl (Darksonn)
@@ -841,6 +905,18 @@ user-id = 6741 # Alice Ryhl (Darksonn)
 start = "2021-01-12"
 end = "2027-10-15"
 
+[[trusted.toml]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2022-12-14"
+end = "2027-10-20"
+
+[[trusted.toml_datetime]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2022-10-21"
+end = "2027-10-20"
+
 [[trusted.toml_edit]]
 criteria = "safe-to-deploy"
 user-id = 6743 # Ed Page (epage)
@@ -912,6 +988,36 @@ criteria = "safe-to-deploy"
 user-id = 359 # Sean McArthur (seanmonstar)
 start = "2019-03-19"
 end = "2027-10-15"
+
+[[trusted.wasm-bindgen]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2027-10-20"
+
+[[trusted.wasm-bindgen-futures]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2027-10-20"
+
+[[trusted.wasm-bindgen-macro]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2027-10-20"
+
+[[trusted.wasm-bindgen-macro-support]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2027-10-20"
+
+[[trusted.wasm-bindgen-shared]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2027-10-20"
 
 [[trusted.web-sys]]
 criteria = "safe-to-deploy"
@@ -1023,7 +1129,7 @@ end = "2027-10-15"
 
 [[trusted.yoke-derive]]
 criteria = "safe-to-deploy"
-user-id = 166196
+user-id = 166196 # Robert Bastian (robertbastian)
 start = "2023-01-26"
 end = "2027-10-15"
 
