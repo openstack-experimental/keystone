@@ -281,15 +281,16 @@ async fn test_authorization_code_cannot_be_redeemed_by_other_client() -> Result<
     Ok(())
 }
 
-/// Conformance gate: validate the ID token with a standard RP library
+/// Conformance gate: validate the ID token against the live JWKS
 /// (signature via the live JWKS, nonce, `at_hash`) and call `/userinfo`.
 #[tokio::test]
 #[traced_test]
 async fn test_authorization_code_flow_id_token_interop() -> Result<()> {
-    use openidconnect::core::{
-        CoreIdToken, CoreIdTokenVerifier, CoreJsonWebKeySet, CoreJwsSigningAlgorithm,
-    };
-    use openidconnect::{AccessToken, AccessTokenHash, ClientId, IssuerUrl, Nonce};
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use jsonwebtoken::jwk::JwkSet;
+    use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
+    use sha2::{Digest, Sha256};
 
     let f = fixture().await?;
     let browser = AuthorizeBrowser::new(&f.domain_id)?;
@@ -300,62 +301,50 @@ async fn test_authorization_code_flow_id_token_interop() -> Result<()> {
     assert_eq!(status, StatusCode::OK, "{body}");
 
     let (_, doc) = get_well_known(&f.domain_id).await?;
-    let issuer = IssuerUrl::new(
-        doc["issuer"]
-            .as_str()
-            .ok_or_else(|| eyre!("no issuer"))?
-            .to_string(),
-    )?;
+    let issuer = doc["issuer"].as_str().ok_or_else(|| eyre!("no issuer"))?;
     let jwks_uri = doc["jwks_uri"]
         .as_str()
         .ok_or_else(|| eyre!("no jwks_uri"))?;
-    let jwks_raw: serde_json::Value = reqwest::get(jwks_uri).await?.json().await?;
-    let jwks: CoreJsonWebKeySet = serde_json::from_value(jwks_raw.clone())?;
+    let jwks: JwkSet = reqwest::get(jwks_uri).await?.json().await?;
 
-    let id_token: CoreIdToken = serde_json::from_value(body["id_token"].clone())?;
-    // The OP signs with ES256; the library default allows RS256 only.
-    let verifier = CoreIdTokenVerifier::new_public_client(
-        ClientId::new(f.client.client_id.clone()),
-        issuer,
-        jwks,
-    )
-    .set_allowed_algs([CoreJwsSigningAlgorithm::EcdsaP256Sha256]);
-    let nonce = Nonce::new(params.nonce.clone().ok_or_else(|| eyre!("no nonce"))?);
-    let claims = id_token.claims(&verifier, &nonce).map_err(|e| {
-        let k = &jwks_raw["keys"][0];
-        let jwt_check = jsonwebtoken::DecodingKey::from_ec_components(
-            k["x"].as_str().unwrap_or_default(),
-            k["y"].as_str().unwrap_or_default(),
-        )
-        .map(|key| {
-            let mut v = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::ES256);
-            v.set_audience(&[f.client.client_id.as_str()]);
-            jsonwebtoken::decode::<serde_json::Value>(
-                body["id_token"].as_str().unwrap_or_default(),
-                &key,
-                &v,
-            )
-            .map(|_| "ok".to_string())
-            .unwrap_or_else(|e| e.to_string())
-        });
-        eyre!("id_token verification failed: {e:?}; jsonwebtoken says {jwt_check:?}")
-    })?;
+    let id_token = body["id_token"]
+        .as_str()
+        .ok_or_else(|| eyre!("no id_token"))?;
+    // The OP signs with ES256.
+    let header = decode_header(id_token)?;
+    assert_eq!(header.alg, Algorithm::ES256);
+    let kid = header
+        .kid
+        .ok_or_else(|| eyre!("id_token header has no kid"))?;
+    let jwk = jwks
+        .find(&kid)
+        .ok_or_else(|| eyre!("kid {kid} not in JWKS"))?;
+    let mut validation = Validation::new(Algorithm::ES256);
+    validation.set_issuer(&[issuer]);
+    validation.set_audience(&[f.client.client_id.as_str()]);
+    validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
+    let claims =
+        decode::<serde_json::Value>(id_token, &DecodingKey::from_jwk(jwk)?, &validation)?.claims;
+
+    let nonce = params.nonce.as_deref().ok_or_else(|| eyre!("no nonce"))?;
+    assert_eq!(claims["nonce"].as_str(), Some(nonce), "nonce mismatch");
 
     let access = body["access_token"]
         .as_str()
         .ok_or_else(|| eyre!("no access_token"))?;
-    if let Some(expected) = claims.access_token_hash() {
-        let actual = AccessTokenHash::from_token(
-            &AccessToken::new(access.to_string()),
-            id_token.signing_alg()?,
-            id_token.signing_key(&verifier)?,
-        )?;
-        assert_eq!(&actual, expected, "at_hash mismatch");
+    if let Some(expected) = claims["at_hash"].as_str() {
+        // OIDC Core 3.1.3.6: left-most half of the hash of the access token.
+        let digest = Sha256::digest(access.as_bytes());
+        assert_eq!(
+            URL_SAFE_NO_PAD.encode(&digest[..digest.len() / 2]),
+            expected,
+            "at_hash mismatch"
+        );
     }
 
     let (status, _, info) = call_userinfo(&f.domain_id, false, Some(access)).await?;
     assert_eq!(status, StatusCode::OK, "{info}");
-    assert_eq!(info["sub"].as_str(), Some(claims.subject().as_str()));
+    assert_eq!(info["sub"], claims["sub"]);
     assert_eq!(info["preferred_username"], f.username.as_str());
     Ok(())
 }

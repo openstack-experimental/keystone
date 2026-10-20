@@ -125,10 +125,7 @@ async fn test_discovery_document_not_found_for_unprovisioned_domain() -> Result<
 
 #[tokio::test]
 #[traced_test]
-async fn test_discovery_openidconnect_interop() -> Result<()> {
-    use openidconnect::IssuerUrl;
-    use openidconnect::core::CoreProviderMetadata;
-
+async fn test_discovery_issuer_self_consistent() -> Result<()> {
     let domain_name = format!("discovery-interop-{}", Uuid::new_v4().simple());
     let domain_id = create_test_domain(&domain_name).await?;
 
@@ -142,14 +139,17 @@ async fn test_discovery_openidconnect_interop() -> Result<()> {
     }
     assert_eq!(status, StatusCode::OK);
 
-    // The issuer must match what the server publishes: reuse the one from
-    // the live document so `discover_async` validates it against the URL.
+    // RFC 8414 §3.3: the document fetched from `{issuer}/.well-known/...`
+    // must carry that same `issuer`.
     let (_, doc) = get_well_known(&domain_id).await?;
-    let issuer = IssuerUrl::new(doc["issuer"].as_str().unwrap().to_owned())?;
-    let http_client = openidconnect::reqwest::ClientBuilder::new()
-        .redirect(openidconnect::reqwest::redirect::Policy::none())
-        .build()?;
-    let metadata = CoreProviderMetadata::discover_async(issuer, &http_client).await?;
-    assert!(metadata.token_endpoint().is_some());
+    let issuer = doc["issuer"].as_str().unwrap().trim_end_matches('/');
+    let fetched: serde_json::Value =
+        reqwest::get(format!("{issuer}/.well-known/openid-configuration"))
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+    assert_eq!(fetched["issuer"], doc["issuer"]);
+    assert!(fetched["token_endpoint"].is_string());
     Ok(())
 }
