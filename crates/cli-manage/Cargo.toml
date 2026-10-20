@@ -36,8 +36,8 @@ openstack-keystone-token-restriction-driver-sql.workspace = true
 openstack-keystone-webauthn.workspace = true
 oslo-config.workspace = true
 percent-encoding.workspace = true
-sea-orm = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-native-tls"] }
-sea-orm-migration = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-native-tls"] }
+sea-orm = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-rustls"] }
+sea-orm-migration = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-rustls"] }
 reqwest = { workspace = true, features = ["json", "query"] }
 openstack-keystone-tls-provider.workspace = true
 rustls.workspace = true

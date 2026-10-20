@@ -86,7 +86,7 @@ reqwest = { workspace = true, features = ["json", "form", "http2", "gzip", "defl
 sha2.workspace = true
 openstack-keystone-tls-provider.workspace = true
 rustls.workspace = true
-sea-orm = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-native-tls"] }
+sea-orm = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-rustls"] }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
