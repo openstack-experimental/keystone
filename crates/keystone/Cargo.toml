@@ -102,7 +102,7 @@ toml.workspace = true
 tonic = { workspace = true, features = ["server"] }
 time.workspace = true
 tower.workspace = true
-tower-http = { workspace = true, features = ["compression-full", "normalize-path", "request-id", "sensitive-headers", "trace", "util"] }
+tower-http = { workspace = true, features = ["compression-br", "compression-deflate", "compression-gzip", "normalize-path", "request-id", "sensitive-headers", "trace", "util"] }
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-error = "0.2"
