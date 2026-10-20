@@ -48,6 +48,11 @@ criteria = "safe-to-deploy"
 version = "0.3.34"
 notes = "Full read with AI assistance. Unsafe confined to the standard Arc-based RawWaker vtable (refcounts balanced via ManuallyDrop), noop waker (repr(transparent) cast) and FutureObj lifetime erasure with matching Box drop. No build.rs, fs, net or process access."
 
+[[audits.minijinja]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "2.24.0 -> 3.0.1"
+
 [[audits.proptest]]
 who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-run"

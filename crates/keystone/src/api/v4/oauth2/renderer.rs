@@ -25,7 +25,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use minijinja::value::{Kwargs, Value};
+use minijinja::value::{Kwargs, Serde, Value};
 use minijinja::{Environment, context};
 use serde::Serialize;
 use thiserror::Error;
@@ -474,10 +474,10 @@ impl JinjaRenderer {
             Ok::<_, minijinja::Error>(text)
         });
         self.env.get_template(name)?.render(context! {
-            branding => &self.branding,
+            branding => Serde(&self.branding),
             locale => locale,
             t => t,
-            ..Value::from_serialize(ctx)
+            ..Value::from(Serde(ctx))
         })
     }
 }

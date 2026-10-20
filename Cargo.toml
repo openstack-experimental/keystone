@@ -85,7 +85,7 @@ exclude = [
 arbitrary = { version = "1" }
 arc-swap = { version = "1.9" }
 argon2 = { version = "0.6" }
-minijinja = { version = "2" }
+minijinja = { version = "3", features = ["serde"] }
 async-trait = { version = "0.1" }
 axum = { version = "0.8", default-features = false }
 axum-extra = { version = "0.12", default-features = false }

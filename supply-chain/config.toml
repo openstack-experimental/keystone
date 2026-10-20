@@ -947,10 +947,6 @@ criteria = "safe-to-deploy"
 version = "0.10.5"
 criteria = "safe-to-deploy"
 
-[[exemptions.itertools]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.jni]]
 version = "0.22.4"
 criteria = "safe-to-deploy"
@@ -1121,10 +1117,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.memfd]]
 version = "0.6.6"
-criteria = "safe-to-deploy"
-
-[[exemptions.memo-map]]
-version = "0.3.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.memoffset]]
