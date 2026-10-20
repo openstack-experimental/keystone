@@ -394,6 +394,33 @@ profiles:
         path: /manifests/kustomize/paths/0
         value: tools/k8s/keystone/overlays/skaffold-soak-otel
 
+  # JWS (ES256) tokens instead of the fernet default, to test both providers:
+  # `skaffold run -m keystone -p local,jws`. Profiles replace the one kustomize
+  # path, so with traces use `jws-otel` rather than `jws,otel`.
+  - name: jws
+    patches:
+      - op: replace
+        path: /manifests/kustomize/paths/0
+        value: tools/k8s/keystone/overlays/skaffold-jws
+
+  - name: jws-otel
+    patches:
+      - op: replace
+        path: /manifests/kustomize/paths/0
+        value: tools/k8s/keystone/overlays/skaffold-jws-otel
+
+  - name: jws-soak
+    patches:
+      - op: replace
+        path: /manifests/kustomize/paths/0
+        value: tools/k8s/keystone/overlays/skaffold-jws-soak
+
+  - name: jws-soak-otel
+    patches:
+      - op: replace
+        path: /manifests/kustomize/paths/0
+        value: tools/k8s/keystone/overlays/skaffold-jws-soak-otel
+
   # Export traces to the `observability` module's Jaeger (deploy that module
   # first): `skaffold run -m keystone -p local,otel`.
   - name: otel

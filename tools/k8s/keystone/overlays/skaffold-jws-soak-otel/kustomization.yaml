@@ -1,0 +1,7 @@
+# The 3-voter JWS soak cluster with OpenTelemetry export. Selected by the
+# `jws-soak-otel` profile of the `keystone` skaffold module.
+resources:
+  - ../skaffold-jws-soak
+
+components:
+  - ../otel-component

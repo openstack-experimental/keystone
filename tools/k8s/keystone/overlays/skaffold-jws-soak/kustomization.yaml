@@ -1,0 +1,9 @@
+# The 3-voter soak cluster issuing JWS tokens. Selected by the `jws-soak`
+# profile of the `keystone` skaffold module. Keep the replica count in sync
+# with SOAK_EXPECTED_VOTERS in ../soak/soak.yaml.
+resources:
+  - ../skaffold-jws
+
+replicas:
+  - name: keystone-rs
+    count: 3

@@ -1,0 +1,24 @@
+# Dev only: tokens are ES256 JWS signed with the committed test keypair.
+# keystone-rs reads <repo>/{private,public}.pem, keystone-py reads
+# <repo>/private/private.pem and <repo>/public/public.pem: expose both.
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts/-
+  value:
+    mountPath: /etc/keystone/jws-keys
+    name: jws
+- op: add
+  path: /spec/template/spec/volumes/-
+  value:
+    name: jws
+    secret:
+      secretName: jws-keys
+      defaultMode: 420
+      items:
+        - key: private.pem
+          path: private.pem
+        - key: public.pem
+          path: public.pem
+        - key: private.pem
+          path: private/private.pem
+        - key: public.pem
+          path: public/public.pem

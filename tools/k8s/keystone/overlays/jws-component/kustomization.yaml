@@ -1,0 +1,25 @@
+# Dev only: issue ES256 JWS tokens instead of the fernet default, using the
+# committed test keypair. Applied by the skaffold-jws overlay (`jws` profile)
+# together with its keystone.conf that sets `[token] provider = jws`.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+secretGenerator:
+  - name: jws-keys
+    files:
+      - jws-keys/private.pem
+      - jws-keys/public.pem
+
+patches:
+  - target:
+      kind: StatefulSet
+      name: keystone-rs
+    path: jws-patch.yaml
+  - target:
+      kind: Deployment
+      name: keystone-py
+    path: jws-patch.yaml
+  - target:
+      kind: Job
+      name: keystone-bootstrap
+    path: jws-patch.yaml

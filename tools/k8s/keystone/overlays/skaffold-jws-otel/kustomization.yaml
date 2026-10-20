@@ -1,0 +1,7 @@
+# The skaffold-jws overlay with OpenTelemetry export. Selected by the
+# `jws-otel` profile of the `keystone` skaffold module.
+resources:
+  - ../skaffold-jws
+
+components:
+  - ../otel-component

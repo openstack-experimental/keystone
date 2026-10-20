@@ -1,0 +1,13 @@
+# The skaffold overlay issuing JWS instead of fernet tokens. Selected by the
+# `jws` profile of the `keystone` skaffold module.
+resources:
+  - ../skaffold
+
+components:
+  - ../jws-component
+
+configMapGenerator:
+  - name: keystone
+    behavior: replace
+    files:
+      - conf/keystone.conf
