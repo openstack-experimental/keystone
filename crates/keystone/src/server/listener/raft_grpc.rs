@@ -15,7 +15,7 @@
 //! # Raft gRPC listener
 use std::sync::Arc;
 
-use color_eyre::eyre::{Report, Result};
+use color_eyre::eyre::{Report, Result, eyre};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
@@ -176,19 +176,38 @@ pub async fn start_raft_app(
             );
 
             // Build a stream of pre-TLS-wrapped connections.  TLS handshake
-            // failures are logged and skipped; TCP accept errors terminate the
-            // stream and surface to tonic as a transient error.  After
-            // consecutive handshake failures the loop returns `Err` to prevent
-            // a tight retry loop under targeted attacks.
+            // and TCP accept failures are logged and skipped; the stream never
+            // yields an error because tonic would only `trace!` it and then
+            // stop serving.  After consecutive handshake failures each further
+            // failure is delayed to prevent a tight retry loop under targeted
+            // attacks.
             const MAX_CONSECUTIVE_TLS_FAILURES: u32 = 10;
+            const ACCEPT_ERROR_BACKOFF: std::time::Duration = std::time::Duration::from_millis(100);
             let incoming = futures_util::stream::try_unfold(
                 (listener, acceptor, 0u32),
                 |(listener, acceptor, mut fail_count)| async move {
                     loop {
-                        let (tcp, _) = listener.accept().await?;
+                        // A failed `accept` (e.g. EMFILE, or a connection
+                        // reset before it was accepted) must not end this
+                        // stream: tonic only `trace!`s stream errors and then
+                        // treats the ended stream as a graceful stop, which
+                        // would silently kill the Raft listener while the
+                        // process keeps running.
+                        let tcp = match listener.accept().await {
+                            Ok((tcp, _)) => tcp,
+                            Err(e) => {
+                                tracing::warn!("Raft gRPC accept failed: {e}");
+                                tokio::time::sleep(ACCEPT_ERROR_BACKOFF).await;
+                                continue;
+                            }
+                        };
                         // Avoid Nagle + delayed ACK stalls (~40ms) on small
-                        // RPC responses.
-                        tcp.set_nodelay(true)?;
+                        // RPC responses. Best effort: the peer may already
+                        // have reset the connection.
+                        if let Err(e) = tcp.set_nodelay(true) {
+                            tracing::warn!("Raft gRPC set_nodelay failed: {e}");
+                            continue;
+                        }
                         match acceptor.accept(tcp).await {
                             Ok(tls) => {
                                 return Ok::<_, std::io::Error>(Some((
@@ -200,10 +219,10 @@ pub async fn start_raft_app(
                                 fail_count += 1;
                                 tracing::warn!("Raft gRPC TLS handshake failed: {e}");
                                 if fail_count >= MAX_CONSECUTIVE_TLS_FAILURES {
-                                    return Err(std::io::Error::other(format!(
-                                        "giving up after {MAX_CONSECUTIVE_TLS_FAILURES} \
-                                             consecutive TLS handshake failures"
-                                    )));
+                                    // Throttle instead of giving up: ending
+                                    // the stream would stop the listener
+                                    // without any error being reported.
+                                    tokio::time::sleep(ACCEPT_ERROR_BACKOFF).await;
                                 }
                             }
                         }
@@ -212,11 +231,15 @@ pub async fn start_raft_app(
             );
 
             _ = bound_signal.send(true);
+            let shutdown_token = cancel_token.clone();
             tonic_router
                 .serve_with_incoming_shutdown(incoming, async move {
-                    cancel_token.cancelled().await;
+                    shutdown_token.cancelled().await;
                 })
                 .await?;
+            if !cancel_token.is_cancelled() {
+                return Err(eyre!("Raft gRPC listener stopped unexpectedly"));
+            }
         }
 
         RaftTlsConfiguration::Tls(_) => {
