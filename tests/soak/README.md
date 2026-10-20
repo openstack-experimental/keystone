@@ -19,15 +19,15 @@ The `soak` controller
 ## Run
 
 The soak test targets a production-sized cluster of at least 3 voters. With
-skaffold (module `soak` in `skaffold.yaml`), deploy keystone with the `soak`
+skaffold (`skaffold-soak.yaml`), deploy keystone with the `soak`
 profile (overlay `skaffold-soak`: 3 `keystone-rs` replicas) first:
 
 ```sh
 skaffold build -m keystone -p local,soak --default-repo localhost:5000 --file-output keystone-build.json
 skaffold deploy -m keystone -p local,soak -a keystone-build.json
-skaffold build -m soak -p local --default-repo localhost:5000 --file-output soak-build.json
-skaffold deploy -m soak -p local -a soak-build.json
-skaffold delete -m soak
+skaffold build -f skaffold-soak.yaml -p local --default-repo localhost:5000 --file-output soak-build.json
+skaffold deploy -f skaffold-soak.yaml -p local -a soak-build.json
+skaffold delete -f skaffold-soak.yaml
 ```
 
 For traces too, use the combined `soak-otel` profile instead of `-p soak,otel`

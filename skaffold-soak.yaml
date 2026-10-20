@@ -1,0 +1,64 @@
+# Copyright 2026 Open Infra Foundation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Raft soak test (tests/soak, see tests/soak/README.md). Kept apart from
+# skaffold.yaml so a plain `skaffold render`/`run` there never builds or
+# deploys it. Deploy next to a running `keystone` module (profile
+# `soak`) in the same namespace:
+#
+#   skaffold build -f skaffold-soak.yaml -p local --default-repo localhost:5000 --file-output soak-build.json
+#   skaffold deploy -f skaffold-soak.yaml -p local -a soak-build.json
+#
+# Tune length/thresholds in tools/k8s/keystone/overlays/soak/soak.yaml.
+# Results: `kubectl port-forward svc/keystone-soak 9100`, `GET /verdict`.
+# Remove: `skaffold delete -f skaffold-soak.yaml`.
+apiVersion: skaffold/v4beta13
+kind: Config
+metadata:
+  name: soak
+build:
+  insecureRegistries:
+    - localhost:5000
+  artifacts:
+    - image: keystone-soak
+      context: .
+      docker:
+        dockerfile: tests/soak/Dockerfile
+  local:
+    concurrency: 0
+manifests:
+  kustomize:
+    paths:
+      - tools/k8s/keystone/overlays/soak
+deploy:
+  statusCheck: true
+  statusCheckDeadlineSeconds: 300
+  kubectl:
+    flags:
+      apply: ["--wait"]
+profiles:
+  - name: local
+    build:
+      insecureRegistries:
+        - localhost:5000
+      local:
+        useDockerCLI: true
+        concurrency: 0
+        push: true
+portForward:
+  - resourceType: service
+    resourceName: keystone-soak
+    port: 9100
+    localPort: 9100

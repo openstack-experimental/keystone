@@ -7,7 +7,7 @@
 #
 # * `infra` - peripheral components: spire, certmanager, keycloak, dex, etc
 # * `keystone` - Keystone
-# * `soak` - Raft soak test controller (tests/soak); needs a running `keystone`
+# Raft soak test: separate file `skaffold-soak.yaml` (opt-in, see tests/soak).
 #
 # # Usage
 #
@@ -593,49 +593,3 @@ portForward:
     resourceName: grafana
     port: 3000
     localPort: 3000
----
-apiVersion: skaffold/v4beta13
-kind: Config
-metadata:
-  name: soak
-# Raft soak test (tests/soak, see tests/soak/README.md). Deploy next to a
-# running `keystone` module in the same namespace:
-#   skaffold build -m soak -p local --default-repo localhost:5000 --file-output soak-build.json
-#   skaffold deploy -m soak -p local -a soak-build.json
-# Tune length/thresholds in tools/k8s/keystone/overlays/soak/soak.yaml.
-# Results: `kubectl port-forward svc/keystone-soak 9100`, `GET /verdict`.
-# Remove: `skaffold delete -m soak`.
-build:
-  insecureRegistries:
-    - localhost:5000
-  artifacts:
-    - image: keystone-soak
-      context: .
-      docker:
-        dockerfile: tests/soak/Dockerfile
-  local:
-    concurrency: 0
-manifests:
-  kustomize:
-    paths:
-      - tools/k8s/keystone/overlays/soak
-deploy:
-  statusCheck: true
-  statusCheckDeadlineSeconds: 300
-  kubectl:
-    flags:
-      apply: ["--wait"]
-profiles:
-  - name: local
-    build:
-      insecureRegistries:
-        - localhost:5000
-      local:
-        useDockerCLI: true
-        concurrency: 0
-        push: true
-portForward:
-  - resourceType: service
-    resourceName: keystone-soak
-    port: 9100
-    localPort: 9100
