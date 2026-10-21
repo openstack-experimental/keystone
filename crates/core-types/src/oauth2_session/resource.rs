@@ -433,6 +433,9 @@ pub enum RefreshTokenRevocationReason {
     ConsentRevoked,
     /// The user logged out of the client (RP-initiated logout).
     Logout,
+    /// A valid DPoP proof from a key other than the one the family is bound
+    /// to was presented: a suspected stolen refresh token (ADR 0043 §3).
+    DpopKeyMismatch,
 }
 
 impl RefreshTokenRevocationReason {
@@ -452,6 +455,7 @@ impl RefreshTokenRevocationReason {
             Self::PasswordChanged => "password_changed",
             Self::ConsentRevoked => "consent_revoked",
             Self::Logout => "logout",
+            Self::DpopKeyMismatch => "dpop_key_mismatch",
         }
     }
 }

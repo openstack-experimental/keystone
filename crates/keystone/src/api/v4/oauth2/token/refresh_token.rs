@@ -114,7 +114,8 @@ pub(super) async fn handle_refresh_token_grant(
             tracing::warn!(error = %e, "oauth2 refresh token lookup failed");
             Oauth2TokenError::internal("token issuance failed")
         })?;
-    if let Some(record) = peeked {
+    let family_jkt = peeked.as_ref().and_then(|r| r.dpop_jkt.clone());
+    if let Some(record) = &peeked {
         // Never act on (or reveal anything about) another client's family.
         if record.client_id != client_id || record.domain_id != domain_id {
             emit_oauth2_session_event(
@@ -135,7 +136,7 @@ pub(super) async fn handle_refresh_token_grant(
         // Already-revoked families fall through to redemption, which
         // rejects them without further side effects.
         if record.revoked_at.is_none()
-            && let Some(reason) = refresh_principal_invalid_reason(state, &record).await?
+            && let Some(reason) = refresh_principal_invalid_reason(state, record).await?
         {
             return Err(revoke_family_invalid_grant(
                 state,
@@ -145,6 +146,44 @@ pub(super) async fn handle_refresh_token_grant(
             )
             .await);
         }
+    }
+
+    // A bound family needs a proof on every refresh, even when DPoP has been
+    // switched off since (ADR 0043 §3.3). A proof that is merely missing,
+    // stale or replayed is a bad request and leaves the family alone.
+    //
+    // A token that was already rotated away is not held to that: presenting
+    // it is reuse whatever proof comes with it, and redemption below must
+    // see it to revoke the family and raise the critical audit event. A
+    // proof gate in front would answer a thief without a proof with a plain
+    // bad request and hide the reuse.
+    let already_spent = peeked.as_ref().is_some_and(|r| r.spent_at.is_some());
+    let min_mode = if family_jkt.is_some() {
+        openstack_keystone_config::DpopMode::Required
+    } else {
+        openstack_keystone_config::DpopMode::Disabled
+    };
+    let confirmation = if already_spent {
+        None
+    } else {
+        super::dpop::bind_token_request(state, domain_id, headers, peer_addr, &client, min_mode)
+            .await?
+    };
+    // A *valid* proof from another key means the refresh token is in the
+    // wrong hands: revoke the family like a detected reuse.
+    if let (Some(expected), Some(presented), Some(record)) = (
+        family_jkt.as_deref(),
+        confirmation.as_ref(),
+        peeked.as_ref(),
+    ) && !presented.matches(expected)
+    {
+        return Err(revoke_family_invalid_grant(
+            state,
+            correlation_id,
+            &record.family_id,
+            RefreshTokenRevocationReason::DpopKeyMismatch,
+        )
+        .await);
     }
 
     let redemption = state
@@ -209,7 +248,7 @@ pub(super) async fn handle_refresh_token_grant(
         scope: record.scope.join(" "),
         token_use: "access".to_string(),
         family_id: Some(record.family_id.clone()),
-        cnf: None,
+        cnf: confirmation.clone(),
     };
     let access_token = sign_jwt(state, domain_id, &access_claims).await?;
 
@@ -228,7 +267,7 @@ pub(super) async fn handle_refresh_token_grant(
 
     let response = TokenResponse {
         access_token,
-        token_type: "Bearer",
+        token_type: super::dpop::token_type(confirmation.as_ref()),
         expires_in: access_lifetime,
         scope: record.scope.join(" "),
         id_token: None,
@@ -343,8 +382,8 @@ mod tests {
     use crate::api::tests::get_mocked_state;
     use crate::api::v4::oauth2::openapi_router;
     use crate::api::v4::oauth2::token::test_fixtures::{
-        json_body, jwt_claims, ok_key_mock, public_authz_code_client, refresh_identity_mock,
-        refresh_resource_mock, refresh_user, request,
+        dpop_proof, dpop_test_jkt, json_body, jwt_claims, ok_key_mock, public_authz_code_client,
+        refresh_identity_mock, refresh_resource_mock, refresh_user, request,
     };
     use crate::identity::MockIdentityProvider;
 
@@ -408,6 +447,9 @@ mod tests {
         ];
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
 
@@ -467,6 +509,9 @@ mod tests {
         ];
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
 
@@ -525,6 +570,9 @@ mod tests {
             provider_types::GrantType::RefreshToken,
         ];
         let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
         client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
@@ -644,6 +692,9 @@ mod tests {
         ];
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
 
@@ -714,6 +765,9 @@ mod tests {
         ];
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
 
@@ -776,6 +830,9 @@ mod tests {
         ];
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
 
@@ -817,6 +874,9 @@ mod tests {
             provider_types::GrantType::RefreshToken,
         ];
         let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
         client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
@@ -903,6 +963,9 @@ mod tests {
         ];
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
 
@@ -961,5 +1024,332 @@ mod tests {
             api.as_service().oneshot(req2).await.unwrap().status(),
             StatusCode::TOO_MANY_REQUESTS
         );
+    }
+    const TOKEN_URL: &str = "http://localhost/v4/oauth2/domain-1/token";
+
+    /// How a [`dpop_state`] expects the family to be treated.
+    struct Expect {
+        /// Redemptions of the refresh token.
+        redeems: usize,
+        /// Whole-family revocations for a DPoP key mismatch.
+        revocations: usize,
+    }
+
+    /// A state with DPoP `optional` and a refresh family bound to `family_jkt`.
+    async fn dpop_state(
+        family_jkt: Option<String>,
+        expect: Expect,
+    ) -> crate::keystone::ServiceState {
+        let mut client = public_authz_code_client().await;
+        client.grant_types = vec![
+            provider_types::GrantType::AuthorizationCode,
+            provider_types::GrantType::RefreshToken,
+        ];
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Optional));
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+
+        let jkt = family_jkt.clone();
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_peek_refresh_token()
+            .returning(move |_, _| {
+                let mut record = sample_refresh_record(None);
+                record.dpop_jkt = jkt.clone();
+                Ok(Some(record))
+            });
+        session_mock
+            .expect_redeem_refresh_token()
+            .times(expect.redeems)
+            .returning(move |_, _, _, _| {
+                let mut record = sample_refresh_record(None);
+                record.dpop_jkt = family_jkt.clone();
+                Ok(RefreshTokenRedemption::Rotated {
+                    record: Box::new(record),
+                    bearer: "rotated-bearer".to_string(),
+                })
+            });
+        session_mock
+            .expect_revoke_refresh_token_family()
+            .withf(|_, family, reason| {
+                family == "family-1"
+                    && *reason
+                        == openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason::DpopKeyMismatch
+            })
+            .times(expect.revocations)
+            .returning(|_, _, _| Ok(()));
+
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock)
+            .mock_identity(refresh_identity_mock(Some(refresh_user(true, "domain-1"))))
+            .mock_resource(refresh_resource_mock(Some(true)))
+            .mock_oauth2_key(ok_key_mock());
+        let mut config = Config::default();
+        config.oauth2.allow_host_header_issuer = true;
+        config.oauth2.dpop = openstack_keystone_config::DpopMode::Optional;
+        config.mapping.cluster_salt = Some("dpop-test-salt".to_string().into());
+        openstack_keystone_core::api::tests::get_mocked_state_with_config(
+            provider, true, None, config,
+        )
+        .await
+    }
+
+    fn with_proof(proof: Option<String>) -> axum::http::Request<axum::body::Body> {
+        let mut req = request(&refresh_token_form("rt-1"));
+        if let Some(proof) = proof {
+            req.headers_mut().insert("DPoP", proof.parse().unwrap());
+        }
+        req
+    }
+
+    async fn fetch_nonce(api: &mut utoipa_axum::router::OpenApiRouter) -> String {
+        let response = api
+            .as_service()
+            .oneshot(with_proof(Some(dpop_proof(TOKEN_URL, "nonce-probe", None))))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let nonce = response.headers()["dpop-nonce"]
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(json_body(response).await["error"], "use_dpop_nonce");
+        nonce
+    }
+
+    #[tokio::test]
+    async fn test_bound_family_with_same_key_rotates_bound_tokens() {
+        let state = dpop_state(
+            Some(dpop_test_jkt()),
+            Expect {
+                redeems: 1,
+                revocations: 0,
+            },
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let nonce = fetch_nonce(&mut api).await;
+
+        let response = api
+            .as_service()
+            .oneshot(with_proof(Some(dpop_proof(
+                TOKEN_URL,
+                "jti-1",
+                Some(&nonce),
+            ))))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["token_type"], "DPoP");
+        assert_eq!(body["refresh_token"], "rotated-bearer");
+        assert_eq!(
+            jwt_claims(body["access_token"].as_str().unwrap())["cnf"]["jkt"],
+            dpop_test_jkt()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bound_family_with_another_key_is_revoked() {
+        let state = dpop_state(
+            Some("A".repeat(43)),
+            Expect {
+                redeems: 0,
+                revocations: 1,
+            },
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let nonce = fetch_nonce(&mut api).await;
+
+        let response = api
+            .as_service()
+            .oneshot(with_proof(Some(dpop_proof(
+                TOKEN_URL,
+                "jti-2",
+                Some(&nonce),
+            ))))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_bound_family_without_proof_is_a_bad_request_not_a_revocation() {
+        let state = dpop_state(
+            Some(dpop_test_jkt()),
+            Expect {
+                redeems: 0,
+                revocations: 0,
+            },
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api.as_service().oneshot(with_proof(None)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_dpop_proof");
+    }
+
+    /// A rotated-away token of a bound family is reuse whatever proof comes
+    /// with it: redemption must see it, so the family is revoked and the
+    /// critical event raised, not hidden behind a missing-proof error.
+    #[tokio::test]
+    async fn test_spent_token_of_bound_family_without_proof_is_reuse() {
+        let mut client = public_authz_code_client().await;
+        client.grant_types = vec![
+            provider_types::GrantType::AuthorizationCode,
+            provider_types::GrantType::RefreshToken,
+        ];
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Optional));
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock.expect_peek_refresh_token().returning(|_, _| {
+            let mut record = sample_refresh_record(Some(1));
+            record.dpop_jkt = Some(dpop_test_jkt());
+            Ok(Some(record))
+        });
+        session_mock
+            .expect_redeem_refresh_token()
+            .times(1)
+            .returning(|_, _, _, _| {
+                Ok(RefreshTokenRedemption::ReuseDetected {
+                    family_id: "family-1".to_string(),
+                    reason: openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason::ReuseDetected,
+                })
+            });
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock)
+            .mock_identity(refresh_identity_mock(Some(refresh_user(true, "domain-1"))))
+            .mock_resource(refresh_resource_mock(Some(true)))
+            .mock_oauth2_key(ok_key_mock());
+        let mut config = Config::default();
+        config.oauth2.allow_host_header_issuer = true;
+        config.oauth2.dpop = openstack_keystone_config::DpopMode::Optional;
+        config.mapping.cluster_salt = Some("dpop-test-salt".to_string().into());
+        let state = openstack_keystone_core::api::tests::get_mocked_state_with_config(
+            provider, true, None, config,
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api.as_service().oneshot(with_proof(None)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_nonce_challenge_neither_rotates_nor_revokes() {
+        let state = dpop_state(
+            Some(dpop_test_jkt()),
+            Expect {
+                redeems: 0,
+                revocations: 0,
+            },
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        assert!(!fetch_nonce(&mut api).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_replayed_proof_is_a_bad_request_not_a_revocation() {
+        let state = dpop_state(
+            Some(dpop_test_jkt()),
+            Expect {
+                redeems: 1,
+                revocations: 0,
+            },
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let nonce = fetch_nonce(&mut api).await;
+        let proof = dpop_proof(TOKEN_URL, "jti-replay", Some(&nonce));
+
+        let first = api
+            .as_service()
+            .oneshot(with_proof(Some(proof.clone())))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let second = api
+            .as_service()
+            .oneshot(with_proof(Some(proof)))
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(second).await["error"], "invalid_dpop_proof");
+    }
+
+    #[tokio::test]
+    async fn test_unbound_family_with_proof_gets_bound_access_token() {
+        let state = dpop_state(
+            None,
+            Expect {
+                redeems: 1,
+                revocations: 0,
+            },
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let nonce = fetch_nonce(&mut api).await;
+
+        let response = api
+            .as_service()
+            .oneshot(with_proof(Some(dpop_proof(
+                TOKEN_URL,
+                "jti-3",
+                Some(&nonce),
+            ))))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(json_body(response).await["token_type"], "DPoP");
+    }
+
+    #[tokio::test]
+    async fn test_unbound_family_without_proof_stays_bearer() {
+        let state = dpop_state(
+            None,
+            Expect {
+                redeems: 1,
+                revocations: 0,
+            },
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api.as_service().oneshot(with_proof(None)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(json_body(response).await["token_type"], "Bearer");
     }
 }
