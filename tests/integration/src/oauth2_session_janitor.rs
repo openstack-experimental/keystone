@@ -44,6 +44,7 @@ fn session_create(id: &str, expires_at: i64) -> PreAuthSessionCreate {
         nonce: None,
         server_side_session_secret: "secret".to_string(),
         force_consent: false,
+        dpop_jkt: None,
         created_at: expires_at - 600,
         expires_at,
     }

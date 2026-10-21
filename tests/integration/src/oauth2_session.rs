@@ -92,6 +92,7 @@ async fn test_authorization_code_flow_and_refresh_reuse_collapses_family() -> Re
                 code_challenge_method: "S256".to_string(),
                 nonce: Some("nonce-1".to_string()),
                 force_consent: false,
+                dpop_jkt: None,
             },
         )
         .await?;
@@ -646,6 +647,7 @@ fn sample_pre_auth_request(domain_id: &str) -> StartPreAuthSessionRequest {
         code_challenge_method: "S256".to_string(),
         nonce: None,
         force_consent: false,
+        dpop_jkt: None,
     }
 }
 

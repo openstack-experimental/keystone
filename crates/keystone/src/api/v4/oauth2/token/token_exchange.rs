@@ -46,6 +46,7 @@ pub(super) async fn handle_token_exchange_grant(
     state: &ServiceState,
     domain_id: &str,
     headers: &HeaderMap,
+    peer_addr: Option<std::net::SocketAddr>,
     form: &TokenForm,
     oauth2_cfg: &openstack_keystone_config::Oauth2Provider,
     correlation_id: &str,
@@ -85,6 +86,19 @@ pub(super) async fn handle_token_exchange_grant(
         ));
     }
 
+    // The exchanged token is bound to the key of the proof, when the client
+    // sends one or the effective mode demands it (ADR 0043 §4). Checked
+    // before the subject token, so a nonce challenge costs no validation.
+    let confirmation = super::dpop::bind_token_request(
+        state,
+        domain_id,
+        headers,
+        peer_addr,
+        &client,
+        openstack_keystone_config::DpopMode::Disabled,
+    )
+    .await?;
+
     let (vsc, delegation_context, credential_expires_at) =
         openstack_keystone_core::oauth2_client::validate_subject_token(state, &subject_token)
             .await
@@ -95,6 +109,16 @@ pub(super) async fn handle_token_exchange_grant(
                 )
             })?;
 
+    // The Keystone-native tokens this grant accepts carry no confirmation
+    // claim. A subject token that does is a sender-constrained token whose
+    // proof (`ath` over the subject token) this grant cannot check, so it is
+    // refused rather than traded for an unbound token (ADR 0043 §4).
+    if subject_token_carries_cnf(&subject_token) {
+        return Err(Oauth2TokenError::invalid_grant(
+            "a DPoP-bound subject_token cannot be exchanged",
+        ));
+    }
+
     let audience = requested_audience(state, &form.audience).await?;
 
     let base = base_url(state, headers).await;
@@ -103,7 +127,7 @@ pub(super) async fn handle_token_exchange_grant(
     let access_lifetime = i64::from(oauth2_cfg.access_token_lifetime_minutes) * 60;
     let jti = uuid::Uuid::new_v4().to_string();
 
-    let claims = openstack_keystone_core::oauth2_client::build_token_exchange_claims(
+    let mut claims = openstack_keystone_core::oauth2_client::build_token_exchange_claims(
         &client,
         &vsc,
         delegation_context,
@@ -142,6 +166,8 @@ pub(super) async fn handle_token_exchange_grant(
             }
         }
     })?;
+    let token_type = super::dpop::token_type(confirmation.as_ref());
+    claims.cnf = confirmation;
     let access_token = sign_jwt(state, domain_id, &claims).await?;
 
     emit_oauth2_session_event(
@@ -156,13 +182,34 @@ pub(super) async fn handle_token_exchange_grant(
 
     let response = TokenResponse {
         access_token,
-        token_type: "Bearer",
+        token_type,
         expires_in: claims.exp - now,
         scope: "openstack:api".to_string(),
         id_token: None,
         refresh_token: None,
     };
     Ok((StatusCode::OK, Json(response)).into_response())
+}
+
+/// Whether `token` is a JWT whose payload has a `cnf` claim, or one whose
+/// payload cannot be read. The payload is read without verifying anything:
+/// the caller has already validated the token and only uses this to fail
+/// closed on a token type it cannot honour, so a JWT-shaped token that cannot
+/// be inspected counts as carrying a confirmation rather than as plain.
+/// Tokens that are not JWT-shaped (the opaque Fernet tokens) have no claims.
+fn subject_token_carries_cnf(token: &str) -> bool {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    let mut parts = token.split('.');
+    let (Some(_), Some(payload), Some(_), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    URL_SAFE_NO_PAD
+        .decode(payload.trim_end_matches('='))
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<serde_json::Value>(&raw).ok())
+        .is_none_or(|claims| claims.as_object().is_none_or(|o| o.contains_key("cnf")))
 }
 
 /// Upper bound on `audience` values per request; there are far fewer service
@@ -233,9 +280,10 @@ mod tests {
     use crate::api::tests::get_mocked_state;
     use crate::api::v4::oauth2::openapi_router;
     use crate::api::v4::oauth2::token::test_fixtures::{
-        confidential_client, json_body, ok_key_mock, request,
+        confidential_client, dpop_proof, dpop_test_jkt, json_body, ok_key_mock, request,
     };
 
+    use super::subject_token_carries_cnf;
     use crate::oauth2_client::MockOauth2ClientProvider;
 
     use crate::provider::Provider;
@@ -253,6 +301,9 @@ mod tests {
     ) -> axum::response::Response {
         let client = token_exchange_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
         client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
@@ -433,6 +484,9 @@ mod tests {
         let client = token_exchange_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
 
@@ -492,6 +546,9 @@ mod tests {
 
         let client = token_exchange_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
         client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
@@ -586,6 +643,9 @@ mod tests {
         let client = token_exchange_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
 
@@ -640,6 +700,9 @@ mod tests {
         let client = confidential_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
 
@@ -664,6 +727,9 @@ mod tests {
     async fn test_token_exchange_rejects_non_delegated_subject_token() {
         let client = token_exchange_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
         client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
@@ -752,5 +818,176 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = json_body(response).await;
         assert_eq!(body["error"], "invalid_grant");
+    }
+
+    const TOKEN_URL: &str = "http://localhost/v4/oauth2/domain-1/token";
+    const EXCHANGE_FORM: &str = "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=";
+
+    /// A state with DPoP mode `mode` where `validate_to_context` may run
+    /// `validations` times.
+    async fn dpop_state(
+        mode: openstack_keystone_config::DpopMode,
+        validations: usize,
+    ) -> crate::keystone::ServiceState {
+        let client = token_exchange_client().await;
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(move |_, _, _| Ok(mode));
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+        let mut token_mock = crate::token::MockTokenProvider::default();
+        token_mock
+            .expect_validate_to_context()
+            .times(validations)
+            .returning(|_, _, _, _| {
+                let expires_at = chrono::Utc::now() + chrono::Duration::hours(1);
+                Ok(app_cred_delegated_vsc(expires_at, expires_at))
+            });
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_token(token_mock)
+            .mock_oauth2_key(ok_key_mock());
+        let mut config = openstack_keystone_config::Config::default();
+        config.oauth2.allow_host_header_issuer = true;
+        config.oauth2.dpop = mode;
+        config.mapping.cluster_salt = Some("dpop-test-salt".to_string().into());
+        openstack_keystone_core::api::tests::get_mocked_state_with_config(
+            provider, true, None, config,
+        )
+        .await
+    }
+
+    fn exchange_request(
+        subject_token: &str,
+        proof: Option<String>,
+    ) -> axum::http::Request<axum::body::Body> {
+        let mut req = request(&format!("{EXCHANGE_FORM}{subject_token}"));
+        if let Some(proof) = proof {
+            req.headers_mut().insert("DPoP", proof.parse().unwrap());
+        }
+        req
+    }
+
+    async fn fetch_nonce(api: &mut utoipa_axum::router::OpenApiRouter) -> String {
+        let response = api
+            .as_service()
+            .oneshot(exchange_request(
+                "tok",
+                Some(dpop_proof(TOKEN_URL, "nonce-probe", None)),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let nonce = response.headers()["dpop-nonce"]
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(json_body(response).await["error"], "use_dpop_nonce");
+        nonce
+    }
+
+    #[tokio::test]
+    async fn test_exchange_with_proof_issues_bound_token() {
+        let state = dpop_state(openstack_keystone_config::DpopMode::Optional, 1).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let nonce = fetch_nonce(&mut api).await;
+
+        let response = api
+            .as_service()
+            .oneshot(exchange_request(
+                "tok",
+                Some(dpop_proof(TOKEN_URL, "jti-1", Some(&nonce))),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["token_type"], "DPoP");
+        assert_eq!(
+            jwt_payload(body["access_token"].as_str().unwrap())["cnf"]["jkt"],
+            dpop_test_jkt()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_exchange_without_proof_stays_bearer_while_optional() {
+        let state = dpop_state(openstack_keystone_config::DpopMode::Optional, 1).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(exchange_request("tok", None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["token_type"], "Bearer");
+        assert!(
+            jwt_payload(body["access_token"].as_str().unwrap())
+                .get("cnf")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_exchange_without_proof_is_rejected_while_required() {
+        // The subject token is never validated: the proof is checked first.
+        let state = dpop_state(openstack_keystone_config::DpopMode::Required, 0).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(exchange_request("tok", None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_dpop_proof");
+    }
+
+    #[tokio::test]
+    async fn test_dpop_bound_subject_token_is_refused() {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+        let bound = format!(
+            "{}.{}.sig",
+            URL_SAFE_NO_PAD.encode(r#"{"alg":"ES256"}"#),
+            URL_SAFE_NO_PAD.encode(r#"{"cnf":{"jkt":"abc"}}"#)
+        );
+        let state = dpop_state(openstack_keystone_config::DpopMode::Disabled, 1).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(exchange_request(&bound, None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_grant");
+    }
+
+    #[test]
+    fn test_subject_token_carries_cnf() {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+        let jwt = |payload: &str| format!("h.{}.s", URL_SAFE_NO_PAD.encode(payload));
+        assert!(subject_token_carries_cnf(&jwt(r#"{"cnf":{"jkt":"k"}}"#)));
+        assert!(!subject_token_carries_cnf(&jwt(r#"{"sub":"u"}"#)));
+        assert!(!subject_token_carries_cnf("fernet-looking-opaque-token"));
+        assert!(!subject_token_carries_cnf("a.b"));
+        // A padded payload is still read.
+        let padded = format!("h.{}=.s", URL_SAFE_NO_PAD.encode(r#"{"cnf":{}}"#));
+        assert!(subject_token_carries_cnf(&padded));
+        // JWT-shaped but unreadable: fail closed.
+        assert!(subject_token_carries_cnf("h.!!!.s"));
+        assert!(subject_token_carries_cnf(&jwt("not json")));
+        assert!(subject_token_carries_cnf(&jwt("[1]")));
     }
 }
