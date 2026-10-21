@@ -1,6 +1,6 @@
 # Service grants
 
-Service grants ([ADR 0036](../../adr/0036-service-delegation.md), phase 1) let a
+Service grants ([ADR 0036](../../adr/0036-service-delegation.md), phases 1 and 2) let a
 user delegate a bounded set of their roles on one project to a registered
 OpenStack service, so the service can keep acting on the user's behalf after
 the user's own token has expired. Typical users are Heat (stack updates and
@@ -12,6 +12,10 @@ endpoint, authenticating with its own SPIFFE identity, and receives a
 short-lived JWT access token scoped to the grant's project. Every redemption
 re-validates the grant, the grantor and the grantor's current roles, so
 revoking a grant or removing a role takes effect at the next redemption.
+
+A delegatable service can also continue an operation the user started, with no
+stored record, by exchanging the user's own token ([on-behalf-of
+exchange](#on-behalf-of-exchange), phase 2).
 
 Nothing changes for a deployment until an administrator registers a
 delegatable service.
@@ -83,8 +87,10 @@ requires an administrator.
 - `max_grants_per_project` caps live grants per (project, client). The
   `[delegation] max_grants_per_project` backstop applies on top. Exceeding
   either answers `429`.
-- `on_behalf_of` and `max_operation_lifetime` are stored for the phase 2
-  on-behalf-of exchange and have no effect yet.
+- `on_behalf_of` lets the service exchange user tokens (see below) and requires
+  `max_operation_lifetime` (seconds), the longest an operation may run from the
+  moment the user authenticated. `max_role_ids` and `cross_domain` apply to
+  grants; for an exchange only `cross_domain` is consulted.
 
 Removing the policy (`"remove_delegation": true` on update), disabling the
 client, or deleting it disables every grant naming it with reason
@@ -219,6 +225,87 @@ Keystone itself does not accept these tokens as its own bearer credential, so a
 service grant token cannot be used to create grants, application credentials,
 EC2 credentials or trusts at Keystone.
 
+## On-behalf-of exchange
+
+A service holding a user's token trades it for a token of its own, without any
+grant. The user's token handed to the service is the consent, so nothing is
+stored and the user's ordinary controls end the exchange: revoking the token,
+removing the role, disabling the user.
+
+The service must be registered with `delegation.on_behalf_of` and a
+`max_operation_lifetime`, and authenticates exactly as for redemption (its
+X.509-SVID on the internal interface). Because an SVID alone does not name the
+client, the request carries `client_id`:
+
+```
+POST /v4/oauth2/{domain_id}/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+&client_id=<client id>
+&subject_token=<the user's token>
+&subject_token_type=urn:openstack:params:oauth:token-type:keystone
+&audience=<service type>    (optional; narrows `aud`)
+```
+
+`subject_token_type` is
+`urn:openstack:params:oauth:token-type:keystone` for a Fernet or JWS token the
+user presented, and `urn:ietf:params:oauth:token-type:access_token` for the
+token a previous exchange returned. The caller sends no secret; a request that
+carries one is the older secret-authenticated exchange of an application
+credential token and is unchanged.
+
+The subject must be a plain login or an application credential. A trust, a
+service grant, a restricted token, or a token another service obtained by
+exchange is refused with `invalid_grant`: there is no re-delegation. The token's
+scope must belong to the domain of the endpoint, and a client or user of
+another domain needs `cross_domain`.
+
+### Keeping an operation going
+
+Access tokens are short lived. The service renews by sending the token it
+received as the next `subject_token` (type `access_token`). Each renewal checks
+again that the root token is not revoked, that the user and domains are enabled
+and that the user still holds the roles, and succeeds only while
+`now < auth_time + max_operation_lifetime`, counted from when the user
+authenticated and never reset. A token never outlives that bound. An
+application credential subject stays within its project and roles on every
+renewal.
+
+### Token content
+
+```json
+{
+  "sub": "<user id>",
+  "amr": ["on_behalf_of", "password", "token"],
+  "act": {
+    "client_id": "<client id>",
+    "sub_type": "spiffe",
+    "sub": "spiffe://cloud.example/service/glance/host/h1"
+  },
+  "delegation_context": {
+    "auth_method": "on_behalf_of",
+    "actor_client_id": "<client id>",
+    "auth_time": 1757500000,
+    "root_jti": "<audit id of the user's token>"
+  }
+}
+```
+
+`delegated_project_id` and `delegated_role_ids` appear only when the subject was
+an application credential. A plain subject has no boundary of its own; its
+authority is whatever the user's live assignments say at that moment. The token
+has the scope of the subject (project, or domain for a plain subject) and no
+refresh token is issued. Like service grant tokens it is not accepted as a
+Keystone bearer credential.
+
+Errors are those of redemption: `invalid_client` (`401`) when the SVID does not
+authenticate the client or it lacks the capability, `invalid_grant` (`400`) for
+a subject that is invalid, revoked, not exchangeable or past the operation
+lifetime, and `invalid_request` for a missing `subject_token` or
+`subject_token_type`. Exchanges are rate limited per SVID
+(`on_behalf_of:<svid>`).
+
 ## Lifecycle
 
 | Change                                                              | Effect on grants                        |
@@ -243,6 +330,11 @@ driver) still stops the grant from producing tokens.
 
 ## Audit
 
+Each exchange emits an `oauth2` `authenticate` event with the user as initiator
+and the client as target, and a signed `on_behalf_of` attachment with
+`root_jti`, `user_id`, `actor_client_id`, `actor_spiffe_id` and, for an
+application credential subject, `delegated_project_id`.
+
 Grant creation and deletion emit `service_grant` CADF events. Each redemption
 emits an `oauth2` `authenticate` event with the grantor as initiator and the
 grantee client as target. The event carries a signed `service_grant`
@@ -254,7 +346,13 @@ with the internal context and appear in the grant's `disabled_reason`.
 
 - Only `tls_client_auth` over the internal interface is supported. JWT-SVID
   `private_key_jwt` on the public interface is phase 3.
-- The on-behalf-of exchange (phase 2) and EC2 credentials under a grant
-  (phase 4) are not implemented. Trusts remain available.
+- EC2 credentials under a grant (phase 4) are not implemented. Trusts remain
+  available.
+- An exchange accepts a Keystone token or the token of an earlier exchange. A
+  JWT access token issued by the OAuth2 provider cannot start a chain yet.
+- Renewal does not re-read an application credential: deleting one ends the
+  chain only if the deletion revokes its tokens.
+- A revoked hop token is refused by Keystone at the next exchange, but a
+  service validating it offline accepts it until it expires.
 - A `429` for a grant quota carries no `Retry-After` header: unlike a rate
   limit, waiting does not free quota, only revoking or expiring grants does.

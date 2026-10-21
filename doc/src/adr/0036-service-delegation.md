@@ -1199,6 +1199,9 @@ How phase 2 implements §6, and where it refines the text above.
   domain needs `cross_domain`.
 - **Limits.** Rate limiting is keyed `on_behalf_of:<svid>`; audit uses the
   `on_behalf_of` target type with `authenticate`.
+- **Ceilings.** `max_role_ids` bounds grants only: the user's own token is
+  the consent for an exchange, so the roles are the user's (or the
+  credential's), not the client's.
 - **Known gap.** Re-exchange does not re-read the application credential of
   an application-credential chain; the credential's deletion ends the chain
   through the root revocation only if the deletion revokes its tokens.

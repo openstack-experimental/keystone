@@ -52,9 +52,9 @@ use crate::assignment::grant_role_to_user_on_project;
 use crate::common::{AsyncResourceGuard, get_state_with_config};
 use crate::{create_domain, create_project, create_role, create_user};
 
-const TRUST_DOMAIN: &str = "example.org";
+pub(crate) const TRUST_DOMAIN: &str = "example.org";
 
-async fn get_grant_state() -> Result<(Arc<Service>, tempfile::TempDir)> {
+pub(crate) async fn get_grant_state() -> Result<(Arc<Service>, tempfile::TempDir)> {
     get_state_with_config(|cfg| {
         cfg.interface_internal = serde_json::from_value::<InternalInterface>(json!({
             "type": "spiffe",
@@ -65,7 +65,7 @@ async fn get_grant_state() -> Result<(Arc<Service>, tempfile::TempDir)> {
     .await
 }
 
-fn svid(client: &OAuth2ClientResource) -> SpiffeId {
+pub(crate) fn svid(client: &OAuth2ClientResource) -> SpiffeId {
     SpiffeId::new(&format!(
         "spiffe://{TRUST_DOMAIN}/service/{}/host/h1",
         client.provider_id
@@ -118,7 +118,7 @@ type ProjectGuard =
 
 /// A password-authenticated security context of `user`, scoped to
 /// `project`, as a grant creator holds it.
-async fn user_context(
+pub(crate) async fn user_context(
     state: &ServiceState,
     user: &openstack_keystone_core_types::identity::UserResponse,
     project: &openstack_keystone_core_types::resource::Project,
