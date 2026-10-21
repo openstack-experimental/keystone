@@ -136,6 +136,7 @@ pub(super) async fn device_authorization(
                 domain_id: domain_id.clone(),
                 client_id: client.client_id.clone(),
                 scope: requested_scope,
+                dpop_jkt: None,
             },
         )
         .await
@@ -229,6 +230,7 @@ mod tests {
             policy_uri: None,
             tos_uri: None,
             contacts: vec![],
+            dpop_bound_access_tokens: false,
         }
     }
 

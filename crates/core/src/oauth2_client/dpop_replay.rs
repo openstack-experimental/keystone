@@ -90,8 +90,8 @@ impl DpopReplayCache {
     /// `window_secs` must be the `max_skew_secs` the verifier checks `iat`
     /// against (`[oauth2] dpop_proof_lifetime_seconds`). An entry is kept until
     /// `iat + window_secs`, the last moment the same proof could still pass
-    /// the check; a smaller value would open a replay gap. `max_per_key` and `max_total` bound the
-    /// live entries.
+    /// the check; a smaller value would open a replay gap. `max_per_key` and
+    /// `max_total` bound the live entries.
     pub fn new(window_secs: u64, max_per_key: usize, max_total: usize) -> Self {
         Self {
             inner: Mutex::new(Inner::default()),

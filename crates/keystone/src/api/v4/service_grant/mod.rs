@@ -233,6 +233,7 @@ pub(super) mod tests {
                 cross_domain: true,
                 ..Default::default()
             }),
+            dpop_bound_access_tokens: false,
         }
     }
 }

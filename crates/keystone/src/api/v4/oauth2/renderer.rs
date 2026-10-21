@@ -734,6 +734,7 @@ mod tests {
             policy_uri: Some("http://insecure.example.com/p".into()),
             tos_uri: None,
             contacts: vec![],
+            dpop_bound_access_tokens: false,
         };
         // Pre-existing records without a name show the provider id.
         let view = ClientView::from_resource(&client);

@@ -266,6 +266,10 @@ pub struct AuthorizationCode {
     /// claim. Trailing `#[serde(default)]` field.
     #[serde(default)]
     pub sso_id: Option<String>,
+    /// RFC 7638 thumbprint of the DPoP key this code is bound to (ADR 0043
+    /// §3). `None` for bearer clients. Trailing `#[serde(default)]` field.
+    #[serde(default)]
+    pub dpop_jkt: Option<String>,
 }
 
 /// Input to create a new [`AuthorizationCode`].
@@ -303,6 +307,10 @@ pub struct AuthorizationCodeCreate {
     /// The SSO session the code is issued under.
     #[serde(default)]
     pub sso_id: Option<String>,
+    /// RFC 7638 thumbprint of the DPoP key this code is bound to (ADR 0043
+    /// §3). `None` for bearer clients. Trailing `#[serde(default)]` field.
+    #[serde(default)]
+    pub dpop_jkt: Option<String>,
 }
 
 /// A relying party that may hold a session for a user: a client that was
@@ -380,6 +388,10 @@ pub struct RefreshToken {
     /// Upstream login this originated from (federated sign-in only).
     #[serde(default)]
     pub upstream: Option<UpstreamLogin>,
+    /// RFC 7638 thumbprint of the DPoP key this family is bound to (ADR 0043
+    /// §3). `None` for bearer clients. Trailing `#[serde(default)]` field.
+    #[serde(default)]
+    pub dpop_jkt: Option<String>,
 }
 
 /// Reason a refresh token family was revoked (stored in
@@ -511,6 +523,11 @@ pub struct DeviceCodeGrant {
     /// Set alongside `user_id` when the login was federated.
     #[serde(default)]
     pub upstream: Option<UpstreamLogin>,
+    /// RFC 7638 thumbprint of the DPoP key this device code is bound to
+    /// (ADR 0043 §3). `None` for bearer clients. Trailing
+    /// `#[serde(default)]` field.
+    #[serde(default)]
+    pub dpop_jkt: Option<String>,
 }
 
 /// Input to create a new [`DeviceCodeGrant`].
@@ -532,6 +549,9 @@ pub struct DeviceCodeGrantCreate {
     pub created_at: i64,
     /// UTC epoch seconds.
     pub expires_at: i64,
+    /// DPoP key thumbprint announced when the flow starts (ADR 0043 §5).
+    #[serde(default)]
+    pub dpop_jkt: Option<String>,
 }
 
 /// Input to create a new [`RefreshToken`].
@@ -563,4 +583,8 @@ pub struct RefreshTokenCreate {
     /// Upstream login this originated from (federated sign-in only).
     #[serde(default)]
     pub upstream: Option<UpstreamLogin>,
+    /// RFC 7638 thumbprint of the DPoP key this family is bound to (ADR 0043
+    /// §3). `None` for bearer clients. Trailing `#[serde(default)]` field.
+    #[serde(default)]
+    pub dpop_jkt: Option<String>,
 }

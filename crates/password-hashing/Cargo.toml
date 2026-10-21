@@ -19,7 +19,7 @@ rand.workspace = true
 scrypt = "0.12"
 secrecy.workspace = true
 sha2.workspace = true
-subtle = "2.6.1"
+subtle.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, default-features = false, features = ["rt", "sync"] }
 tracing.workspace = true

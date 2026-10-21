@@ -312,6 +312,7 @@ mod tests {
             frontchannel_logout_session_required: false,
             spiffe_ids: vec![],
             delegation,
+            dpop_bound_access_tokens: false,
         }
     }
 

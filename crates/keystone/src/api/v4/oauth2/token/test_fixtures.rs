@@ -79,6 +79,7 @@ pub(in crate::api::v4::oauth2) async fn confidential_client() -> provider_types:
         policy_uri: None,
         tos_uri: None,
         contacts: vec![],
+        dpop_bound_access_tokens: false,
     }
 }
 
@@ -255,6 +256,7 @@ pub(in crate::api::v4::oauth2) async fn public_authz_code_client()
         policy_uri: None,
         tos_uri: None,
         contacts: vec![],
+        dpop_bound_access_tokens: false,
     }
 }
 

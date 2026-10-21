@@ -62,6 +62,7 @@ async fn test_device_grant_full_flow_issues_grant_on_poll() -> Result<()> {
                 domain_id: domain.id.clone(),
                 client_id: "device-client-1".to_string(),
                 scope: vec!["openid".to_string()],
+                dpop_jkt: None,
             },
         )
         .await?;
@@ -150,6 +151,7 @@ async fn test_device_grant_expired_code_is_rejected_on_poll() -> Result<()> {
                 domain_id: domain.id.clone(),
                 client_id: "device-client-1".to_string(),
                 scope: vec!["openid".to_string()],
+                dpop_jkt: None,
             },
         )
         .await?;
@@ -197,6 +199,7 @@ async fn test_device_grant_denied_consent_is_reported_on_poll() -> Result<()> {
                 domain_id: domain.id.clone(),
                 client_id: "device-client-1".to_string(),
                 scope: vec!["openid".to_string()],
+                dpop_jkt: None,
             },
         )
         .await?;
@@ -231,6 +234,7 @@ async fn test_device_grant_poll_faster_than_interval_is_slow_down() -> Result<()
                 domain_id: domain.id.clone(),
                 client_id: "device-client-1".to_string(),
                 scope: vec!["openid".to_string()],
+                dpop_jkt: None,
             },
         )
         .await?;

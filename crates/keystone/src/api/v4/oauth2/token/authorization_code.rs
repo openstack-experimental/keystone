@@ -151,6 +151,7 @@ pub(super) async fn handle_authorization_code_grant(
                     scope: record.scope.clone(),
                     amr: record.amr.clone(),
                     upstream: record.upstream.clone(),
+                    dpop_jkt: record.dpop_jkt.clone(),
                 },
             )
             .await
@@ -175,6 +176,7 @@ pub(super) async fn handle_authorization_code_grant(
             scope: record.scope.join(" "),
             token_use: "access".to_string(),
             family_id: sid.clone(),
+            cnf: None,
         };
         let access_token = sign_jwt(state, domain_id, &access_claims).await?;
 
@@ -280,6 +282,7 @@ mod tests {
             amr: vec!["pwd".to_string()],
             created_at: 1000,
             expires_at: 1060,
+            dpop_jkt: None,
         }
     }
 
@@ -529,6 +532,7 @@ mod tests {
                     expires_at: 1000 + 2_592_000,
                     family_expires_at: 0,
                     amr: vec![],
+                    dpop_jkt: None,
                 },
                 "refresh-bearer".to_string(),
             ))
@@ -605,6 +609,7 @@ mod tests {
                         expires_at: 1000 + 2_592_000,
                         family_expires_at: 0,
                         amr: vec![],
+                        dpop_jkt: None,
                     },
                     "refresh-bearer".to_string(),
                 ))
@@ -664,6 +669,7 @@ mod tests {
                     expires_at: 1000 + 2_592_000,
                     family_expires_at: 0,
                     amr: vec![],
+                    dpop_jkt: None,
                 },
                 "refresh-bearer".to_string(),
             ))

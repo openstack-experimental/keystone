@@ -235,6 +235,7 @@ pub fn build_token_exchange_claims(
             scope,
             roles: role_names,
         },
+        cnf: None,
     })
 }
 
@@ -347,6 +348,7 @@ mod tests {
             policy_uri: None,
             tos_uri: None,
             contacts: vec![],
+            dpop_bound_access_tokens: false,
         }
     }
 

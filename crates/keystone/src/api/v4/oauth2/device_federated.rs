@@ -383,6 +383,7 @@ mod tests {
             policy_uri: None,
             tos_uri: None,
             contacts: vec![],
+            dpop_bound_access_tokens: false,
         }
     }
 
@@ -410,6 +411,7 @@ mod tests {
                 state: state.into(),
             }),
             upstream: None,
+            dpop_jkt: None,
         }
     }
 

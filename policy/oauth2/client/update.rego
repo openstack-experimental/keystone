@@ -23,6 +23,10 @@ import data.identity.oauth2.client as client_common
 # The same applies to delegatable service clients (ADR 0036 §3): changing
 # `spiffe_ids` or `delegation`, or editing a client that already has them,
 # requires `admin`/`is_admin`.
+#
+# Turning `dpop_bound_access_tokens` off on a client that has it on also
+# requires `admin`/`is_admin` (ADR 0043 §1); turning it on is allowed to the
+# domain manager.
 
 default allow := false
 
@@ -41,6 +45,7 @@ allow if {
 	not input.existing.oauth2_client.pre_authorized
 	not client_common.delegation_fields(input.target.oauth2_client)
 	not client_common.delegation_fields(input.existing.oauth2_client)
+	not client_common.dpop_lowered
 }
 
 violation contains {"field": "domain_id", "msg": msg} if {
@@ -83,4 +88,11 @@ violation contains {"field": "delegation", "msg": msg} if {
 	not "admin" in input.credentials.roles
 	not input.credentials.is_admin
 	msg := "editing a delegatable service client requires `admin` role."
+}
+
+violation contains {"field": "dpop_bound_access_tokens", "msg": msg} if {
+	client_common.dpop_lowered
+	not "admin" in input.credentials.roles
+	not input.credentials.is_admin
+	msg := "turning off dpop_bound_access_tokens on an OAuth2 client requires `admin` role."
 }

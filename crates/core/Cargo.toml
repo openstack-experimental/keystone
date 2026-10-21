@@ -52,7 +52,7 @@ sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
-subtle = "2.6"
+subtle.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, default-features = false, features = ["net", "rt-multi-thread"] }
 tracing.workspace = true

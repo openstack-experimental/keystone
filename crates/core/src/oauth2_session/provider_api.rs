@@ -77,6 +77,8 @@ pub struct IssueAuthorizationCodeRequest {
     /// The SSO session the code is issued under; basis of the `sid`
     /// claim.
     pub sso_id: Option<String>,
+    /// DPoP key thumbprint the code is bound to (ADR 0043 §3).
+    pub dpop_jkt: Option<String>,
 }
 
 /// Input to [`Oauth2SessionApi::issue_refresh_token`] (family root) --
@@ -95,6 +97,8 @@ pub struct IssueRefreshTokenRequest {
     pub amr: Vec<String>,
     /// Upstream login the family came from (federated sign-in only).
     pub upstream: Option<UpstreamLogin>,
+    /// DPoP key thumbprint the family is bound to (ADR 0043 §3).
+    pub dpop_jkt: Option<String>,
 }
 
 /// Input to [`Oauth2SessionApi::create_sso_session`]. The id and expiry are
@@ -153,6 +157,8 @@ pub struct StartDeviceAuthorizationRequest {
     pub client_id: String,
     /// Requested scope values.
     pub scope: Vec<String>,
+    /// DPoP key thumbprint announced at the start of the flow (ADR 0043 §5).
+    pub dpop_jkt: Option<String>,
 }
 
 /// Outcome of [`Oauth2SessionApi::start_device_authorization`]. Deliberately

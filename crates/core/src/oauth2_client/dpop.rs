@@ -26,13 +26,15 @@
 //! (`invalid_dpop_proof`, `use_dpop_nonce`, `WWW-Authenticate: DPoP`).
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::{Algorithm, DecodingKey, crypto};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
 use subtle::ConstantTimeEq;
 use thiserror::Error;
 use url::Url;
+
+pub use openstack_keystone_core_types::oauth2_client::Confirmation;
 
 /// Minimum RSA modulus size accepted for a proof key, in bits.
 pub const MIN_RSA_BITS: usize = 2048;
@@ -147,22 +149,6 @@ pub struct VerifiedDpopProof {
     pub jkt: String,
     /// Unique proof identifier for the replay cache.
     pub jti: String,
-}
-
-/// `cnf` (confirmation) claim of a sender-constrained access token (RFC 7800,
-/// RFC 9449 §6).
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-pub struct Confirmation {
-    /// Thumbprint of the DPoP proof key.
-    pub jkt: String,
-}
-
-impl Confirmation {
-    /// Whether the confirmation binds to the given proof key thumbprint
-    /// (constant time). An empty `jkt` never matches.
-    pub fn matches(&self, jkt: &str) -> bool {
-        !self.jkt.is_empty() && bool::from(self.jkt.as_bytes().ct_eq(jkt.as_bytes()))
-    }
 }
 
 #[derive(Debug, Deserialize)]

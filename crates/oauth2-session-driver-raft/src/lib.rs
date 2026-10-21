@@ -891,6 +891,7 @@ impl RaftOauth2SessionBackend {
             expires_at: data.expires_at,
             upstream: data.upstream,
             sso_id: data.sso_id,
+            dpop_jkt: data.dpop_jkt,
         };
         let mutations = vec![
             Mutation::set(
@@ -958,6 +959,7 @@ impl RaftOauth2SessionBackend {
             revocation_reason: None,
             amr: data.amr,
             upstream: data.upstream,
+            dpop_jkt: data.dpop_jkt,
         };
         let mutations = vec![
             Mutation::set(
@@ -1326,6 +1328,7 @@ impl RaftOauth2SessionBackend {
             mfa_attempts: 0,
             pending_upstream: None,
             upstream: None,
+            dpop_jkt: data.dpop_jkt,
         };
         let mutations = vec![
             Mutation::set(
@@ -2713,6 +2716,7 @@ mod tests {
             created_at: 1000,
             expires_at: 1060,
             sso_id: None,
+            dpop_jkt: None,
         }
     }
 
@@ -2890,6 +2894,46 @@ mod tests {
         assert!(second.is_none());
     }
 
+    #[tokio::test]
+    async fn test_dpop_jkt_is_persisted_on_code_refresh_and_device_grant() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+
+        let mut code = sample_code_create();
+        code.dpop_jkt = Some("jkt-code".into());
+        backend
+            .create_authorization_code_impl(&storage, code)
+            .await
+            .unwrap();
+        let taken = backend
+            .take_authorization_code_impl(&storage, "code-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(taken.dpop_jkt.as_deref(), Some("jkt-code"));
+
+        let mut refresh = sample_refresh_create("token-1", "family-1");
+        refresh.dpop_jkt = Some("jkt-family".into());
+        backend
+            .create_refresh_token_impl(&storage, refresh)
+            .await
+            .unwrap();
+        let fetched = backend
+            .get_refresh_token_impl(&storage, "token-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.dpop_jkt.as_deref(), Some("jkt-family"));
+
+        let mut device = sample_device_grant_create();
+        device.dpop_jkt = Some("jkt-device".into());
+        let created = backend
+            .create_device_code_grant_impl(&storage, device)
+            .await
+            .unwrap();
+        assert_eq!(created.dpop_jkt.as_deref(), Some("jkt-device"));
+    }
+
     fn sample_refresh_create(token_id: &str, family_id: &str) -> RefreshTokenCreate {
         RefreshTokenCreate {
             upstream: None,
@@ -2904,6 +2948,7 @@ mod tests {
             expires_at: 1000 + 2_592_000,
             family_expires_at: 1000 + 7_776_000,
             amr: vec![],
+            dpop_jkt: None,
         }
     }
 
@@ -3037,6 +3082,7 @@ mod tests {
             server_side_session_secret: "secret".to_string(),
             created_at: 1000,
             expires_at: 1600,
+            dpop_jkt: None,
         }
     }
 

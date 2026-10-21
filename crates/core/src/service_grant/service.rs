@@ -555,6 +555,7 @@ mod tests {
             frontchannel_logout_session_required: false,
             spiffe_ids: vec!["spiffe://cloud.example/ns/backup/sa/agent".into()],
             delegation: Some(policy),
+            dpop_bound_access_tokens: false,
         }
     }
 

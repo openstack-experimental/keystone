@@ -22,6 +22,7 @@ allow if {
 allow if {
 	client_common.own_client
 	"manager" in input.credentials.roles
+	not client_common.dpop_bound
 }
 
 violation contains {"field": "domain_id", "msg": msg} if {
@@ -36,4 +37,11 @@ violation contains {"field": "role", "msg": msg} if {
 	not "admin" in input.credentials.roles
 	not "manager" in input.credentials.roles
 	msg := "revoking an OAuth2 client requires `manager` role."
+}
+
+violation contains {"field": "dpop_bound_access_tokens", "msg": msg} if {
+	client_common.dpop_bound
+	not "admin" in input.credentials.roles
+	not input.credentials.is_admin
+	msg := "revoking a DPoP-bound OAuth2 client requires `admin` role."
 }

@@ -221,6 +221,7 @@ pub(super) async fn handle_device_code_grant(
                     scope: record.scope.clone(),
                     amr: record.amr.clone(),
                     upstream: record.upstream.clone(),
+                    dpop_jkt: record.dpop_jkt.clone(),
                 },
             )
             .await
@@ -245,6 +246,7 @@ pub(super) async fn handle_device_code_grant(
             scope: record.scope.join(" "),
             token_use: "access".to_string(),
             family_id: sid.clone(),
+            cnf: None,
         };
         let access_token = sign_jwt(state, domain_id, &access_claims).await?;
 

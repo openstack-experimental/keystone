@@ -452,6 +452,7 @@ mod tests {
             expires_at: now + 3600,
             family_expires_at: now + 7200,
             amr: vec![],
+            dpop_jkt: None,
         };
         modify(&mut record);
         record

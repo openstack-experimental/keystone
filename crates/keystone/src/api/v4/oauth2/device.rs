@@ -949,6 +949,7 @@ mod tests {
             mfa_attempts: attempts,
             pending_upstream: None,
             upstream: None,
+            dpop_jkt: None,
         }
     }
 
@@ -1016,6 +1017,7 @@ mod tests {
                     policy_uri: None,
                     tos_uri: None,
                     contacts: vec![],
+                    dpop_bound_access_tokens: false,
                 },
             ))
         });

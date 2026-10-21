@@ -117,6 +117,7 @@ mod tests {
             frontchannel_logout_session_required: false,
             spiffe_ids: vec!["spiffe://td/service/heat-engine/host/*".into()],
             delegation,
+            dpop_bound_access_tokens: false,
         }
     }
 

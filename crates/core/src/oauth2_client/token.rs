@@ -277,5 +277,6 @@ pub fn build_access_token_claims(
             scope,
             roles: role_names,
         },
+        cnf: None,
     })
 }

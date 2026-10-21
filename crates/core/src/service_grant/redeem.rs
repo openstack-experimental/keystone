@@ -394,6 +394,7 @@ pub fn build_service_grant_claims(
             },
             roles: role_names,
         },
+        cnf: None,
     })
 }
 
@@ -476,6 +477,7 @@ mod tests {
                 cross_domain,
                 ..Default::default()
             }),
+            dpop_bound_access_tokens: false,
         }
     }
 

@@ -222,6 +222,7 @@ spiffe = { version = "0.18" }
 # cannot follow `openstack-keystone-tls-provider`; SPIFFE mTLS stays on ring.
 spiffe-rustls = { version = "0.10", default-features = false, features = ["ring"] }
 spiffe-rustls-tokio = { version = "0.6" }
+subtle = "2.6"
 temp-env = { version = "0.3" }
 tempfile = { version = "3.27" }
 thiserror = { version = "2.0" }

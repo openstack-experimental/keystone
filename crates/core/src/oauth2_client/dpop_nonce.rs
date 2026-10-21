@@ -91,7 +91,8 @@ impl DpopNonceGenerator {
     }
 
     /// Nonces a proof may carry at time `now`: the current and the previous
-    /// slot. Feed it to [`DpopProofContext::accepted_nonces`](super::dpop::DpopProofContext).
+    /// slot. Feed it to
+    /// [`DpopProofContext::accepted_nonces`](super::dpop::DpopProofContext).
     pub fn accepted(&self, now: i64) -> Vec<String> {
         let slot = self.slot(now);
         let mut nonces = vec![self.nonce_for_slot(slot)];

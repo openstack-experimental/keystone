@@ -394,7 +394,7 @@ impl Config {
             .wrap_err("validating [auth_plugins] configuration")?;
         cfg.oauth2
             .validate_dpop(cfg.mapping.cluster_salt.is_some())
-            .map_err(|e| Report::msg(e))
+            .map_err(Report::msg)
             .wrap_err("validating [oauth2] DPoP configuration")?;
         Ok(cfg)
     }

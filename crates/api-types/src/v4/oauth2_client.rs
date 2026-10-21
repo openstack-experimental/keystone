@@ -196,6 +196,11 @@ pub struct OAuth2Client {
     /// Delegation capabilities (ADR 0036 §3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegation: Option<DelegationPolicy>,
+
+    /// Only DPoP-bound access tokens are issued to the client (ADR 0043
+    /// §1).
+    #[serde(default)]
+    pub dpop_bound_access_tokens: bool,
 }
 
 /// OAuth2 client creation payload.
@@ -311,6 +316,10 @@ pub struct OAuth2ClientCreate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(nested))]
     pub delegation: Option<DelegationPolicy>,
+
+    /// Issue only DPoP-bound access tokens to the client (ADR 0043 §1).
+    #[serde(default)]
+    pub dpop_bound_access_tokens: bool,
 }
 
 /// OAuth2 client creation request wrapper.
@@ -439,6 +448,11 @@ pub struct OAuth2ClientUpdate {
     /// only.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remove_delegation: bool,
+
+    /// New value of `dpop_bound_access_tokens` (ADR 0043 §1). Turning it
+    /// off requires `admin`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dpop_bound_access_tokens: Option<bool>,
 }
 
 /// OAuth2 client update request wrapper.

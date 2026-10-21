@@ -276,6 +276,22 @@ fn validate_display(
     Ok(())
 }
 
+/// Reject `dpop_bound_access_tokens = true` until the token endpoints bind
+/// issued tokens to the proof key (ADR 0043 §3). The flag is stored and
+/// returned already, but accepting `true` now would promise a
+/// sender-constrained client that still receives plain bearer tokens.
+/// Remove once enforcement lands.
+fn validate_dpop_bound_access_tokens(requested: bool) -> Result<(), Oauth2ClientProviderError> {
+    if requested {
+        return Err(Oauth2ClientProviderError::Validation(
+            "dpop_bound_access_tokens=true is not supported yet: DPoP binding of issued \
+             tokens is not enforced"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Validate the PKCE requirement (ADR 0026 §5): mandatory for public
 /// clients.
 fn validate_require_pkce(
@@ -496,6 +512,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
             &self.internal_trust_domains,
             true,
         )?;
+        validate_dpop_bound_access_tokens(data.dpop_bound_access_tokens)?;
         ensure_roles_exist(ctx, data.delegation.as_ref(), &[]).await?;
         // A `tls_client_auth` client authenticates with its SVID: it never
         // gets a secret and is exempt from the PKCE rule.
@@ -698,6 +715,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
                 "cannot update a revoked (soft-deleted) OAuth2 client".to_string(),
             ));
         }
+        validate_dpop_bound_access_tokens(data.dpop_bound_access_tokens.unwrap_or(false))?;
         let confidential = current.client_secret_hash.is_some();
         let mtls = current.token_endpoint_auth_method == TLS_CLIENT_AUTH;
         if data.remove_delegation && data.delegation.is_some() {
@@ -872,6 +890,7 @@ mod tests {
             policy_uri: None,
             tos_uri: None,
             contacts: vec![],
+            dpop_bound_access_tokens: false,
         }
     }
 
@@ -915,6 +934,15 @@ mod tests {
             None,
             Some(crate::provider::Provider::mocked_builder().mock_role(roles)),
         )
+    }
+
+    #[test]
+    fn test_dpop_bound_access_tokens_true_is_rejected_until_enforced() {
+        assert!(validate_dpop_bound_access_tokens(false).is_ok());
+        assert!(matches!(
+            validate_dpop_bound_access_tokens(true),
+            Err(Oauth2ClientProviderError::Validation(_))
+        ));
     }
 
     #[tokio::test]
@@ -1713,6 +1741,7 @@ mod tests {
             frontchannel_logout_session_required: data.frontchannel_logout_session_required,
             spiffe_ids: data.spiffe_ids,
             delegation: data.delegation,
+            dpop_bound_access_tokens: false,
         }
     }
 

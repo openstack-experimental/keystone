@@ -47,3 +47,19 @@ test_manager_edit_without_delegation_allowed if {
 test_delegation_by_admin_allowed if {
 	update.allow with input as {"credentials": {"roles": ["admin"]}, "target": {"oauth2_client": {"delegation": {"service_grants": true}}}, "existing": {"oauth2_client": {"domain_id": "foo"}}}
 }
+
+test_dpop_raised_by_manager_allowed if {
+	update.allow with input as {"credentials": {"roles": ["manager"], "domain_id": "foo"}, "target": {"oauth2_client": {"dpop_bound_access_tokens": true}}, "existing": {"oauth2_client": {"domain_id": "foo", "dpop_bound_access_tokens": false}}}
+}
+
+test_dpop_lowered_by_manager_denied if {
+	not update.allow with input as {"credentials": {"roles": ["manager"], "domain_id": "foo"}, "target": {"oauth2_client": {"dpop_bound_access_tokens": false}}, "existing": {"oauth2_client": {"domain_id": "foo", "dpop_bound_access_tokens": true}}}
+}
+
+test_dpop_lowered_by_admin_allowed if {
+	update.allow with input as {"credentials": {"roles": ["admin"]}, "target": {"oauth2_client": {"dpop_bound_access_tokens": false}}, "existing": {"oauth2_client": {"domain_id": "foo", "dpop_bound_access_tokens": true}}}
+}
+
+test_dpop_unchanged_edit_by_manager_allowed if {
+	update.allow with input as {"credentials": {"roles": ["manager"], "domain_id": "foo"}, "target": {"oauth2_client": {"enabled": false}}, "existing": {"oauth2_client": {"domain_id": "foo", "dpop_bound_access_tokens": true}}}
+}

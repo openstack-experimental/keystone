@@ -127,6 +127,7 @@ impl RaftOauth2ClientBackend {
             frontchannel_logout_session_required: data.frontchannel_logout_session_required,
             spiffe_ids: data.spiffe_ids,
             delegation: data.delegation,
+            dpop_bound_access_tokens: data.dpop_bound_access_tokens,
         };
         let primary_key = self.get_resource_key_name(&obj.domain_id, &obj.provider_id);
         let index_key = self.get_client_id_idx_key_name(&obj.client_id);
@@ -622,6 +623,7 @@ mod tests {
             policy_uri: None,
             tos_uri: None,
             contacts: vec![],
+            dpop_bound_access_tokens: false,
         }
     }
 
@@ -810,6 +812,44 @@ mod tests {
             .unwrap();
         assert_eq!(updated.name, "Grafana");
         assert_eq!(updated.logo_uri, None);
+    }
+
+    #[tokio::test]
+    async fn test_dpop_bound_access_tokens_persisted_and_updated() {
+        let backend = RaftOauth2ClientBackend::default();
+        let storage = MockStorage::default();
+
+        let created = backend
+            .create_impl(&storage, make_create("provider-1", "domain-1", "client-1"))
+            .await
+            .unwrap();
+        assert!(!created.dpop_bound_access_tokens);
+
+        let mut bound = make_create("provider-2", "domain-1", "client-2");
+        bound.dpop_bound_access_tokens = true;
+        let created = backend.create_impl(&storage, bound).await.unwrap();
+        assert!(created.dpop_bound_access_tokens);
+
+        let update = |value| OAuth2ClientResourceUpdate {
+            dpop_bound_access_tokens: value,
+            ..Default::default()
+        };
+        // `None` leaves the flag unchanged.
+        let unchanged = backend
+            .update_impl(&storage, "domain-1", "provider-2", update(None))
+            .await
+            .unwrap();
+        assert!(unchanged.dpop_bound_access_tokens);
+        let off = backend
+            .update_impl(&storage, "domain-1", "provider-2", update(Some(false)))
+            .await
+            .unwrap();
+        assert!(!off.dpop_bound_access_tokens);
+        let on = backend
+            .update_impl(&storage, "domain-1", "provider-1", update(Some(true)))
+            .await
+            .unwrap();
+        assert!(on.dpop_bound_access_tokens);
     }
 
     #[test]

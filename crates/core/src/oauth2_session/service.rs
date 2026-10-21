@@ -737,6 +737,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     sso_id: req.sso_id,
                     created_at,
                     expires_at,
+                    dpop_jkt: req.dpop_jkt,
                 },
             )
             .await?;
@@ -804,6 +805,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     issued_at,
                     expires_at: expires_at.min(family_expires_at),
                     family_expires_at,
+                    dpop_jkt: req.dpop_jkt,
                 },
             )
             .await?;
@@ -898,6 +900,8 @@ impl Oauth2SessionApi for Oauth2SessionService {
                             issued_at: now,
                             expires_at,
                             family_expires_at,
+                            // A rotated token stays bound to the family key.
+                            dpop_jkt: record.dpop_jkt.clone(),
                         },
                     )
                     .await?;
@@ -1114,6 +1118,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     server_side_session_secret: generate_entropy(),
                     created_at,
                     expires_at,
+                    dpop_jkt: req.dpop_jkt,
                 },
             )
             .await?;
@@ -1633,6 +1638,7 @@ mod tests {
             expires_at: now() + 1_000_000,
             family_expires_at: now() + 10_000_000,
             amr: vec![],
+            dpop_jkt: None,
         }
     }
 
@@ -1784,6 +1790,7 @@ mod tests {
                 amr: vec!["pwd".to_string()],
                 created_at: now() - 1000,
                 expires_at: now() - 1,
+                dpop_jkt: None,
             }))
         });
         let service = service_with(mock);
@@ -1820,6 +1827,7 @@ mod tests {
                 revoked_at: None,
                 revocation_reason: None,
                 amr: vec![],
+                dpop_jkt: None,
             })
         });
         let service = service_with(mock);
@@ -1884,6 +1892,7 @@ mod tests {
                     revoked_at: None,
                     revocation_reason: None,
                     amr: vec![],
+                    dpop_jkt: None,
                 })
             });
         let service = service_with(mock);
@@ -1931,6 +1940,7 @@ mod tests {
                     revoked_at: None,
                     revocation_reason: None,
                     amr: vec![],
+                    dpop_jkt: None,
                 })
             });
         let service = service_with(mock);
@@ -1969,6 +1979,7 @@ mod tests {
                     revoked_at: None,
                     revocation_reason: None,
                     amr: vec![],
+                    dpop_jkt: None,
                 })
             });
         let service = service_with(mock);
@@ -1984,10 +1995,57 @@ mod tests {
                     user_id: "u".to_string(),
                     scope: vec![],
                     amr: vec![],
+                    dpop_jkt: None,
                 },
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_issue_refresh_token_keeps_dpop_binding() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_create_refresh_token()
+            .withf(|_, data| data.dpop_jkt.as_deref() == Some("thumb"))
+            .returning(|_, data| {
+                Ok(RefreshToken {
+                    upstream: None,
+                    token_id: data.token_id,
+                    family_id: data.family_id,
+                    parent_token_id: data.parent_token_id,
+                    domain_id: data.domain_id,
+                    client_id: data.client_id,
+                    user_id: data.user_id,
+                    scope: data.scope,
+                    issued_at: data.issued_at,
+                    spent_at: None,
+                    expires_at: data.expires_at,
+                    family_expires_at: data.family_expires_at,
+                    revoked_at: None,
+                    revocation_reason: None,
+                    amr: vec![],
+                    dpop_jkt: data.dpop_jkt,
+                })
+            });
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let (record, _) = service
+            .issue_refresh_token(
+                &state,
+                IssueRefreshTokenRequest {
+                    upstream: None,
+                    domain_id: "d".to_string(),
+                    client_id: "c".to_string(),
+                    user_id: "u".to_string(),
+                    scope: vec![],
+                    amr: vec![],
+                    dpop_jkt: Some("thumb".to_string()),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(record.dpop_jkt.as_deref(), Some("thumb"));
     }
 
     #[tokio::test]
@@ -2069,6 +2127,7 @@ mod tests {
                 revoked_at: None,
                 revocation_reason: None,
                 amr: vec![],
+                dpop_jkt: None,
             })
         });
         let service = service_with(mock);
@@ -2229,6 +2288,7 @@ mod tests {
             mfa_attempts: 0,
             pending_upstream: None,
             upstream: None,
+            dpop_jkt: None,
         }
     }
 
@@ -2256,6 +2316,7 @@ mod tests {
                 mfa_attempts: 0,
                 pending_upstream: None,
                 upstream: None,
+                dpop_jkt: None,
             })
         });
         let service = service_with(mock);
@@ -2268,6 +2329,7 @@ mod tests {
                     domain_id: "domain-1".to_string(),
                     client_id: "client-1".to_string(),
                     scope: vec!["openid".to_string()],
+                    dpop_jkt: None,
                 },
             )
             .await

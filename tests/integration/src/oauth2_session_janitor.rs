@@ -63,6 +63,7 @@ fn refresh_create(token_id: &str, family_id: &str, expires_at: i64) -> RefreshTo
         expires_at,
         family_expires_at: 0,
         amr: Vec::new(),
+        dpop_jkt: None,
     }
 }
 

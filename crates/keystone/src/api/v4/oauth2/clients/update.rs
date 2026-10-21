@@ -115,11 +115,17 @@ pub(super) async fn update(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use axum::{
         body::Body,
         http::{Request, StatusCode, header},
     };
+    use cadf::AuditDispatcher;
     use http_body_util::BodyExt;
+    use openstack_keystone_config::{Config, ConfigManager};
+    use openstack_keystone_core::policy::{PolicyError, PolicyEvaluationResult};
+    use sea_orm::DatabaseConnection;
     use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
 
@@ -130,7 +136,9 @@ mod tests {
 
     use super::super::openapi_router;
     use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::keystone::Service;
     use crate::oauth2_client::MockOauth2ClientProvider;
+    use crate::policy::MockPolicy;
     use crate::provider::Provider;
 
     fn sample_resource() -> provider_types::OAuth2ClientResource {
@@ -163,6 +171,7 @@ mod tests {
             policy_uri: None,
             tos_uri: None,
             contacts: vec![],
+            dpop_bound_access_tokens: false,
         }
     }
 
@@ -252,6 +261,76 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// Lowering `dpop_bound_access_tokens` reaches the policy as exactly
+    /// `{"dpop_bound_access_tokens": false}` next to a bound `existing`
+    /// client (what `dpop_lowered` matches), and a denial is a 403.
+    #[tokio::test]
+    async fn test_update_lowering_dpop_policy_input_and_denied()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let vsc = test_fixture_scoped();
+        let mut mock = MockOauth2ClientProvider::default();
+        mock.expect_get().returning(|_, _, _| {
+            Ok(Some(provider_types::OAuth2ClientResource {
+                dpop_bound_access_tokens: true,
+                ..sample_resource()
+            }))
+        });
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(mock)
+            .build()?;
+
+        let mut policy = MockPolicy::default();
+        policy
+            .expect_enforce()
+            .withf(|name, _, target, existing| {
+                name == "identity/oauth2/client/update"
+                    && target["oauth2_client"]
+                        == serde_json::json!({"dpop_bound_access_tokens": false})
+                    && existing
+                        .as_ref()
+                        .is_some_and(|e| e["oauth2_client"]["dpop_bound_access_tokens"] == true)
+            })
+            .returning(|_, _, _, _| {
+                Err(PolicyError::Forbidden(PolicyEvaluationResult::forbidden()))
+            });
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(Config::default()),
+                DatabaseConnection::default(),
+                provider,
+                Arc::new(policy),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await?,
+        );
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let req = OAuth2ClientUpdateRequest {
+            oauth2_client: OAuth2ClientUpdate {
+                dpop_bound_access_tokens: Some(false),
+                ..Default::default()
+            },
+        };
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/domain_id/clients/provider-1")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .extension(vsc)
+                    .body(Body::from(serde_json::to_string(&req)?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        Ok(())
     }
 
     #[tokio::test]

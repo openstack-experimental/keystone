@@ -554,6 +554,7 @@ mod tests {
                 },
                 roles: vec!["member".to_string()],
             },
+            cnf: None,
         }
     }
 
@@ -587,6 +588,7 @@ mod tests {
             scope: "openid profile".to_string(),
             token_use: "access".to_string(),
             family_id: None,
+            cnf: None,
         }
     }
 

@@ -145,6 +145,7 @@ async fn test_authorization_code_flow_and_refresh_reuse_collapses_family() -> Re
                 nonce: session.nonce.clone(),
                 auth_time: 1_000,
                 amr: vec!["pwd".to_string()],
+                dpop_jkt: None,
             },
         )
         .await?;
@@ -177,6 +178,7 @@ async fn test_authorization_code_flow_and_refresh_reuse_collapses_family() -> Re
                 client_id: "client-1".to_string(),
                 user_id: uid.clone(),
                 scope: vec!["openid".to_string()],
+                dpop_jkt: None,
             },
         )
         .await?;
@@ -260,6 +262,7 @@ async fn test_foreign_presentation_does_not_spend_refresh_token() -> Result<()> 
                 client_id: "client-1".to_string(),
                 user_id: uid,
                 scope: vec!["openid".to_string()],
+                dpop_jkt: None,
             },
         )
         .await?;
@@ -334,6 +337,7 @@ async fn test_client_delete_revokes_refresh_families() -> Result<()> {
                 client_id: client.client_id.clone(),
                 user_id: uid,
                 scope: vec!["openid".to_string()],
+                dpop_jkt: None,
             },
         )
         .await?;
@@ -506,6 +510,7 @@ async fn test_user_disable_revokes_refresh_families() -> Result<()> {
                 client_id: "client-1".to_string(),
                 user_id: uid.clone(),
                 scope: vec!["openid".to_string()],
+                dpop_jkt: None,
             },
         )
         .await?;
@@ -575,6 +580,7 @@ async fn test_domain_disable_revokes_refresh_families() -> Result<()> {
         client_id: "client-1".to_string(),
         user_id: Uuid::new_v4().simple().to_string(),
         scope: vec!["openid".to_string()],
+        dpop_jkt: None,
     };
     let (root, bearer) = session_provider
         .issue_refresh_token(&state, issue(domain.id.clone()))
@@ -769,6 +775,7 @@ fn code_request(sso_id: Option<&str>, client_id: &str) -> IssueAuthorizationCode
         nonce: None,
         auth_time: 1_000,
         amr: vec!["pwd".to_string()],
+        dpop_jkt: None,
     }
 }
 

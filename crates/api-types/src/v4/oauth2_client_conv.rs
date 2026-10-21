@@ -74,6 +74,7 @@ impl From<api::OAuth2ClientCreateRequest> for core::OAuth2ClientResourceCreate {
             frontchannel_logout_session_required: c.frontchannel_logout_session_required,
             spiffe_ids: c.spiffe_ids,
             delegation: c.delegation.map(Into::into),
+            dpop_bound_access_tokens: c.dpop_bound_access_tokens,
         }
     }
 }
@@ -110,6 +111,7 @@ impl From<api::OAuth2ClientUpdate> for core::OAuth2ClientResourceUpdate {
             spiffe_ids: value.spiffe_ids,
             delegation: value.delegation.map(Into::into),
             remove_delegation: value.remove_delegation,
+            dpop_bound_access_tokens: value.dpop_bound_access_tokens,
         }
     }
 }
@@ -146,6 +148,7 @@ impl From<core::OAuth2ClientResource> for api::OAuth2Client {
             frontchannel_logout_session_required: value.frontchannel_logout_session_required,
             spiffe_ids: value.spiffe_ids,
             delegation: value.delegation.map(Into::into),
+            dpop_bound_access_tokens: value.dpop_bound_access_tokens,
         }
     }
 }

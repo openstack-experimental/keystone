@@ -252,6 +252,13 @@ pub struct OAuth2ClientResource {
     #[serde(default)]
     #[builder(default)]
     pub delegation: Option<DelegationPolicy>,
+
+    /// Issue only DPoP-bound access tokens to this client (ADR 0043 §1):
+    /// `true` makes DPoP `required` for it, the narrowest enforcement level.
+    /// Trailing `#[serde(default)]` field of the positional msgpack record.
+    #[serde(default)]
+    #[builder(default)]
+    pub dpop_bound_access_tokens: bool,
 }
 
 impl std::fmt::Debug for OAuth2ClientResource {
@@ -299,6 +306,7 @@ impl std::fmt::Debug for OAuth2ClientResource {
             )
             .field("spiffe_ids", &self.spiffe_ids)
             .field("delegation", &self.delegation)
+            .field("dpop_bound_access_tokens", &self.dpop_bound_access_tokens)
             .finish()
     }
 }
@@ -353,6 +361,9 @@ impl OAuth2ClientResource {
             } else {
                 update.delegation.or(self.delegation)
             },
+            dpop_bound_access_tokens: update
+                .dpop_bound_access_tokens
+                .unwrap_or(self.dpop_bound_access_tokens),
             updated_at: now,
             deleted_at,
             ..self
@@ -481,6 +492,10 @@ pub struct OAuth2ClientResourceCreate {
     /// Delegation capabilities (ADR 0036 §3).
     #[builder(default)]
     pub delegation: Option<DelegationPolicy>,
+
+    /// Issue only DPoP-bound access tokens to this client (ADR 0043 §1).
+    #[builder(default)]
+    pub dpop_bound_access_tokens: bool,
 }
 
 impl std::fmt::Debug for OAuth2ClientResourceCreate {
@@ -523,6 +538,7 @@ impl std::fmt::Debug for OAuth2ClientResourceCreate {
             )
             .field("spiffe_ids", &self.spiffe_ids)
             .field("delegation", &self.delegation)
+            .field("dpop_bound_access_tokens", &self.dpop_bound_access_tokens)
             .finish()
     }
 }
@@ -604,6 +620,11 @@ pub struct OAuth2ClientResourceUpdate {
     #[serde(default)]
     #[builder(default)]
     pub remove_delegation: bool,
+
+    /// `None` = unchanged.
+    #[serde(default)]
+    #[builder(default)]
+    pub dpop_bound_access_tokens: Option<bool>,
 }
 
 /// Filter parameters for `GET /v4/oauth2/{domain_id}/clients`.
@@ -625,4 +646,61 @@ pub struct OAuth2ClientResourceListParameters {
 
     #[builder(default)]
     pub pagination: crate::ListPagination,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> OAuth2ClientResource {
+        OAuth2ClientResourceBuilder::default()
+            .client_id("c")
+            .provider_id("p")
+            .domain_id("d")
+            .token_endpoint_auth_method("client_secret_basic")
+            .enabled(true)
+            .created_at(0)
+            .updated_at(0)
+            .build()
+            .unwrap()
+    }
+
+    fn update(value: Option<bool>) -> OAuth2ClientResourceUpdate {
+        OAuth2ClientResourceUpdate {
+            dpop_bound_access_tokens: value,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_with_update_dpop_bound_access_tokens_tristate() {
+        let off = sample();
+        assert!(!off.dpop_bound_access_tokens);
+
+        let on = off.with_update(update(Some(true)), 1);
+        assert!(on.dpop_bound_access_tokens);
+        // `None` leaves the flag unchanged in either state.
+        let on = on.with_update(update(None), 2);
+        assert!(on.dpop_bound_access_tokens);
+        let off = on.with_update(update(Some(false)), 3);
+        assert!(!off.dpop_bound_access_tokens);
+        let off = off.with_update(update(None), 4);
+        assert!(!off.dpop_bound_access_tokens);
+    }
+
+    /// A record stored before the flag existed must stay readable and
+    /// default to bearer.
+    #[test]
+    fn test_dpop_bound_access_tokens_defaults_for_old_records() {
+        let mut value = serde_json::to_value(sample()).unwrap();
+        assert!(
+            value
+                .as_object_mut()
+                .unwrap()
+                .remove("dpop_bound_access_tokens")
+                .is_some()
+        );
+        let record: OAuth2ClientResource = serde_json::from_value(value).unwrap();
+        assert!(!record.dpop_bound_access_tokens);
+    }
 }

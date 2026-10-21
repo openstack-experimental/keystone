@@ -209,6 +209,7 @@ pub(super) async fn handle_refresh_token_grant(
         scope: record.scope.join(" "),
         token_use: "access".to_string(),
         family_id: Some(record.family_id.clone()),
+        cnf: None,
     };
     let access_token = sign_jwt(state, domain_id, &access_claims).await?;
 
@@ -377,6 +378,7 @@ mod tests {
             expires_at: 1000 + 2_592_000,
             family_expires_at: 0,
             amr: vec![],
+            dpop_jkt: None,
         }
     }
 

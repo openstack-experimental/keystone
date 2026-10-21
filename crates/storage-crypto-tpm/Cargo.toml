@@ -16,7 +16,7 @@ workspace = true
 [dependencies]
 openstack-keystone-storage-crypto.workspace = true
 rand.workspace = true
-subtle = "2.6"
+subtle.workspace = true
 tracing.workspace = true
 tss-esapi = "7.7"
 zeroize.workspace = true

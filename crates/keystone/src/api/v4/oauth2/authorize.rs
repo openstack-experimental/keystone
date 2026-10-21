@@ -1092,6 +1092,7 @@ async fn finish_consent(
                 },
                 upstream: session.upstream.clone(),
                 sso_id: sso_id.map(str::to_string),
+                dpop_jkt: None,
             },
         )
         .await
@@ -1172,6 +1173,7 @@ mod tests {
             policy_uri: None,
             tos_uri: None,
             contacts: vec![],
+            dpop_bound_access_tokens: false,
         }
     }
 
