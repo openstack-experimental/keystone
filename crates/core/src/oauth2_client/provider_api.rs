@@ -120,4 +120,15 @@ pub trait Oauth2ClientApi: Send + Sync {
         domain_id: &'a str,
         data: OAuth2DomainSettingsUpdate,
     ) -> Result<OAuth2DomainSettings, Oauth2ClientProviderError>;
+
+    /// The effective DPoP mode for a request in `domain_id`: the strictest of
+    /// the global, domain and client levels. `client_bound_access_tokens` is
+    /// the client's `dpop_bound_access_tokens` flag; pass `false` when no
+    /// client is involved (discovery, `/userinfo`).
+    async fn effective_dpop_mode<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+        client_bound_access_tokens: bool,
+    ) -> Result<openstack_keystone_config::DpopMode, Oauth2ClientProviderError>;
 }

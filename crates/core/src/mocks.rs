@@ -196,6 +196,13 @@ mod oauth2_client {
                 domain_id: &'a str,
                 data: OAuth2DomainSettingsUpdate,
             ) -> Result<OAuth2DomainSettings, Oauth2ClientProviderError>;
+
+            async fn effective_dpop_mode<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                client_bound_access_tokens: bool,
+            ) -> Result<openstack_keystone_config::DpopMode, Oauth2ClientProviderError>;
         }
     }
 }

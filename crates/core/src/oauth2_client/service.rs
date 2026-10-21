@@ -14,8 +14,10 @@
 //! # OAuth2 client (relying party registration) provider (ADR 0026 §5)
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use dashmap::DashMap;
 use secrecy::ExposeSecret;
 
 use openstack_keystone_config::Config;
@@ -471,6 +473,20 @@ fn find_spiffe_conflict(
         })
 }
 
+/// How long the DPoP mode of a domain is reused before the stored settings
+/// are read again. The mode is read on every `/token` request, so without
+/// this every request would cost a storage read, also where DPoP is not in
+/// use. A change made on this node takes effect at once (the entry is
+/// dropped); one made on another node is seen within this time. A domain
+/// that raises its mode is therefore enforced everywhere within a few
+/// seconds, and one that lowers it keeps the stricter value for as long.
+const DOMAIN_MODE_CACHE_TTL: Duration = Duration::from_secs(5);
+
+/// Bound on the cached domains. The entries of domains that were looked up
+/// once and never again are not worth tracking: past the bound the cache is
+/// emptied and refills from the requests that follow.
+const DOMAIN_MODE_CACHE_MAX_ENTRIES: usize = 10_000;
+
 /// OAuth2 client Provider.
 pub struct Oauth2ClientService {
     /// Backend driver.
@@ -479,6 +495,8 @@ pub struct Oauth2ClientService {
     oauth2_config: openstack_keystone_config::Oauth2Provider,
     /// Trust domains SPIFFE ID patterns may name (ADR 0036 §3.1).
     internal_trust_domains: Vec<String>,
+    /// Domain DPoP mode by domain id, with the time it was read.
+    domain_dpop_modes: DashMap<String, (openstack_keystone_config::DpopMode, Instant)>,
 }
 
 impl Oauth2ClientService {
@@ -494,6 +512,7 @@ impl Oauth2ClientService {
             backend_driver,
             oauth2_config: config.oauth2.clone(),
             internal_trust_domains: internal_trust_domains(config),
+            domain_dpop_modes: DashMap::new(),
         })
     }
 }
@@ -618,12 +637,14 @@ impl Oauth2ClientApi for Oauth2ClientService {
         let op = self
             .backend_driver
             .delete_domain_settings(ctx.state(), domain_id);
-        crate::audited_if_ctx! {
+        let result = crate::audited_if_ctx! {
             ctx: ctx,
             event: oauth2_client_event(Operation::Delete, domain_id, DOMAIN_SETTINGS_TARGET),
             operation: op,
             on_audit_error: |_: AuditDispatchError| Oauth2ClientProviderError::AuditUnavailable,
-        }
+        };
+        self.domain_dpop_modes.remove(domain_id);
+        result
     }
     #[tracing::instrument(name = "provider.oauth2_client.get", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn get<'a>(
@@ -635,6 +656,43 @@ impl Oauth2ClientApi for Oauth2ClientService {
         self.backend_driver
             .get(ctx.state(), domain_id, provider_id)
             .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_client.effective_dpop_mode", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn effective_dpop_mode<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+        client_bound_access_tokens: bool,
+    ) -> Result<openstack_keystone_config::DpopMode, Oauth2ClientProviderError> {
+        let global = self.oauth2_config.dpop;
+        // Nothing can be stricter than `required`: skip the lookup.
+        if global == openstack_keystone_config::DpopMode::Required || client_bound_access_tokens {
+            return Ok(openstack_keystone_config::DpopMode::Required);
+        }
+        let cached = self
+            .domain_dpop_modes
+            .get(domain_id)
+            .filter(|e| e.1.elapsed() < DOMAIN_MODE_CACHE_TTL)
+            .map(|e| e.0);
+        let domain = match cached {
+            Some(mode) => mode,
+            None => {
+                let mode = self
+                    .backend_driver
+                    .get_domain_settings(ctx.state(), domain_id)
+                    .await?
+                    .map(|s| s.dpop)
+                    .unwrap_or_default();
+                if self.domain_dpop_modes.len() >= DOMAIN_MODE_CACHE_MAX_ENTRIES {
+                    self.domain_dpop_modes.clear();
+                }
+                self.domain_dpop_modes
+                    .insert(domain_id.to_string(), (mode, Instant::now()));
+                mode
+            }
+        };
+        Ok(super::dpop_mode::effective_dpop_mode(global, domain, false))
     }
 
     #[tracing::instrument(name = "provider.oauth2_client.get_domain_settings", level = "debug", skip_all, fields(domain_id = %domain_id))]
@@ -889,12 +947,16 @@ impl Oauth2ClientApi for Oauth2ClientService {
         let op = self
             .backend_driver
             .update_domain_settings(ctx.state(), domain_id, data);
-        crate::audited_if_ctx! {
+        let result = crate::audited_if_ctx! {
             ctx: ctx,
             event: oauth2_client_event(Operation::Update, domain_id, DOMAIN_SETTINGS_TARGET),
             operation: op,
             on_audit_error: |_: AuditDispatchError| Oauth2ClientProviderError::AuditUnavailable,
-        }
+        };
+        // Whether or not the write went through, the next request reads the
+        // stored value again.
+        self.domain_dpop_modes.remove(domain_id);
+        result
     }
 }
 
@@ -968,6 +1030,7 @@ mod tests {
                 ..Default::default()
             },
             internal_trust_domains: vec!["cloud.example".into()],
+            domain_dpop_modes: DashMap::new(),
         }
     }
 
@@ -1247,6 +1310,88 @@ mod tests {
         );
     }
 
+    fn domain_settings_returning(
+        mode: openstack_keystone_config::DpopMode,
+    ) -> MockOauth2ClientBackend {
+        let mut mock = MockOauth2ClientBackend::new();
+        mock.expect_get_domain_settings().returning(move |_, id| {
+            Ok(Some(OAuth2DomainSettings {
+                domain_id: id.into(),
+                dpop: mode,
+                updated_at: 1,
+            }))
+        });
+        mock
+    }
+
+    #[tokio::test]
+    async fn test_effective_dpop_mode_combines_levels() {
+        use openstack_keystone_config::DpopMode::*;
+        let state = get_mocked_state(None, None).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        // Domain raises a global `optional`.
+        let mut service = service_with(domain_settings_returning(Required));
+        service.oauth2_config.dpop = Optional;
+        assert_eq!(
+            service
+                .effective_dpop_mode(&ctx, "domain-1", false)
+                .await
+                .unwrap(),
+            Required
+        );
+
+        // The global value is a floor for a weaker domain value.
+        let mut service = service_with(domain_settings_returning(Disabled));
+        service.oauth2_config.dpop = Optional;
+        assert_eq!(
+            service
+                .effective_dpop_mode(&ctx, "domain-1", false)
+                .await
+                .unwrap(),
+            Optional
+        );
+
+        // No stored record: the global value applies.
+        let mut mock = MockOauth2ClientBackend::new();
+        mock.expect_get_domain_settings().returning(|_, _| Ok(None));
+        let mut service = service_with(mock);
+        service.oauth2_config.dpop = Optional;
+        assert_eq!(
+            service
+                .effective_dpop_mode(&ctx, "domain-1", false)
+                .await
+                .unwrap(),
+            Optional
+        );
+    }
+
+    #[tokio::test]
+    async fn test_effective_dpop_mode_skips_lookup_when_already_required() {
+        use openstack_keystone_config::DpopMode::*;
+        let state = get_mocked_state(None, None).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        // The mock has no expectation: any backend call would panic.
+        let mut service = service_with(MockOauth2ClientBackend::new());
+        service.oauth2_config.dpop = Required;
+        assert_eq!(
+            service
+                .effective_dpop_mode(&ctx, "domain-1", false)
+                .await
+                .unwrap(),
+            Required
+        );
+        let service = service_with(MockOauth2ClientBackend::new());
+        assert_eq!(
+            service
+                .effective_dpop_mode(&ctx, "domain-1", true)
+                .await
+                .unwrap(),
+            Required
+        );
+    }
+
     #[tokio::test]
     async fn test_get_domain_settings_defaults_when_not_stored() {
         let mut mock = MockOauth2ClientBackend::new();
@@ -1276,6 +1421,48 @@ mod tests {
 
         let settings = service.get_domain_settings(&ctx, "domain-1").await.unwrap();
         assert_eq!(settings.dpop, openstack_keystone_config::DpopMode::Required);
+    }
+
+    #[tokio::test]
+    async fn test_effective_dpop_mode_reuses_the_domain_mode_until_it_changes() {
+        use openstack_keystone_config::DpopMode::*;
+        let mut mock = MockOauth2ClientBackend::new();
+        // One read for the first two requests, one more after the update.
+        mock.expect_get_domain_settings()
+            .times(2)
+            .returning(|_, id| Ok(Some(OAuth2DomainSettings::default_for(id))));
+        mock.expect_update_domain_settings()
+            .times(1)
+            .returning(
+                |_, id, data| Ok(OAuth2DomainSettings::default_for(id).with_update(data, 7)),
+            );
+        let service = service_with(mock);
+        let state = state_with_domains(&["domain-1"]).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        for _ in 0..2 {
+            assert_eq!(
+                service
+                    .effective_dpop_mode(&ctx, "domain-1", false)
+                    .await
+                    .unwrap(),
+                Disabled
+            );
+        }
+        service
+            .update_domain_settings(
+                &ctx,
+                "domain-1",
+                OAuth2DomainSettingsUpdate {
+                    dpop: Some(Required),
+                },
+            )
+            .await
+            .unwrap();
+        service
+            .effective_dpop_mode(&ctx, "domain-1", false)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
