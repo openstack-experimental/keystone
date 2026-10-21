@@ -1944,3 +1944,111 @@ fn test_service_delegation_methods_and_delegation_flag() {
     assert!(!client.is_delegated());
     assert_eq!(client.auth_type(), "service_client");
 }
+
+// ---- on-behalf-of context (ADR 0036 §6) ----
+
+fn make_on_behalf_of(
+    delegated_project_id: Option<&str>,
+    methods: &[&str],
+) -> AuthenticationContext {
+    AuthenticationContext::OnBehalfOf {
+        actor: make_actor(),
+        delegated_project_id: delegated_project_id.map(str::to_string),
+        delegated_role_ids: delegated_project_id.map(|_| vec!["member".to_string()]),
+        subject_methods: methods.iter().map(|m| m.to_string()).collect(),
+        auth_time: Utc::now(),
+        root_jti: "root".into(),
+    }
+}
+
+fn on_behalf_of_ctx(context: AuthenticationContext, principal: PrincipalInfo) -> SecurityContext {
+    SecurityContext::test_build()
+        .authentication_context(context)
+        .principal(principal)
+        .build()
+}
+
+#[test]
+fn test_on_behalf_of_plain_subject_scopes() {
+    let ctx = on_behalf_of_ctx(
+        make_on_behalf_of(None, &["password"]),
+        make_principal("uid"),
+    );
+    assert!(ctx.validate().is_ok());
+    assert!(
+        ctx.validate_scope_boundaries(&ScopeInfo::Project {
+            project: make_project(),
+            project_domain: make_domain(),
+        })
+        .is_ok()
+    );
+    assert!(
+        ctx.validate_scope_boundaries(&ScopeInfo::Domain(make_domain()))
+            .is_ok()
+    );
+    // No token-from-token, no system scope, no unscoped token.
+    for scope in [ScopeInfo::System("system".into()), ScopeInfo::Unscoped] {
+        assert!(matches!(
+            ctx.validate_scope_boundaries(&scope),
+            Err(AuthenticationError::ScopeNotAllowed)
+        ));
+    }
+}
+
+#[test]
+fn test_on_behalf_of_delegated_subject_bound_to_its_project() {
+    let ctx = on_behalf_of_ctx(
+        make_on_behalf_of(Some("pid"), &["application_credential"]),
+        make_principal("uid"),
+    );
+    let project = |id: &str| ScopeInfo::Project {
+        project: Project {
+            id: id.into(),
+            ..make_project()
+        },
+        project_domain: make_domain(),
+    };
+    assert!(ctx.validate_scope_boundaries(&project("pid")).is_ok());
+    assert!(matches!(
+        ctx.validate_scope_boundaries(&project("other")),
+        Err(AuthenticationError::ScopeNotAllowed)
+    ));
+    for scope in [
+        ScopeInfo::Domain(make_domain()),
+        ScopeInfo::System("system".into()),
+        ScopeInfo::Unscoped,
+    ] {
+        assert!(matches!(
+            ctx.validate_scope_boundaries(&scope),
+            Err(AuthenticationError::ScopeNotAllowed)
+        ));
+    }
+}
+
+#[test]
+fn test_on_behalf_of_acts_for_a_user() {
+    let ctx = on_behalf_of_ctx(
+        make_on_behalf_of(None, &["password"]),
+        make_workload_principal(),
+    );
+    assert!(matches!(
+        ctx.validate(),
+        Err(AuthenticationError::AuthzPrincipalMismatch)
+    ));
+}
+
+#[test]
+fn test_on_behalf_of_methods_are_a_union() {
+    // Re-exchanging carries `on_behalf_of` once, never one per hop.
+    let ctx = make_on_behalf_of(None, &["password", "on_behalf_of"]);
+    let methods = ctx.methods();
+    assert_eq!(methods.len(), 2);
+    assert!(methods.contains("password") && methods.contains("on_behalf_of"));
+    assert_eq!(ctx.auth_type(), "on_behalf_of");
+}
+
+#[test]
+fn test_on_behalf_of_delegation_flag_follows_the_subject() {
+    assert!(!make_on_behalf_of(None, &["password"]).is_delegated());
+    assert!(make_on_behalf_of(Some("pid"), &["application_credential"]).is_delegated());
+}

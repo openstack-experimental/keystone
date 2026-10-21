@@ -145,7 +145,8 @@ pub fn issue_method_label(ctx: &AuthenticationContext) -> Option<&'static str> {
         | AuthenticationContext::Mapping(_)
         | AuthenticationContext::WasmPlugin { .. }
         | AuthenticationContext::ServiceGrant { .. }
-        | AuthenticationContext::ServiceClient { .. } => None,
+        | AuthenticationContext::ServiceClient { .. }
+        | AuthenticationContext::OnBehalfOf { .. } => None,
     }
 }
 

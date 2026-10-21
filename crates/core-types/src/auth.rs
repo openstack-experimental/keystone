@@ -713,6 +713,13 @@ impl SecurityContext {
             {
                 return Err(AuthenticationError::AuthzPrincipalMismatch);
             }
+            // An on-behalf-of chain acts for the user who handed over the
+            // token.
+            AuthenticationContext::OnBehalfOf { .. }
+                if !matches!(self.principal.identity, IdentityInfo::User(_)) =>
+            {
+                return Err(AuthenticationError::AuthzPrincipalMismatch);
+            }
             _ => {}
         }
         Ok(())
@@ -795,6 +802,11 @@ impl SecurityContext {
                 | AuthenticationContext::ServiceClient { .. } => {
                     Err(AuthenticationError::ScopeNotAllowed)
                 }
+                // A delegated subject only reaches its own project.
+                AuthenticationContext::OnBehalfOf {
+                    delegated_project_id,
+                    ..
+                } => on_behalf_of_unbounded(delegated_project_id.as_deref()),
             },
             ScopeInfo::Project { project, .. } => {
                 match &self.authentication_context {
@@ -877,6 +889,15 @@ impl SecurityContext {
                     AuthenticationContext::ServiceClient { .. } => {
                         Err(AuthenticationError::ScopeNotAllowed)
                     }
+                    AuthenticationContext::OnBehalfOf {
+                        delegated_project_id,
+                        ..
+                    } => match delegated_project_id {
+                        Some(delegated) if *delegated != project.id => {
+                            Err(AuthenticationError::ScopeNotAllowed)
+                        }
+                        _ => Ok(()),
+                    },
                 }
             }
             ScopeInfo::TrustProject(_) => match &self.authentication_context {
@@ -895,7 +916,8 @@ impl SecurityContext {
                 AuthenticationContext::Mapping(_) => Err(AuthenticationError::ScopeNotAllowed),
                 AuthenticationContext::WasmPlugin { .. } => Ok(()),
                 AuthenticationContext::ServiceGrant { .. }
-                | AuthenticationContext::ServiceClient { .. } => {
+                | AuthenticationContext::ServiceClient { .. }
+                | AuthenticationContext::OnBehalfOf { .. } => {
                     Err(AuthenticationError::ScopeNotAllowed)
                 }
             },
@@ -915,7 +937,8 @@ impl SecurityContext {
                 AuthenticationContext::Mapping(_) => Ok(()),
                 AuthenticationContext::WasmPlugin { .. } => Ok(()),
                 AuthenticationContext::ServiceGrant { .. }
-                | AuthenticationContext::ServiceClient { .. } => {
+                | AuthenticationContext::ServiceClient { .. }
+                | AuthenticationContext::OnBehalfOf { .. } => {
                     Err(AuthenticationError::ScopeNotAllowed)
                 }
             },
@@ -934,7 +957,8 @@ impl SecurityContext {
                 AuthenticationContext::WebauthN => Ok(()),
                 AuthenticationContext::Mapping(_) => Ok(()),
                 AuthenticationContext::WasmPlugin { .. } => Ok(()),
-                AuthenticationContext::ServiceGrant { .. } => {
+                AuthenticationContext::ServiceGrant { .. }
+                | AuthenticationContext::OnBehalfOf { .. } => {
                     Err(AuthenticationError::ScopeNotAllowed)
                 }
                 // The service acting as itself holds no roles anywhere.
@@ -1440,6 +1464,28 @@ pub enum AuthenticationContext {
         /// The authenticated service.
         actor: ActorInfo,
     },
+    /// A delegatable service acting on a user's own token through an
+    /// on-behalf-of exchange (ADR 0036 §6). The principal is the user. The
+    /// chain keeps only the facts a decision needs from the subject's own
+    /// authentication, so a hop token can be re-exchanged without the
+    /// original context. Only produced by the exchange at the token
+    /// endpoint, never decoded from a bearer token.
+    OnBehalfOf {
+        /// The service holding the exchanged token.
+        actor: ActorInfo,
+        /// The project of the subject's own delegation (an application
+        /// credential), if it had one. A plain subject has no boundary.
+        delegated_project_id: Option<String>,
+        /// The roles of the subject's own delegation, if it had one.
+        delegated_role_ids: Option<Vec<String>>,
+        /// Authentication methods of the subject, carried into `amr`.
+        subject_methods: std::collections::BTreeSet<String>,
+        /// When the user authenticated. Fixed for the whole chain.
+        auth_time: DateTime<Utc>,
+        /// Identifier of the user token that started the chain: revoking
+        /// it ends the chain at the next hop (§6.3).
+        root_jti: String,
+    },
 }
 
 /// A delegatable service acting in a delegation (ADR 0036 §5): the OAuth2
@@ -1497,6 +1543,15 @@ impl AuthenticationContext {
             Self::WasmPlugin { plugin_name, .. } => once(plugin_name.clone()).collect(),
             Self::ServiceGrant { .. } => once("service_grant".to_string()).collect(),
             Self::ServiceClient { .. } => once("service_client".to_string()).collect(),
+            // A union, not an append: a chain re-exchanged any number of
+            // times carries `on_behalf_of` once (ADR 0036 §6.2).
+            Self::OnBehalfOf {
+                subject_methods, ..
+            } => subject_methods
+                .iter()
+                .cloned()
+                .chain(once("on_behalf_of".to_string()))
+                .collect(),
         }
     }
 
@@ -1527,6 +1582,7 @@ impl AuthenticationContext {
             Self::WasmPlugin { plugin_name, .. } => Cow::Owned(plugin_name.clone()),
             Self::ServiceGrant { .. } => Cow::Borrowed("service_grant"),
             Self::ServiceClient { .. } => Cow::Borrowed("service_client"),
+            Self::OnBehalfOf { .. } => Cow::Borrowed("on_behalf_of"),
         }
     }
 
@@ -1547,6 +1603,12 @@ impl AuthenticationContext {
         matches!(
             self,
             Self::ApplicationCredential { .. } | Self::Trust { .. } | Self::ServiceGrant { .. }
+        ) || matches!(
+            self,
+            Self::OnBehalfOf {
+                delegated_project_id: Some(_),
+                ..
+            }
         ) || self
             .methods()
             .iter()
@@ -1597,6 +1659,15 @@ pub struct AuthenticationResult {
     /// Token restriction rules tied to the authentication.
     #[builder(default)]
     pub token_restriction: Option<TokenRestriction>,
+}
+
+/// Domain scopes are only reachable by an on-behalf-of chain whose subject
+/// had no delegation boundary of its own.
+fn on_behalf_of_unbounded(delegated_project_id: Option<&str>) -> Result<(), AuthenticationError> {
+    match delegated_project_id {
+        None => Ok(()),
+        Some(_) => Err(AuthenticationError::ScopeNotAllowed),
+    }
 }
 
 fn new_audit_id() -> String {

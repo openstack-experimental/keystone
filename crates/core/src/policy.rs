@@ -365,6 +365,18 @@ impl TryFrom<&ValidatedSecurityContext> for Credentials {
             AuthenticationContext::ServiceClient { actor } => {
                 builder.actor(actor.clone());
             }
+            // ADR 0036 §6.2: only a delegated subject brings a boundary;
+            // the scope-drift tripwire applies to it when it did.
+            AuthenticationContext::OnBehalfOf {
+                actor,
+                delegated_project_id,
+                ..
+            } => {
+                if let Some(project_id) = delegated_project_id {
+                    builder.delegated_project_id(project_id.clone());
+                }
+                builder.actor(actor.clone());
+            }
             AuthenticationContext::WasmPlugin {
                 plugin_name,
                 claims,

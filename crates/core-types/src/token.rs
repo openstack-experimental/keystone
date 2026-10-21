@@ -106,6 +106,7 @@ impl FernetToken {
             ctx.authentication_context(),
             AuthenticationContext::ServiceGrant { .. }
                 | AuthenticationContext::ServiceClient { .. }
+                | AuthenticationContext::OnBehalfOf { .. }
         ) {
             return Err(AuthenticationError::ScopeNotAllowed.into());
         }
@@ -173,7 +174,8 @@ impl FernetToken {
                 // JWT at the token endpoint, and a token minted here would
                 // carry no reference back to the grant.
                 AuthenticationContext::ServiceGrant { .. }
-                | AuthenticationContext::ServiceClient { .. } => {
+                | AuthenticationContext::ServiceClient { .. }
+                | AuthenticationContext::OnBehalfOf { .. } => {
                     Err(AuthenticationError::ScopeNotAllowed.into())
                 }
             },
@@ -234,7 +236,8 @@ impl FernetToken {
                 // A plain project payload would drop the grant bound on
                 // every reuse (see the Trust arm above). Never minted.
                 AuthenticationContext::ServiceGrant { .. }
-                | AuthenticationContext::ServiceClient { .. } => {
+                | AuthenticationContext::ServiceClient { .. }
+                | AuthenticationContext::OnBehalfOf { .. } => {
                     Err(AuthenticationError::ScopeNotAllowed.into())
                 }
             },
@@ -271,7 +274,8 @@ impl FernetToken {
                     UnscopedPayload::from_security_context(ctx, expires_at)?,
                 )),
                 AuthenticationContext::ServiceGrant { .. }
-                | AuthenticationContext::ServiceClient { .. } => {
+                | AuthenticationContext::ServiceClient { .. }
+                | AuthenticationContext::OnBehalfOf { .. } => {
                     Err(AuthenticationError::ScopeNotAllowed.into())
                 }
             },

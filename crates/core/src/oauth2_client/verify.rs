@@ -125,6 +125,7 @@ fn auth_method_str(ctx: &DelegationContext) -> &'static str {
         DelegationContext::AppCred { .. } => "app_cred",
         DelegationContext::Ec2 { .. } => "ec2",
         DelegationContext::ServiceGrant { .. } => "service_grant",
+        DelegationContext::OnBehalfOf { .. } => "on_behalf_of",
     }
 }
 
@@ -147,6 +148,15 @@ fn enforce_delegation_invariants(
 ) -> Result<(), TokenVerificationError> {
     let delegated_project_id = match &claims.delegation_context {
         DelegationContext::Plain => return Ok(()),
+        // Only a delegated subject brings a project boundary (ADR 0036
+        // §6.2); a plain one is bounded by live assignments.
+        DelegationContext::OnBehalfOf {
+            project_id: None, ..
+        } => return Ok(()),
+        DelegationContext::OnBehalfOf {
+            project_id: Some(project_id),
+            ..
+        } => project_id,
         DelegationContext::Trust { project_id }
         | DelegationContext::AppCred { project_id }
         | DelegationContext::Ec2 { project_id }

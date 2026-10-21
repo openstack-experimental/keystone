@@ -261,6 +261,10 @@ impl ValidatedSecurityContext {
                 }
             }
             AuthenticationContext::ServiceClient { .. } => {}
+            // ADR 0036 §6.3: the operation lifetime and the root token's
+            // revocation are checked by the exchange, which is the only
+            // producer of this context.
+            AuthenticationContext::OnBehalfOf { .. } => {}
             AuthenticationContext::Token(..) => {}
             AuthenticationContext::WebauthN => {}
             AuthenticationContext::Mapping(mc) => {
@@ -726,6 +730,27 @@ async fn calculate_effective_roles(
             return Err(AuthenticationError::ScopeNotAllowed);
         };
         return resolve_service_grant_roles(state, ctx, grant, &project.id).await;
+    }
+
+    // An on-behalf-of chain whose subject was an application credential
+    // stays bounded by that credential's roles on every hop (ADR 0036 §6.3).
+    if let AuthenticationContext::OnBehalfOf {
+        delegated_role_ids: Some(ceiling),
+        ..
+    } = ctx.authentication_context()
+    {
+        let ScopeInfo::Project { project, .. } = scope else {
+            return Err(AuthenticationError::ScopeNotAllowed);
+        };
+        let live = resolve_project_default_roles(state, ctx, &project.id).await?;
+        let roles: Vec<RoleRef> = live
+            .into_iter()
+            .filter(|role| ceiling.contains(&role.id))
+            .collect();
+        if roles.is_empty() {
+            return Err(AuthenticationError::ActorHasNoRolesOnTarget);
+        }
+        return Ok(roles);
     }
 
     let roles = match scope {

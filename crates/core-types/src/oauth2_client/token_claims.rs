@@ -298,6 +298,28 @@ pub enum DelegationContext {
         /// The redeemed grant.
         grant_id: String,
     },
+    /// A service acting on a user's own token through an on-behalf-of
+    /// exchange (ADR 0036 §6.2). Unlike the variants above it may carry no
+    /// project: a plain subject has no delegation boundary.
+    OnBehalfOf {
+        /// The acting service's client id.
+        actor_client_id: String,
+        /// When the user authenticated, preserved on every re-exchange.
+        auth_time: i64,
+        /// Identifier of the user token that started the chain (§6.3).
+        root_jti: String,
+        /// The project of the subject's own delegation, if it had one.
+        #[serde(
+            default,
+            rename = "delegated_project_id",
+            skip_serializing_if = "Option::is_none"
+        )]
+        project_id: Option<String>,
+        /// The roles of the subject's own delegation, if it had one. Every
+        /// hop is bounded by them (security.md I4).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delegated_role_ids: Option<Vec<String>>,
+    },
 }
 
 /// Namespace of [`ActClaim::sub`] (ADR 0036 §5.2). Consumers branch on it

@@ -1173,15 +1173,20 @@ How phase 2 implements §6, and where it refines the text above.
   `delegation.on_behalf_of` must be set. The existing secret-authenticated
   exchange of an application-credential token keeps working unchanged.
 - **Context shape.** `AuthenticationContext::OnBehalfOf` carries
-  `actor`, `delegated_project_id: Option<String>`, the subject's `methods`,
+  `actor`, `delegated_project_id: Option<String>`,
+  `delegated_role_ids: Option<Vec<String>>`, the subject's `methods`,
   `auth_time` and `root_jti`, not a boxed subject context. A hop token cannot
   be turned back into the original context (an application credential record
   is not reachable from the claims), and everything a decision needs is these
   facts. `validate_scope_boundaries` allows a project scope only when
   `delegated_project_id` is unset or equal to it.
+- **Role bound.** An application-credential subject's roles travel with the
+  chain (`delegated_role_ids`, also a claim), so every hop's effective roles
+  are the user's live roles intersected with them (§6.2 names the project
+  boundary only; without the roles a re-exchange would widen the credential).
 - **Claims.** `delegation_context` gains an `on_behalf_of` variant with
   `actor_client_id`, `auth_time`, `root_jti` and the optional
-  `delegated_project_id`; `act` is the SVID; `amr` is the union of the
+  `delegated_project_id` and `delegated_role_ids`; `act` is the SVID; `amr` is the union of the
   subject's methods and `on_behalf_of`.
 - **Root revocation.** The chain's audit id is `root_jti`, so
   `RevokeApi::is_token_revoked` runs unchanged on every hop, together with
