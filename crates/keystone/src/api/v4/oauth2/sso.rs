@@ -249,6 +249,7 @@ mod tests {
             mfa_attempts: 0,
             pending_upstream: None,
             force_consent: false,
+            dpop_jkt: None,
             upstream: None,
         }
     }

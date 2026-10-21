@@ -165,6 +165,7 @@ pub(super) async fn handle_client_credentials_grant(
         headers,
         peer_addr,
         &client,
+        openstack_keystone_config::DpopMode::Disabled,
     )
     .await?;
 

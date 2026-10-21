@@ -218,6 +218,7 @@ mod tests {
             pending_upstream: None,
             upstream: None,
             force_consent,
+            dpop_jkt: None,
         }
     }
 

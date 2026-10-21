@@ -258,6 +258,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     force_consent: req.force_consent,
                     created_at,
                     expires_at,
+                    dpop_jkt: req.dpop_jkt,
                 },
             )
             .await
@@ -1515,6 +1516,7 @@ mod tests {
         PreAuthSession {
             pending_upstream: None,
             force_consent: false,
+            dpop_jkt: None,
             upstream: None,
             session_id: session_id.to_string(),
             domain_id: domain_id.to_string(),
@@ -1739,6 +1741,7 @@ mod tests {
             Ok(Some(PreAuthSession {
                 pending_upstream: None,
                 force_consent: false,
+                dpop_jkt: None,
                 upstream: None,
                 session_id: "s1".to_string(),
                 domain_id: "d1".to_string(),

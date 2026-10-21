@@ -39,6 +39,7 @@ pub(super) async fn handle_authorization_code_grant(
     state: &ServiceState,
     domain_id: &str,
     headers: &HeaderMap,
+    peer_addr: Option<std::net::SocketAddr>,
     form: &TokenForm,
     oauth2_cfg: &openstack_keystone_config::Oauth2Provider,
     correlation_id: &str,
@@ -87,6 +88,18 @@ pub(super) async fn handle_authorization_code_grant(
         ));
     }
 
+    // Before the code is redeemed: a nonce challenge or a bad proof must not
+    // burn a single-use code the client can still retry with.
+    let confirmation = super::dpop::bind_token_request(
+        state,
+        domain_id,
+        headers,
+        peer_addr,
+        &client,
+        openstack_keystone_config::DpopMode::Disabled,
+    )
+    .await?;
+
     let record = state
         .provider
         .get_oauth2_session_provider()
@@ -115,6 +128,10 @@ pub(super) async fn handle_authorization_code_grant(
     {
         return Err(Oauth2TokenError::invalid_grant("PKCE verification failed"));
     }
+
+    let confirmation =
+        super::dpop::reconcile_code_binding(record.dpop_jkt.as_deref(), confirmation)?;
+    let jkt = confirmation.as_ref().map(|c| c.jkt.clone());
 
     if record.scope.iter().any(|s| s == "openstack:api") {
         // Full `OpenStackAccessTokenClaims` issuance on this grant requires
@@ -151,7 +168,7 @@ pub(super) async fn handle_authorization_code_grant(
                     scope: record.scope.clone(),
                     amr: record.amr.clone(),
                     upstream: record.upstream.clone(),
-                    dpop_jkt: record.dpop_jkt.clone(),
+                    dpop_jkt: jkt,
                 },
             )
             .await
@@ -176,7 +193,7 @@ pub(super) async fn handle_authorization_code_grant(
             scope: record.scope.join(" "),
             token_use: "access".to_string(),
             family_id: sid.clone(),
-            cnf: None,
+            cnf: confirmation.clone(),
         };
         let access_token = sign_jwt(state, domain_id, &access_claims).await?;
 
@@ -230,7 +247,7 @@ pub(super) async fn handle_authorization_code_grant(
 
     let response = TokenResponse {
         access_token,
-        token_type: "Bearer",
+        token_type: super::dpop::token_type(confirmation.as_ref()),
         expires_in: access_lifetime,
         scope: record.scope.join(" "),
         id_token: Some(id_token),
@@ -250,8 +267,8 @@ mod tests {
     use crate::api::tests::get_mocked_state;
     use crate::api::v4::oauth2::openapi_router;
     use crate::api::v4::oauth2::token::test_fixtures::{
-        json_body, jwt_claims, ok_key_mock, public_authz_code_client, refresh_identity_mock,
-        refresh_resource_mock, refresh_user, request,
+        dpop_proof, dpop_test_jkt, json_body, jwt_claims, ok_key_mock, public_authz_code_client,
+        refresh_identity_mock, refresh_resource_mock, refresh_user, request,
     };
 
     use crate::oauth2_client::MockOauth2ClientProvider;
@@ -314,6 +331,9 @@ mod tests {
         let client = public_authz_code_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
 
@@ -346,6 +366,9 @@ mod tests {
         let client = public_authz_code_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
 
@@ -377,6 +400,9 @@ mod tests {
     async fn test_authorization_code_openstack_api_scope_is_rejected() {
         let client = public_authz_code_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
         client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
@@ -418,6 +444,9 @@ mod tests {
             "${user.domain_id}".to_string(),
         )]);
         let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
         client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
@@ -466,6 +495,9 @@ mod tests {
         let client = public_authz_code_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
 
@@ -506,6 +538,9 @@ mod tests {
             openstack_keystone_core_types::oauth2_client::GrantType::RefreshToken,
         ];
         let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
         client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
@@ -567,6 +602,9 @@ mod tests {
             openstack_keystone_core_types::oauth2_client::GrantType::RefreshToken,
         ];
         let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
         client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
@@ -644,6 +682,9 @@ mod tests {
         ];
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
 
@@ -703,5 +744,195 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    const TOKEN_URL: &str = "http://localhost/v4/oauth2/domain-1/token";
+
+    /// A state with DPoP `optional` and a mocked authorization code that is
+    /// bound to `code_jkt` (if any); `redeem_times` bounds how often the code
+    /// may be redeemed.
+    async fn dpop_state(
+        code_jkt: Option<String>,
+        redeem_times: usize,
+    ) -> crate::keystone::ServiceState {
+        let mut client = public_authz_code_client().await;
+        client.grant_types = vec![
+            openstack_keystone_core_types::oauth2_client::GrantType::AuthorizationCode,
+            openstack_keystone_core_types::oauth2_client::GrantType::RefreshToken,
+        ];
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Optional));
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_redeem_authorization_code()
+            .times(redeem_times)
+            .returning(move |_, _| {
+                let mut code = sample_authz_code(vec!["openid".to_string()]);
+                code.dpop_jkt = code_jkt.clone();
+                Ok(Some(code))
+            });
+        session_mock
+            .expect_issue_refresh_token()
+            .withf(|_, req| req.dpop_jkt.as_deref() == Some(dpop_test_jkt().as_str()))
+            .returning(|_, req| {
+                Ok((
+                    openstack_keystone_core_types::oauth2_session::RefreshToken {
+                        upstream: None,
+                        token_id: "irrelevant".to_string(),
+                        family_id: "family-9".to_string(),
+                        parent_token_id: None,
+                        domain_id: "domain-1".to_string(),
+                        client_id: "client-1".to_string(),
+                        user_id: "user-1".to_string(),
+                        scope: vec!["openid".to_string()],
+                        issued_at: 1000,
+                        spent_at: None,
+                        revoked_at: None,
+                        revocation_reason: None,
+                        expires_at: 1000 + 2_592_000,
+                        family_expires_at: 0,
+                        amr: vec![],
+                        dpop_jkt: req.dpop_jkt,
+                    },
+                    "refresh-bearer".to_string(),
+                ))
+            });
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock)
+            .mock_oauth2_key(ok_key_mock());
+        let mut config = openstack_keystone_config::Config::default();
+        config.oauth2.allow_host_header_issuer = true;
+        config.oauth2.dpop = openstack_keystone_config::DpopMode::Optional;
+        config.mapping.cluster_salt = Some("dpop-test-salt".to_string().into());
+        openstack_keystone_core::api::tests::get_mocked_state_with_config(
+            provider, true, None, config,
+        )
+        .await
+    }
+
+    fn with_proof(proof: Option<String>) -> axum::http::Request<axum::body::Body> {
+        let mut req = request(&authz_code_form(PKCE_VERIFIER));
+        if let Some(proof) = proof {
+            req.headers_mut().insert("DPoP", proof.parse().unwrap());
+        }
+        req
+    }
+
+    async fn fetch_nonce(api: &mut utoipa_axum::router::OpenApiRouter) -> String {
+        let response = api
+            .as_service()
+            .oneshot(with_proof(Some(dpop_proof(TOKEN_URL, "nonce-probe", None))))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let nonce = response.headers()["dpop-nonce"]
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(json_body(response).await["error"], "use_dpop_nonce");
+        nonce
+    }
+
+    #[tokio::test]
+    async fn test_nonce_challenge_does_not_redeem_the_code() {
+        let state = dpop_state(None, 0).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        assert!(!fetch_nonce(&mut api).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_bound_code_with_matching_proof_issues_bound_tokens() {
+        let state = dpop_state(Some(dpop_test_jkt()), 1).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let nonce = fetch_nonce(&mut api).await;
+
+        let response = api
+            .as_service()
+            .oneshot(with_proof(Some(dpop_proof(
+                TOKEN_URL,
+                "jti-1",
+                Some(&nonce),
+            ))))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["token_type"], "DPoP");
+        let claims = jwt_claims(body["access_token"].as_str().unwrap());
+        assert_eq!(claims["cnf"]["jkt"], dpop_test_jkt());
+        // The refresh family was issued for the same key (checked by the
+        // mock's `withf`).
+        assert_eq!(body["refresh_token"], "refresh-bearer");
+    }
+
+    #[tokio::test]
+    async fn test_unbound_code_takes_the_proof_key() {
+        let state = dpop_state(None, 1).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let nonce = fetch_nonce(&mut api).await;
+
+        let response = api
+            .as_service()
+            .oneshot(with_proof(Some(dpop_proof(
+                TOKEN_URL,
+                "jti-2",
+                Some(&nonce),
+            ))))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["token_type"], "DPoP");
+        assert_eq!(
+            jwt_claims(body["access_token"].as_str().unwrap())["cnf"]["jkt"],
+            dpop_test_jkt()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bound_code_without_proof_is_rejected() {
+        // The code is redeemed (single use) and then refused.
+        let state = dpop_state(Some(dpop_test_jkt()), 1).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api.as_service().oneshot(with_proof(None)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_dpop_proof");
+    }
+
+    #[tokio::test]
+    async fn test_bound_code_with_another_key_is_rejected() {
+        let state = dpop_state(Some("A".repeat(43)), 1).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let nonce = fetch_nonce(&mut api).await;
+
+        let response = api
+            .as_service()
+            .oneshot(with_proof(Some(dpop_proof(
+                TOKEN_URL,
+                "jti-3",
+                Some(&nonce),
+            ))))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_dpop_proof");
     }
 }

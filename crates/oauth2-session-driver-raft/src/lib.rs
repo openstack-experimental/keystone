@@ -318,6 +318,7 @@ impl RaftOauth2SessionBackend {
             pending_upstream: None,
             upstream: None,
             force_consent: data.force_consent,
+            dpop_jkt: data.dpop_jkt,
         };
         let mutations = vec![
             Mutation::set(
@@ -2270,6 +2271,7 @@ mod tests {
             force_consent: false,
             created_at: 1000,
             expires_at: 2000,
+            dpop_jkt: None,
         }
     }
 

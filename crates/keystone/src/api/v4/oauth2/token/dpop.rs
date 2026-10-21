@@ -46,6 +46,10 @@ const DPOP_HEADER: &str = "dpop";
 /// * `optional`: a proof binds the token, no proof leaves it unbound.
 /// * `required`: a request without a proof is rejected.
 ///
+/// `min_mode` raises the mode for requests that carry their own binding, such
+/// as a refresh token of a bound family: such a request needs a proof even
+/// when DPoP has since been switched off.
+///
 /// A proof is checked for exactly-one-header, the pre-verification rate
 /// limit (source and unverified key thumbprint), the server nonce, the
 /// signature and bindings, and replay, in that order.
@@ -55,6 +59,7 @@ pub(super) async fn bind_token_request(
     headers: &HeaderMap,
     peer_addr: Option<SocketAddr>,
     client: &OAuth2ClientResource,
+    min_mode: DpopMode,
 ) -> Result<Option<Confirmation>, Oauth2TokenError> {
     let exec = ExecutionContext::internal(state);
     let mode = state
@@ -65,7 +70,8 @@ pub(super) async fn bind_token_request(
         .map_err(|e| {
             tracing::warn!(error = %e, "DPoP mode lookup failed");
             Oauth2TokenError::internal("token issuance failed")
-        })?;
+        })?
+        .max(min_mode);
     if mode == DpopMode::Disabled {
         return Ok(None);
     }
@@ -177,6 +183,28 @@ pub(super) fn token_type(confirmation: Option<&Confirmation>) -> &'static str {
     }
 }
 
+/// Reconcile the key an authorization code was bound to at `/authorize`
+/// (`dpop_jkt`) with the key of the proof presented at `/token` (RFC 9449
+/// §10, ADR 0043 §3.4).
+///
+/// A bound code needs a proof from that key; an unbound code takes the key of
+/// the proof, if any.
+pub(super) fn reconcile_code_binding(
+    code_jkt: Option<&str>,
+    confirmation: Option<Confirmation>,
+) -> Result<Option<Confirmation>, Oauth2TokenError> {
+    match (code_jkt, confirmation) {
+        (None, confirmation) => Ok(confirmation),
+        (Some(jkt), Some(confirmation)) if confirmation.matches(jkt) => Ok(Some(confirmation)),
+        (Some(_), Some(_)) => Err(Oauth2TokenError::invalid_dpop_proof(
+            "the DPoP proof key does not match the dpop_jkt of the authorization request",
+        )),
+        (Some(_), None) => Err(Oauth2TokenError::invalid_dpop_proof(
+            "the authorization code is bound to a DPoP key; a proof is required",
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
@@ -204,5 +232,26 @@ mod tests {
     fn test_token_type() {
         assert_eq!(token_type(None), "Bearer");
         assert_eq!(token_type(confirmation("k1").as_ref()), "DPoP");
+    }
+
+    #[test]
+    fn test_unbound_code_takes_the_proof_key() {
+        assert_eq!(
+            reconcile_code_binding(None, confirmation("k1")).unwrap(),
+            confirmation("k1")
+        );
+        assert_eq!(reconcile_code_binding(None, None).unwrap(), None);
+    }
+
+    #[test]
+    fn test_bound_code_needs_the_same_key() {
+        assert_eq!(
+            reconcile_code_binding(Some("k1"), confirmation("k1")).unwrap(),
+            confirmation("k1")
+        );
+        for other in [confirmation("k2"), None] {
+            let err = reconcile_code_binding(Some("k1"), other).unwrap_err();
+            assert_eq!(err.error_code(), "invalid_dpop_proof");
+        }
     }
 }

@@ -61,6 +61,15 @@ use crate::audit::{
 };
 use crate::keystone::ServiceState;
 
+/// Whether `jkt` has the shape of an RFC 7638 SHA-256 thumbprint: 43
+/// unpadded base64url characters.
+pub(super) fn is_valid_jkt(jkt: &str) -> bool {
+    jkt.len() == 43
+        && jkt
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 pub(super) const SESSION_COOKIE_NAME: &str = "keystone_oauth2_session";
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -95,6 +104,10 @@ pub(super) struct AuthorizeQuery {
     /// Prefills the username field of the login form.
     #[serde(default)]
     login_hint: Option<String>,
+    /// RFC 9449 §10: thumbprint of the DPoP key the authorization code (and
+    /// the tokens issued for it) are bound to.
+    #[serde(default)]
+    dpop_jkt: Option<String>,
 }
 
 /// The parsed `prompt` request parameter (OIDC Core §3.1.2.1).
@@ -427,6 +440,38 @@ pub(super) async fn authorize(
         ));
     }
 
+    // RFC 9449 §10: bind the code to a key announced up front. Ignored while
+    // DPoP is disabled for this request.
+    let dpop_jkt = match query.dpop_jkt.as_deref() {
+        None => None,
+        Some(jkt) => {
+            let mode = state
+                .provider
+                .get_oauth2_client_provider()
+                .effective_dpop_mode(&exec, &domain_id, client.dpop_bound_access_tokens)
+                .await
+                .map_err(|e| {
+                    tracing::warn!(error = %e, "DPoP mode lookup failed");
+                    error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
+                });
+            match mode {
+                // Not even validated: the parameter is a no-op while DPoP is
+                // off, as if it had not been sent.
+                Ok(openstack_keystone_config::DpopMode::Disabled) => None,
+                Ok(_) if !is_valid_jkt(jkt) => {
+                    return Ok(redirect_with_error(
+                        &redirect_uri,
+                        &state_param,
+                        "invalid_request",
+                        "dpop_jkt must be a base64url SHA-256 JWK thumbprint",
+                    ));
+                }
+                Ok(_) => Some(jkt.to_string()),
+                Err(response) => return Ok(response),
+            }
+        }
+    };
+
     let requested_scope: Vec<String> = query
         .scope
         .clone()
@@ -536,6 +581,7 @@ pub(super) async fn authorize(
                 code_challenge_method,
                 nonce: query.nonce.clone(),
                 force_consent: prompt.consent,
+                dpop_jkt,
             },
         )
         .await
@@ -1092,7 +1138,7 @@ async fn finish_consent(
                 },
                 upstream: session.upstream.clone(),
                 sso_id: sso_id.map(str::to_string),
-                dpop_jkt: None,
+                dpop_jkt: session.dpop_jkt.clone(),
             },
         )
         .await
@@ -1310,6 +1356,7 @@ mod tests {
                 Ok(PreAuthSession {
                     pending_upstream: None,
                     force_consent: false,
+                    dpop_jkt: None,
                     upstream: None,
                     session_id: "session-1".to_string(),
                     domain_id: req.domain_id,
@@ -1361,6 +1408,120 @@ mod tests {
         assert!(!body.contains("client-1"));
     }
 
+    /// Run `/authorize` with `extra` appended to the query and the effective
+    /// DPoP mode `mode`; returns the response and the `dpop_jkt` the session
+    /// was started with (`None` when no session was started).
+    async fn authorize_with_dpop(
+        extra: &str,
+        mode: openstack_keystone_config::DpopMode,
+    ) -> (axum::response::Response, Option<Option<String>>) {
+        let client = authz_client();
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(move |_, _, _| Ok(mode));
+
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let sink = captured.clone();
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_start_pre_auth_session()
+            .returning(move |_, req| {
+                *sink.lock().unwrap() = Some(req.dpop_jkt.clone());
+                Ok(PreAuthSession {
+                    pending_upstream: None,
+                    force_consent: false,
+                    dpop_jkt: req.dpop_jkt,
+                    upstream: None,
+                    session_id: "session-1".to_string(),
+                    domain_id: req.domain_id,
+                    client_id: req.client_id,
+                    redirect_uri: req.redirect_uri,
+                    scope: req.scope,
+                    state: req.state,
+                    code_challenge: req.code_challenge,
+                    code_challenge_method: req.code_challenge_method,
+                    nonce: req.nonce,
+                    server_side_session_secret: "secret".to_string(),
+                    user_id: None,
+                    auth_time: None,
+                    consent_granted: None,
+                    created_at: 0,
+                    expires_at: 1_000_000_000,
+                    amr: vec![],
+                    pending_user_id: None,
+                    pending_factors: vec![],
+                    mfa_attempts: 0,
+                })
+            });
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api
+            .as_service()
+            .oneshot(get_request(&format!(
+                "/domain-1/authorize?{AUTHZ_QS}{extra}"
+            )))
+            .await
+            .unwrap();
+        let jkt = captured.lock().unwrap().clone();
+        (response, jkt)
+    }
+
+    #[tokio::test]
+    async fn test_authorize_stores_dpop_jkt_when_dpop_is_enabled() {
+        let jkt = "A".repeat(43);
+        let (response, started) = authorize_with_dpop(
+            &format!("&dpop_jkt={jkt}"),
+            openstack_keystone_config::DpopMode::Optional,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(started, Some(Some(jkt)));
+    }
+
+    #[tokio::test]
+    async fn test_authorize_ignores_dpop_jkt_when_dpop_is_disabled() {
+        let (response, started) = authorize_with_dpop(
+            &format!("&dpop_jkt={}", "A".repeat(43)),
+            openstack_keystone_config::DpopMode::Disabled,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(started, Some(None));
+    }
+
+    #[tokio::test]
+    async fn test_authorize_ignores_malformed_dpop_jkt_when_dpop_is_disabled() {
+        let (response, started) = authorize_with_dpop(
+            "&dpop_jkt=not-a-thumbprint",
+            openstack_keystone_config::DpopMode::Disabled,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(started, Some(None));
+    }
+
+    #[tokio::test]
+    async fn test_authorize_rejects_malformed_dpop_jkt() {
+        let (response, started) = authorize_with_dpop(
+            "&dpop_jkt=not-a-thumbprint",
+            openstack_keystone_config::DpopMode::Optional,
+        )
+        .await;
+        assert!(response.status().is_redirection());
+        let location = response.headers()[header::LOCATION].to_str().unwrap();
+        assert!(location.contains("error=invalid_request"));
+        assert_eq!(started, None);
+    }
+
     #[tokio::test]
     async fn test_authorize_unset_public_endpoint_is_service_unavailable() {
         let state = crate::api::tests::get_mocked_state_with_config(
@@ -1387,6 +1548,7 @@ mod tests {
         PreAuthSession {
             pending_upstream: None,
             force_consent: false,
+            dpop_jkt: None,
             upstream: None,
             session_id: "session-1".to_string(),
             domain_id: "domain-1".to_string(),

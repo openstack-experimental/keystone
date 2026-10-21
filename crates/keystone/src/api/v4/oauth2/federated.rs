@@ -679,6 +679,7 @@ mod tests {
     fn session(pending: Option<(&str, &str)>) -> PreAuthSession {
         PreAuthSession {
             force_consent: false,
+            dpop_jkt: None,
             session_id: "session-1".into(),
             domain_id: "domain-1".into(),
             client_id: "client-1".into(),

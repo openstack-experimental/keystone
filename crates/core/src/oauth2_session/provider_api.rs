@@ -46,6 +46,8 @@ pub struct StartPreAuthSessionRequest {
     pub nonce: Option<String>,
     /// The request carried `prompt=consent`.
     pub force_consent: bool,
+    /// `dpop_jkt` of the request (RFC 9449 §10), validated by the caller.
+    pub dpop_jkt: Option<String>,
 }
 
 /// Input to [`Oauth2SessionApi::issue_authorization_code`]. The code value
