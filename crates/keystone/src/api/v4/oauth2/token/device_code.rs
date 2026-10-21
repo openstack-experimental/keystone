@@ -168,6 +168,19 @@ pub(super) async fn handle_device_code_grant(
         }
     };
 
+    // Before the poll: it fetch-and-deletes an authorized grant, which a nonce
+    // challenge or a malformed, stale or missing proof must not consume. Every
+    // poll carries its own proof (ADR 0043 §3).
+    let confirmation = super::dpop::bind_token_request(
+        state,
+        domain_id,
+        headers,
+        peer_addr,
+        &client,
+        openstack_keystone_config::DpopMode::Disabled,
+    )
+    .await?;
+
     let outcome = state
         .provider
         .get_oauth2_session_provider()
@@ -200,6 +213,14 @@ pub(super) async fn handle_device_code_grant(
         return Err(Oauth2TokenError::internal("token issuance failed"));
     };
 
+    // A grant bound when the flow started needs a proof from that key; an
+    // unbound one takes the key of the proof, if any. The poll has already
+    // spent an authorized grant, so a valid proof from another key ends it,
+    // the same as for an authorization code.
+    let confirmation =
+        super::dpop::reconcile_code_binding(record.dpop_jkt.as_deref(), confirmation)?;
+    let jkt = confirmation.as_ref().map(|c| c.jkt.clone());
+
     let base = base_url(state, headers).await;
     let issuer = format!("{base}/v4/oauth2/{domain_id}");
     let now = chrono::Utc::now().timestamp();
@@ -221,7 +242,7 @@ pub(super) async fn handle_device_code_grant(
                     scope: record.scope.clone(),
                     amr: record.amr.clone(),
                     upstream: record.upstream.clone(),
-                    dpop_jkt: record.dpop_jkt.clone(),
+                    dpop_jkt: jkt,
                 },
             )
             .await
@@ -246,7 +267,7 @@ pub(super) async fn handle_device_code_grant(
             scope: record.scope.join(" "),
             token_use: "access".to_string(),
             family_id: sid.clone(),
-            cnf: None,
+            cnf: confirmation.clone(),
         };
         let access_token = sign_jwt(state, domain_id, &access_claims).await?;
 
@@ -302,7 +323,7 @@ pub(super) async fn handle_device_code_grant(
 
     let response = TokenResponse {
         access_token,
-        token_type: "Bearer",
+        token_type: super::dpop::token_type(confirmation.as_ref()),
         expires_in: access_lifetime,
         scope: record.scope.join(" "),
         id_token,
@@ -330,7 +351,8 @@ mod tests {
     use crate::api::tests::get_mocked_state;
     use crate::api::v4::oauth2::openapi_router;
     use crate::api::v4::oauth2::token::test_fixtures::{
-        json_body, public_authz_code_client, request,
+        dpop_proof, dpop_test_jkt, json_body, jwt_claims, ok_key_mock, public_authz_code_client,
+        request,
     };
     use crate::oauth2_client::MockOauth2ClientProvider;
     use crate::oauth2_session::MockOauth2SessionProvider;
@@ -368,6 +390,9 @@ mod tests {
 
         let client = valid_device_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
         client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
@@ -432,6 +457,9 @@ mod tests {
         let client = valid_device_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
         let mut session_mock = MockOauth2SessionProvider::default();
@@ -495,6 +523,9 @@ mod tests {
         let client = valid_device_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
         let mut session_mock = MockOauth2SessionProvider::default();
@@ -538,6 +569,9 @@ mod tests {
         let client = valid_device_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+        client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
         let mut other = MockOauth2SessionProvider::default();
@@ -570,6 +604,9 @@ mod tests {
     async fn test_device_code_slow_down_does_not_start_quiet_period() {
         let client = valid_device_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
         client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
@@ -607,6 +644,9 @@ mod tests {
         error: &str,
     ) {
         let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
         client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(client.clone()));
@@ -677,5 +717,222 @@ mod tests {
             "invalid_client",
         )
         .await;
+    }
+    const TOKEN_URL: &str = "http://localhost/v4/oauth2/domain-1/token";
+
+    fn authorized_grant(
+        dpop_jkt: Option<String>,
+    ) -> openstack_keystone_core_types::oauth2_session::DeviceCodeGrant {
+        use openstack_keystone_core_types::oauth2_session::{DeviceCodeGrant, DeviceGrantStatus};
+        DeviceCodeGrant {
+            device_code: "dc-1".into(),
+            user_code: "BCDFGHJK".into(),
+            domain_id: "domain-1".into(),
+            client_id: "client-1".into(),
+            scope: vec![],
+            status: DeviceGrantStatus::Authorized,
+            user_id: Some("user-1".into()),
+            auth_time: Some(1000),
+            amr: vec!["pwd".into()],
+            nonce: None,
+            server_side_session_secret: "secret".into(),
+            last_polled_at: None,
+            created_at: 0,
+            expires_at: 1_000_000_000,
+            pending_user_id: None,
+            pending_factors: vec![],
+            mfa_attempts: 0,
+            pending_upstream: None,
+            upstream: None,
+            dpop_jkt,
+        }
+    }
+
+    /// A state with DPoP `optional` whose poll reports `outcome` at most
+    /// `polls` times.
+    async fn dpop_state(outcome: DevicePollOutcome, polls: usize) -> crate::keystone::ServiceState {
+        let client = valid_device_client().await;
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Optional));
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_poll_device_code_grant()
+            .times(polls)
+            .returning(move |_, _, _, _| Ok(outcome.clone()));
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock)
+            .mock_oauth2_key(ok_key_mock());
+        let mut config = Config::default();
+        config.oauth2.allow_host_header_issuer = true;
+        config.oauth2.dpop = openstack_keystone_config::DpopMode::Optional;
+        config.mapping.cluster_salt = Some("dpop-test-salt".to_string().into());
+        openstack_keystone_core::api::tests::get_mocked_state_with_config(
+            provider, true, None, config,
+        )
+        .await
+    }
+
+    fn with_proof(code: &str, proof: Option<String>) -> axum::http::Request<axum::body::Body> {
+        let mut req = request(&device_form(code));
+        if let Some(proof) = proof {
+            req.headers_mut().insert("DPoP", proof.parse().unwrap());
+        }
+        req
+    }
+
+    async fn fetch_nonce(api: &mut utoipa_axum::router::OpenApiRouter, code: &str) -> String {
+        let response = api
+            .as_service()
+            .oneshot(with_proof(
+                code,
+                Some(dpop_proof(TOKEN_URL, "nonce-probe", None)),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let nonce = response.headers()["dpop-nonce"]
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(json_body(response).await["error"], "use_dpop_nonce");
+        nonce
+    }
+
+    #[tokio::test]
+    async fn test_nonce_challenge_does_not_poll_the_grant() {
+        let state = dpop_state(DevicePollOutcome::Pending, 0).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        assert!(
+            !fetch_nonce(&mut api, "dpop-challenge-code")
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bound_grant_with_matching_proof_issues_bound_token() {
+        let state = dpop_state(
+            DevicePollOutcome::Authorized(Box::new(authorized_grant(Some(dpop_test_jkt())))),
+            1,
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let nonce = fetch_nonce(&mut api, "dpop-bound-code").await;
+
+        let response = api
+            .as_service()
+            .oneshot(with_proof(
+                "dpop-bound-code",
+                Some(dpop_proof(TOKEN_URL, "jti-1", Some(&nonce))),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["token_type"], "DPoP");
+        assert_eq!(
+            jwt_claims(body["access_token"].as_str().unwrap())["cnf"]["jkt"],
+            dpop_test_jkt()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unbound_grant_takes_the_proof_key() {
+        let state = dpop_state(
+            DevicePollOutcome::Authorized(Box::new(authorized_grant(None))),
+            1,
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let nonce = fetch_nonce(&mut api, "dpop-unbound-code").await;
+
+        let response = api
+            .as_service()
+            .oneshot(with_proof(
+                "dpop-unbound-code",
+                Some(dpop_proof(TOKEN_URL, "jti-2", Some(&nonce))),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["token_type"], "DPoP");
+    }
+
+    #[tokio::test]
+    async fn test_bound_grant_without_proof_is_rejected() {
+        let state = dpop_state(
+            DevicePollOutcome::Authorized(Box::new(authorized_grant(Some(dpop_test_jkt())))),
+            1,
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(with_proof("dpop-noproof-code", None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_dpop_proof");
+    }
+
+    #[tokio::test]
+    async fn test_bound_grant_with_another_key_is_rejected() {
+        let state = dpop_state(
+            DevicePollOutcome::Authorized(Box::new(authorized_grant(Some("A".repeat(43))))),
+            1,
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let nonce = fetch_nonce(&mut api, "dpop-other-code").await;
+
+        let response = api
+            .as_service()
+            .oneshot(with_proof(
+                "dpop-other-code",
+                Some(dpop_proof(TOKEN_URL, "jti-3", Some(&nonce))),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_dpop_proof");
+    }
+
+    #[tokio::test]
+    async fn test_pending_poll_with_proof_stays_pending() {
+        let state = dpop_state(DevicePollOutcome::Pending, 1).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let nonce = fetch_nonce(&mut api, "dpop-pending-code").await;
+
+        let response = api
+            .as_service()
+            .oneshot(with_proof(
+                "dpop-pending-code",
+                Some(dpop_proof(TOKEN_URL, "jti-4", Some(&nonce))),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "authorization_pending");
     }
 }

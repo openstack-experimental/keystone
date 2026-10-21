@@ -28,6 +28,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_session::StartDeviceAuthorizationRequest;
 
 use super::html::no_store;
@@ -42,6 +43,11 @@ pub(super) struct DeviceAuthorizationForm {
     client_id: Option<String>,
     #[serde(default)]
     scope: Option<String>,
+    /// RFC 9449 §10 style thumbprint of the DPoP key the device code, and
+    /// the tokens issued for it, are bound to (ADR 0043 §3). Ignored while
+    /// DPoP is disabled for the request.
+    #[serde(default)]
+    dpop_jkt: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -103,6 +109,33 @@ pub(super) async fn device_authorization(
 
     let client = validate_device_code_client(&state, &domain_id, &client_id).await?;
 
+    // Fixes the key the polls must use. Like at `/authorize`, the parameter
+    // is not even looked at while DPoP is off.
+    let dpop_jkt = match form.dpop_jkt.as_deref() {
+        None => None,
+        Some(jkt) => {
+            let exec = ExecutionContext::internal(&state);
+            let mode = state
+                .provider
+                .get_oauth2_client_provider()
+                .effective_dpop_mode(&exec, &domain_id, client.dpop_bound_access_tokens)
+                .await
+                .map_err(|e| {
+                    tracing::warn!(error = %e, "DPoP mode lookup failed");
+                    Oauth2TokenError::internal("device authorization failed")
+                })?;
+            match mode {
+                openstack_keystone_config::DpopMode::Disabled => None,
+                _ if !super::authorize::is_valid_jkt(jkt) => {
+                    return Err(Oauth2TokenError::invalid_request(
+                        "dpop_jkt must be a base64url SHA-256 JWK thumbprint",
+                    ));
+                }
+                _ => Some(jkt.to_string()),
+            }
+        }
+    };
+
     let requested_scope: Vec<String> = form
         .scope
         .clone()
@@ -136,7 +169,7 @@ pub(super) async fn device_authorization(
                 domain_id: domain_id.clone(),
                 client_id: client.client_id.clone(),
                 scope: requested_scope,
-                dpop_jkt: None,
+                dpop_jkt,
             },
         )
         .await
@@ -300,6 +333,84 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// Start a device flow with `body` under the effective DPoP mode `mode`;
+    /// returns the response and the `dpop_jkt` the grant was created with
+    /// (`None` when no grant was created).
+    async fn start_with_dpop(
+        body: &str,
+        mode: openstack_keystone_config::DpopMode,
+    ) -> (axum::response::Response, Option<Option<String>>) {
+        let client = device_client();
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(move |_, _, _| Ok(mode));
+
+        let started = Arc::new(std::sync::Mutex::new(None));
+        let sink = started.clone();
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_start_device_authorization()
+            .returning(move |_, req| {
+                *sink.lock().unwrap() = Some(req.dpop_jkt);
+                Ok(DeviceAuthorizationStart {
+                    device_code: "device-code-1".to_string(),
+                    user_code: "ABCD-EFGH".to_string(),
+                    expires_at: chrono::Utc::now().timestamp() + 600,
+                    interval: 5,
+                })
+            });
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api.as_service().oneshot(request(body)).await.unwrap();
+        let started = started.lock().unwrap().clone();
+        (response, started)
+    }
+
+    #[tokio::test]
+    async fn test_dpop_jkt_binds_the_grant_when_dpop_is_enabled() {
+        let jkt = "A".repeat(43);
+        let (response, started) = start_with_dpop(
+            &format!("client_id=client-1&dpop_jkt={jkt}"),
+            openstack_keystone_config::DpopMode::Optional,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(started, Some(Some(jkt)));
+    }
+
+    #[tokio::test]
+    async fn test_dpop_jkt_is_ignored_when_dpop_is_disabled() {
+        for jkt in ["A".repeat(43), "not-a-thumbprint".to_string()] {
+            let (response, started) = start_with_dpop(
+                &format!("client_id=client-1&dpop_jkt={jkt}"),
+                openstack_keystone_config::DpopMode::Disabled,
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(started, Some(None));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_malformed_dpop_jkt_is_invalid_request() {
+        let (response, started) = start_with_dpop(
+            "client_id=client-1&dpop_jkt=not-a-thumbprint",
+            openstack_keystone_config::DpopMode::Optional,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(started, None);
     }
 
     #[tokio::test]
