@@ -338,11 +338,12 @@ async fn keystone_subject(state: &ServiceState, token: &str) -> Result<Subject, 
         ));
     }
     let fernet = vsc.token().map_err(|_| OnBehalfOfError::InvalidSubject)?;
-    // The last audit id is that of the token the user authenticated with:
-    // a rescoped token lists its own id first and its parents' after it.
+    // The first audit id is the key revocation events of this token are
+    // recorded under (`RevocationEventListParametersBuilder`), so revoking
+    // the token the user handed over ends the chain.
     let root_jti = fernet
         .audit_ids()
-        .last()
+        .first()
         .cloned()
         .ok_or(OnBehalfOfError::InvalidSubject)?;
     // A rescoped token carries a fresh `issued_at` but inherits the expiry

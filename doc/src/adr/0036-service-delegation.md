@@ -656,10 +656,10 @@ accepts an application-credential subject and rejects everything else.
 5. `auth_time` and `root_jti` are taken from the subject on the first hop and
    preserved unchanged on every re-exchange (§6.3). A rescoped token has a fresh
    `issued_at` but inherits its parent's expiry, so `auth_time` is the earlier
-   of `issued_at` and `expires_at` less the token lifetime, and `root_jti` is the
-   _last_ audit id of the token (the one the user authenticated with), so that
-   rescoping can neither extend the chain nor hide it from a revocation of the
-   original token.
+   of `issued_at` and `expires_at` less the token lifetime, so rescoping cannot
+   extend the chain. `root_jti` is the token's first audit id, the key its
+   revocation events are recorded under; revocation by audit chain is not
+   matched anywhere in Keystone, so revoking a parent does not end the chain.
 
 #### 6.3 Renewal without a stored record
 
