@@ -720,6 +720,29 @@ pub mod tests {
         assert_eq!(token, dec_token);
     }
 
+    /// A token whose `expires_at` has whole-second precision (as issued by the
+    /// token service) survives the encrypt/decrypt round trip unchanged, so the
+    /// issue response matches what validation later reports.
+    #[tokio::test]
+    async fn test_roundtrip_expiry_precision_is_stable() {
+        let expires_at = Utc::now().trunc_subsecs(0) + chrono::TimeDelta::hours(1);
+        let token = FernetToken::Unscoped(UnscopedPayload {
+            user_id: Uuid::new_v4().simple().to_string(),
+            methods: vec!["password".into()],
+            audit_ids: vec!["Zm9vCg".into()],
+            expires_at,
+            ..Default::default()
+        });
+        let mut provider = FernetTokenProvider::new(setup_config());
+        provider.load_keys().await.unwrap();
+
+        let dec_token = provider
+            .decrypt(&provider.encrypt(&token).unwrap())
+            .unwrap();
+        assert_eq!(*dec_token.expires_at(), expires_at);
+        assert_eq!(chrono::Timelike::nanosecond(dec_token.expires_at()), 0);
+    }
+
     #[tokio::test]
     async fn test_decrypt_domain() {
         let token = "gAAAAABnt16C_ve4dDc7TeU857pwTXGJfGqNA4uJ308_2o_F9T_8WenNBatll0Q36wGz79dSI6RQnuN2PbK17wxQbn9jXscDh2ie3ZrW-WL5gG3gWK6FiPleAiU3kJN5mkskViJOIN-ZpP2B15fmZiYijelQ9TQuhQ";

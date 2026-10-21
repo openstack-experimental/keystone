@@ -100,9 +100,14 @@ impl TokenService {
         let default_expiry = Utc::now()
             .checked_add_signed(TimeDelta::seconds(self.config.token.expiration as i64))
             .ok_or(TokenProviderError::ExpiryCalculation)?;
+        // Whole-second precision (parity with python keystone's
+        // `default_expire_time`): the fernet/JWS envelope cannot carry
+        // sub-second values, so an untruncated expiry would be reported
+        // differently when issued than when the token is decoded later.
         Ok(auth_expiration
             .map(|x| std::cmp::min(x, default_expiry))
-            .unwrap_or(default_expiry))
+            .unwrap_or(default_expiry)
+            .trunc_subsecs(0))
     }
 
     /// Build [`AuthzInfo`] from a token by fetching scope objects
@@ -821,6 +826,24 @@ mod tests {
             backend_driver: Arc::new(token_mock.unwrap_or_default()),
             tr_backend_driver: Arc::new(MockTokenRestrictionBackend::default()),
         }
+    }
+
+    /// The new token expiry has whole-second precision, both for the default
+    /// and for an authentication-capped expiration.
+    #[test]
+    fn test_get_new_token_expiry_truncates_subsecs() {
+        let config = setup_config();
+        let provider = get_provider(&config, None);
+
+        let default = provider.get_new_token_expiry(&None).unwrap();
+        assert_eq!(chrono::Timelike::nanosecond(&default), 0);
+
+        let capped = Utc::now().trunc_subsecs(0)
+            + TimeDelta::seconds(5)
+            + TimeDelta::nanoseconds(123_456_789);
+        let expiry = provider.get_new_token_expiry(&Some(capped)).unwrap();
+        assert_eq!(chrono::Timelike::nanosecond(&expiry), 0);
+        assert_eq!(expiry, capped.trunc_subsecs(0));
     }
 
     /// Test that a valid token with revocation events fails validation.
