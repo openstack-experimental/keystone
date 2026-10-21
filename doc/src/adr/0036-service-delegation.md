@@ -1156,6 +1156,48 @@ Where the phase 1 implementation refines or departs from the decision above:
   grant's domain, which is the target project's domain. Domain managers
   are authorized on that same domain.
 
+### Phase 2 design: on-behalf-of exchange
+
+How phase 2 implements §6, and where it refines the text above.
+
+- **Subjects.** `subject_token_type` is dispatched. Phase 2 accepts
+  `urn:openstack:params:oauth:token-type:keystone` (Fernet or JWS v3 token,
+  validated with `TokenApi::validate_to_context`, which also checks
+  revocation) and the hop token of an earlier exchange by the same actor
+  (`urn:ietf:params:oauth:token-type:access_token`, verified against the
+  issuing domain's JWKS and `revoked_jtis`). A user-issued JWT access token as
+  the first hop needs the validation profile of §6.4 and is left to it.
+- **Client authentication.** An on-behalf-of exchange is authenticated with
+  `tls_client_auth` on the internal interface, like redemption: the request
+  names the `client_id`, the SVID must match its `spiffe_ids`, and its
+  `delegation.on_behalf_of` must be set. The existing secret-authenticated
+  exchange of an application-credential token keeps working unchanged.
+- **Context shape.** `AuthenticationContext::OnBehalfOf` carries
+  `actor`, `delegated_project_id: Option<String>`, the subject's `methods`,
+  `auth_time` and `root_jti`, not a boxed subject context. A hop token cannot
+  be turned back into the original context (an application credential record
+  is not reachable from the claims), and everything a decision needs is these
+  facts. `validate_scope_boundaries` allows a project scope only when
+  `delegated_project_id` is unset or equal to it.
+- **Claims.** `delegation_context` gains an `on_behalf_of` variant with
+  `actor_client_id`, `auth_time`, `root_jti` and the optional
+  `delegated_project_id`; `act` is the SVID; `amr` is the union of the
+  subject's methods and `on_behalf_of`.
+- **Root revocation.** The chain's audit id is `root_jti`, so
+  `RevokeApi::is_token_revoked` runs unchanged on every hop, together with
+  the user, domain and live role checks.
+- **Lifetime.** A hop is refused once
+  `now >= auth_time + max_operation_lifetime`, and the token's `exp` never
+  passes that bound.
+- **Scope domain.** The subject's scope must belong to the domain whose
+  endpoint is called, as for the existing exchange. A client of another
+  domain needs `cross_domain`.
+- **Limits.** Rate limiting is keyed `on_behalf_of:<svid>`; audit uses the
+  `on_behalf_of` target type with `authenticate`.
+- **Known gap.** Re-exchange does not re-read the application credential of
+  an application-credential chain; the credential's deletion ends the chain
+  through the root revocation only if the deletion revokes its tokens.
+
 ## Alternatives considered
 
 Each was weighed against the weaknesses above and against the two requirements
