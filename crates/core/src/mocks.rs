@@ -132,12 +132,31 @@ mod oauth2_client {
                 confidential: bool,
             ) -> Result<(OAuth2ClientResource, Option<String>), Oauth2ClientProviderError>;
 
+            async fn delete<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                provider_id: &'a str,
+            ) -> Result<(OAuth2ClientResource, usize), Oauth2ClientProviderError>;
+
+            async fn delete_domain_settings<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+            ) -> Result<(), Oauth2ClientProviderError>;
+
             async fn get<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
                 domain_id: &'a str,
                 provider_id: &'a str,
             ) -> Result<Option<OAuth2ClientResource>, Oauth2ClientProviderError>;
+
+            async fn get_domain_settings<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+            ) -> Result<OAuth2DomainSettings, Oauth2ClientProviderError>;
 
             async fn get_by_client_id<'a>(
                 &self,
@@ -171,12 +190,12 @@ mod oauth2_client {
                 provider_id: &'a str,
             ) -> Result<(OAuth2ClientResource, String), Oauth2ClientProviderError>;
 
-            async fn delete<'a>(
+            async fn update_domain_settings<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
                 domain_id: &'a str,
-                provider_id: &'a str,
-            ) -> Result<(OAuth2ClientResource, usize), Oauth2ClientProviderError>;
+                data: OAuth2DomainSettingsUpdate,
+            ) -> Result<OAuth2DomainSettings, Oauth2ClientProviderError>;
         }
     }
 }

@@ -23,6 +23,7 @@ pub mod dpop;
 pub mod dpop_nonce;
 pub mod dpop_replay;
 pub mod error;
+pub mod hook;
 pub mod id_token;
 pub mod pkce;
 mod provider_api;
@@ -34,6 +35,7 @@ pub mod verify;
 #[cfg(any(test, feature = "mock"))]
 pub use crate::mocks::MockOauth2ClientProvider;
 pub use error::Oauth2ClientProviderError;
+pub use hook::Oauth2ClientHook;
 pub use id_token::{IdTokenClaimsError, IdTokenParams, TemplateScope, build_id_token_claims};
 pub use provider_api::Oauth2ClientApi;
 pub use service::Oauth2ClientService;

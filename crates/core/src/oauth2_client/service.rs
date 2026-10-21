@@ -76,6 +76,10 @@ pub(crate) const RESERVED_CLAIM_NAMES: &[&str] = &[
     "roles",
 ];
 
+/// `provider_id` of the audit event for the per-domain settings, which are
+/// not tied to one client registration.
+const DOMAIN_SETTINGS_TARGET: &str = "domain-settings";
+
 /// Build the audit event for an operation on one client registration. The
 /// payload carries IDs only, never the secret or its hash.
 fn oauth2_client_event(operation: Operation, domain_id: &str, provider_id: &str) -> Event {
@@ -607,6 +611,22 @@ impl Oauth2ClientApi for Oauth2ClientService {
         }
     }
 
+    #[tracing::instrument(name = "provider.oauth2_client.delete_domain_settings", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn delete_domain_settings<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+    ) -> Result<(), Oauth2ClientProviderError> {
+        let op = self
+            .backend_driver
+            .delete_domain_settings(ctx.state(), domain_id);
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: oauth2_client_event(Operation::Delete, domain_id, DOMAIN_SETTINGS_TARGET),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| Oauth2ClientProviderError::AuditUnavailable,
+        }
+    }
     #[tracing::instrument(name = "provider.oauth2_client.get", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn get<'a>(
         &self,
@@ -617,6 +637,19 @@ impl Oauth2ClientApi for Oauth2ClientService {
         self.backend_driver
             .get(ctx.state(), domain_id, provider_id)
             .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_client.get_domain_settings", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn get_domain_settings<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+    ) -> Result<OAuth2DomainSettings, Oauth2ClientProviderError> {
+        Ok(self
+            .backend_driver
+            .get_domain_settings(ctx.state(), domain_id)
+            .await?
+            .unwrap_or_else(|| OAuth2DomainSettings::default_for(domain_id)))
     }
 
     #[tracing::instrument(name = "provider.oauth2_client.get_by_client_id", level = "debug", skip_all, fields(client_id = %client_id))]
@@ -828,6 +861,39 @@ impl Oauth2ClientApi for Oauth2ClientService {
                 domain_id,
                 provider_id,
             ),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| Oauth2ClientProviderError::AuditUnavailable,
+        }
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_client.update_domain_settings", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn update_domain_settings<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+        data: OAuth2DomainSettingsUpdate,
+    ) -> Result<OAuth2DomainSettings, Oauth2ClientProviderError> {
+        // Settings of an unknown domain would never be cleaned up: the
+        // domain-delete hook only fires for domains that existed.
+        if ctx
+            .state()
+            .provider
+            .get_resource_provider()
+            .get_domain(ctx, domain_id)
+            .await
+            .map_err(|e| Oauth2ClientProviderError::Dependency(e.to_string()))?
+            .is_none()
+        {
+            return Err(Oauth2ClientProviderError::NotFound(format!(
+                "domain {domain_id}"
+            )));
+        }
+        let op = self
+            .backend_driver
+            .update_domain_settings(ctx.state(), domain_id, data);
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: oauth2_client_event(Operation::Update, domain_id, DOMAIN_SETTINGS_TARGET),
             operation: op,
             on_audit_error: |_: AuditDispatchError| Oauth2ClientProviderError::AuditUnavailable,
         }
@@ -1181,6 +1247,108 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn test_get_domain_settings_defaults_when_not_stored() {
+        let mut mock = MockOauth2ClientBackend::new();
+        mock.expect_get_domain_settings().returning(|_, _| Ok(None));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        let settings = service.get_domain_settings(&ctx, "domain-1").await.unwrap();
+        assert_eq!(settings.domain_id, "domain-1");
+        assert_eq!(settings.dpop, openstack_keystone_config::DpopMode::Disabled);
+    }
+
+    #[tokio::test]
+    async fn test_get_domain_settings_returns_stored() {
+        let mut mock = MockOauth2ClientBackend::new();
+        mock.expect_get_domain_settings().returning(|_, domain_id| {
+            Ok(Some(OAuth2DomainSettings {
+                domain_id: domain_id.into(),
+                dpop: openstack_keystone_config::DpopMode::Required,
+                updated_at: 5,
+            }))
+        });
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        let settings = service.get_domain_settings(&ctx, "domain-1").await.unwrap();
+        assert_eq!(settings.dpop, openstack_keystone_config::DpopMode::Required);
+    }
+
+    #[tokio::test]
+    async fn test_update_and_delete_domain_settings_delegate_to_backend() {
+        let mut mock = MockOauth2ClientBackend::new();
+        mock.expect_update_domain_settings()
+            .withf(|_, domain_id, data| {
+                domain_id == "domain-1"
+                    && data.dpop == Some(openstack_keystone_config::DpopMode::Optional)
+            })
+            .times(1)
+            .returning(|_, domain_id, data| {
+                Ok(OAuth2DomainSettings::default_for(domain_id).with_update(data, 7))
+            });
+        mock.expect_delete_domain_settings()
+            .withf(|_, domain_id| domain_id == "domain-1")
+            .times(1)
+            .returning(|_, _| Ok(()));
+        let service = service_with(mock);
+        let state = state_with_domains(&["domain-1"]).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        let updated = service
+            .update_domain_settings(
+                &ctx,
+                "domain-1",
+                OAuth2DomainSettingsUpdate {
+                    dpop: Some(openstack_keystone_config::DpopMode::Optional),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.dpop, openstack_keystone_config::DpopMode::Optional);
+        service
+            .delete_domain_settings(&ctx, "domain-1")
+            .await
+            .unwrap();
+    }
+
+    fn state_with_domains(
+        known: &'static [&'static str],
+    ) -> impl std::future::Future<Output = crate::keystone::ServiceState> {
+        let mut resource = crate::resource::MockResourceProvider::default();
+        resource.expect_get_domain().returning(move |_, id| {
+            Ok(known.contains(&id).then(|| {
+                openstack_keystone_core_types::resource::DomainBuilder::default()
+                    .id(id)
+                    .name(id)
+                    .enabled(true)
+                    .build()
+                    .unwrap()
+            }))
+        });
+        get_mocked_state(
+            None,
+            Some(crate::provider::Provider::mocked_builder().mock_resource(resource)),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_update_domain_settings_rejects_unknown_domain() {
+        // No backend expectation: the backend must not be reached.
+        let service = service_with(MockOauth2ClientBackend::new());
+        let state = state_with_domains(&[]).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        let err = service
+            .update_domain_settings(&ctx, "nope", OAuth2DomainSettingsUpdate::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Oauth2ClientProviderError::NotFound(_)));
     }
 
     #[tokio::test]

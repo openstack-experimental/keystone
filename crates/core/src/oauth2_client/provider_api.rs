@@ -49,6 +49,13 @@ pub trait Oauth2ClientApi: Send + Sync {
         provider_id: &'a str,
     ) -> Result<(OAuth2ClientResource, usize), Oauth2ClientProviderError>;
 
+    /// Remove the stored OAuth2 settings of a domain, restoring the defaults.
+    async fn delete_domain_settings<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+    ) -> Result<(), Oauth2ClientProviderError>;
+
     /// Fetch a client by its `(domain_id, provider_id)` coordinate.
     async fn get<'a>(
         &self,
@@ -56,6 +63,14 @@ pub trait Oauth2ClientApi: Send + Sync {
         domain_id: &'a str,
         provider_id: &'a str,
     ) -> Result<Option<OAuth2ClientResource>, Oauth2ClientProviderError>;
+
+    /// Fetch the OAuth2 settings of a domain; the defaults when none are
+    /// stored.
+    async fn get_domain_settings<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+    ) -> Result<OAuth2DomainSettings, Oauth2ClientProviderError>;
 
     /// Fetch a client by its globally unique `client_id`.
     async fn get_by_client_id<'a>(
@@ -97,4 +112,12 @@ pub trait Oauth2ClientApi: Send + Sync {
         provider_id: &'a str,
         data: OAuth2ClientResourceUpdate,
     ) -> Result<(OAuth2ClientResource, usize), Oauth2ClientProviderError>;
+
+    /// Create or update the OAuth2 settings of a domain.
+    async fn update_domain_settings<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+        data: OAuth2DomainSettingsUpdate,
+    ) -> Result<OAuth2DomainSettings, Oauth2ClientProviderError>;
 }

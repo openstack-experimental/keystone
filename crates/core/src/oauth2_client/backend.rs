@@ -42,6 +42,13 @@ pub trait Oauth2ClientBackend: Send + Sync {
         provider_id: &'a str,
     ) -> Result<OAuth2ClientResource, Oauth2ClientProviderError>;
 
+    /// Remove the stored OAuth2 settings of a domain, restoring the defaults.
+    async fn delete_domain_settings<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+    ) -> Result<(), Oauth2ClientProviderError>;
+
     /// Fetch a client by its `(domain_id, provider_id)` coordinate.
     async fn get<'a>(
         &self,
@@ -57,6 +64,14 @@ pub trait Oauth2ClientBackend: Send + Sync {
         client_id: &'a str,
     ) -> Result<Option<OAuth2ClientResource>, Oauth2ClientProviderError>;
 
+    /// Fetch the OAuth2 settings of a domain. `None` when the domain has no
+    /// stored record (the defaults apply).
+    async fn get_domain_settings<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+    ) -> Result<Option<OAuth2DomainSettings>, Oauth2ClientProviderError>;
+
     /// List OAuth2 clients for a domain.
     async fn list(
         &self,
@@ -64,15 +79,15 @@ pub trait Oauth2ClientBackend: Send + Sync {
         params: &OAuth2ClientResourceListParameters,
     ) -> Result<Vec<OAuth2ClientResource>, Oauth2ClientProviderError>;
 
-    /// List the live clients of every domain that carry `spiffe_ids`.
-    async fn list_spiffe_clients(
+    /// List every live, enabled client of any domain that may be a service
+    /// grant grantee (ADR 0036 §3), ordered by `client_id`.
+    async fn list_delegatable(
         &self,
         state: &ServiceState,
     ) -> Result<Vec<OAuth2ClientResource>, Oauth2ClientProviderError>;
 
-    /// List every live, enabled client of any domain that may be a service
-    /// grant grantee (ADR 0036 §3), ordered by `client_id`.
-    async fn list_delegatable(
+    /// List the live clients of every domain that carry `spiffe_ids`.
+    async fn list_spiffe_clients(
         &self,
         state: &ServiceState,
     ) -> Result<Vec<OAuth2ClientResource>, Oauth2ClientProviderError>;
@@ -94,4 +109,12 @@ pub trait Oauth2ClientBackend: Send + Sync {
         provider_id: &'a str,
         data: OAuth2ClientResourceUpdate,
     ) -> Result<OAuth2ClientResource, Oauth2ClientProviderError>;
+
+    /// Create or update the OAuth2 settings of a domain.
+    async fn update_domain_settings<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        data: OAuth2DomainSettingsUpdate,
+    ) -> Result<OAuth2DomainSettings, Oauth2ClientProviderError>;
 }

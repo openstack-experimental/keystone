@@ -13,11 +13,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # OAuth2 client (relying party registration) resource (ADR 0026 §5)
 
+mod domain_settings;
 mod error;
 mod resource;
 mod spiffe_match;
 mod token_claims;
 
+pub use domain_settings::*;
 pub use error::*;
 pub use resource::*;
 pub use spiffe_match::*;

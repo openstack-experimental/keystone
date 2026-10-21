@@ -43,6 +43,7 @@ use crate::identity::IdentityHook;
 use crate::idmapping::IdMappingHook;
 use crate::k8s_auth::K8sAuthHook;
 use crate::limit::LimitHook;
+use crate::oauth2_client::Oauth2ClientHook;
 use crate::oauth2_key::Oauth2KeyHook;
 use crate::oauth2_session::Oauth2SessionHook;
 use crate::resource::ResourceHook;
@@ -176,6 +177,7 @@ async fn subscribe_event_hooks(state: &ServiceState) {
         IdMappingHook,
         K8sAuthHook,
         LimitHook,
+        Oauth2ClientHook,
         Oauth2KeyHook,
         Oauth2SessionHook,
         ResourceHook,

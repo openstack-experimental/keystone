@@ -86,6 +86,11 @@ impl RaftOauth2ClientBackend {
         format!("oauth2:client:v1:{}:", domain_id.as_ref())
     }
 
+    /// Per-domain settings key: `oauth2:domain_settings:v1:<domain_id>`.
+    fn get_domain_settings_key_name<D: AsRef<str>>(&self, domain_id: D) -> String {
+        format!("oauth2:domain_settings:v1:{}", domain_id.as_ref())
+    }
+
     /// Global `client_id` index key:
     /// `oauth2:client:client_id_idx:v1:<client_id>`.
     fn get_client_id_idx_key_name<C: AsRef<str>>(&self, client_id: C) -> String {
@@ -339,6 +344,104 @@ impl RaftOauth2ClientBackend {
         Ok(res)
     }
 
+    async fn get_domain_settings_impl(
+        &self,
+        storage: &dyn StorageApi,
+        domain_id: &str,
+    ) -> Result<Option<OAuth2DomainSettings>, StoreError> {
+        Ok(storage
+            .get_by_key(
+                self.get_domain_settings_key_name(domain_id).as_bytes(),
+                None,
+            )
+            .await?
+            .map(|env| env.try_deserialize::<OAuth2DomainSettings>())
+            .transpose()?
+            .map(|x| x.data))
+    }
+
+    /// Create the settings record on first use, otherwise update it with a
+    /// compare-and-swap on the stored revision.
+    ///
+    /// An update that changes nothing is not written: a domain without a
+    /// record already behaves as if it had the defaults.
+    async fn update_domain_settings_impl(
+        &self,
+        storage: &dyn StorageApi,
+        domain_id: &str,
+        data: OAuth2DomainSettingsUpdate,
+    ) -> Result<OAuth2DomainSettings, StoreError> {
+        let key = self.get_domain_settings_key_name(domain_id);
+        let now = Utc::now().timestamp();
+        let curr = storage
+            .get_by_key(key.as_bytes(), None)
+            .await?
+            .map(|env| env.try_deserialize::<OAuth2DomainSettings>())
+            .transpose()?;
+        let conflict = || StoreError::Conflict {
+            subject: key.clone(),
+            description: format!(
+                "the OAuth2 settings of domain `{domain_id}` were changed concurrently"
+            ),
+        };
+        let (new, mutation) = match curr {
+            Some(curr) => {
+                let new = curr.data.clone().with_update(data, now);
+                if new == curr.data {
+                    return Ok(new);
+                }
+                let mutation = Mutation::set(
+                    key.clone(),
+                    &new,
+                    curr.metadata.new_revision(),
+                    None::<&str>,
+                    Some(curr.metadata.revision),
+                )?;
+                (new, mutation)
+            }
+            None => {
+                let defaults = OAuth2DomainSettings::default_for(domain_id);
+                let new = defaults.clone().with_update(data, now);
+                if new == defaults {
+                    return Ok(new);
+                }
+                let mutation =
+                    Mutation::create_if_absent(key.clone(), &new, Metadata::new(), None::<&str>)?;
+                (new, mutation)
+            }
+        };
+        require_no_conflict(storage.transaction(vec![mutation]).await, conflict)?;
+        Ok(new)
+    }
+
+    /// Remove the settings record, if any, guarded by the stored revision.
+    async fn delete_domain_settings_impl(
+        &self,
+        storage: &dyn StorageApi,
+        domain_id: &str,
+    ) -> Result<(), StoreError> {
+        let key = self.get_domain_settings_key_name(domain_id);
+        let Some(curr) = storage.get_by_key(key.as_bytes(), None).await? else {
+            return Ok(());
+        };
+        require_no_conflict(
+            storage
+                .transaction(vec![Mutation::remove(
+                    key.clone(),
+                    None::<&str>,
+                    Some(curr.metadata.revision),
+                )])
+                .await,
+            || StoreError::Conflict {
+                subject: key,
+                description: format!(
+                    "the OAuth2 settings of domain `{domain_id}` were changed concurrently"
+                ),
+            },
+        )?;
+        Ok(())
+    }
+
     async fn rotate_secret_impl(
         &self,
         storage: &dyn StorageApi,
@@ -570,6 +673,63 @@ impl Oauth2ClientBackend for RaftOauth2ClientBackend {
         self.update_impl(raft, domain_id, provider_id, data)
             .await
             .map_err(|e| map_not_found(e, provider_id))
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_client.get_domain_settings", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn get_domain_settings<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+    ) -> Result<Option<OAuth2DomainSettings>, Oauth2ClientProviderError> {
+        let raft = state
+            .storage
+            .as_deref()
+            .ok_or(Oauth2ClientProviderError::RaftNotAvailable)?;
+        self.get_domain_settings_impl(raft, domain_id)
+            .await
+            .map_err(Oauth2ClientProviderError::raft)
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_client.update_domain_settings", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn update_domain_settings<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        data: OAuth2DomainSettingsUpdate,
+    ) -> Result<OAuth2DomainSettings, Oauth2ClientProviderError> {
+        let raft = state
+            .storage
+            .as_deref()
+            .ok_or(Oauth2ClientProviderError::RaftNotAvailable)?;
+        match self
+            .update_domain_settings_impl(raft, domain_id, data)
+            .await
+        {
+            Ok(obj) => Ok(obj),
+            Err(StoreError::Conflict { description, .. }) => {
+                Err(Oauth2ClientProviderError::Conflict(description))
+            }
+            Err(e) => Err(Oauth2ClientProviderError::raft(e)),
+        }
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_client.delete_domain_settings", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn delete_domain_settings<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+    ) -> Result<(), Oauth2ClientProviderError> {
+        let raft = state
+            .storage
+            .as_deref()
+            .ok_or(Oauth2ClientProviderError::RaftNotAvailable)?;
+        match self.delete_domain_settings_impl(raft, domain_id).await {
+            Ok(()) => Ok(()),
+            Err(StoreError::Conflict { description, .. }) => {
+                Err(Oauth2ClientProviderError::Conflict(description))
+            }
+            Err(e) => Err(Oauth2ClientProviderError::raft(e)),
+        }
     }
 }
 
@@ -812,6 +972,161 @@ mod tests {
             .unwrap();
         assert_eq!(updated.name, "Grafana");
         assert_eq!(updated.logo_uri, None);
+    }
+
+    #[tokio::test]
+    async fn test_domain_settings_lifecycle() {
+        let backend = RaftOauth2ClientBackend::default();
+        let storage = MockStorage::default();
+
+        assert!(
+            backend
+                .get_domain_settings_impl(&storage, "domain-1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let update = |dpop| OAuth2DomainSettingsUpdate { dpop };
+        let created = backend
+            .update_domain_settings_impl(&storage, "domain-1", update(Some(DpopMode::Optional)))
+            .await
+            .unwrap();
+        assert_eq!(created.dpop, DpopMode::Optional);
+        assert_eq!(
+            backend
+                .get_domain_settings_impl(&storage, "domain-1")
+                .await
+                .unwrap()
+                .unwrap(),
+            created
+        );
+
+        // An empty update keeps the mode; a later one replaces it.
+        let kept = backend
+            .update_domain_settings_impl(&storage, "domain-1", update(None))
+            .await
+            .unwrap();
+        assert_eq!(kept.dpop, DpopMode::Optional);
+        let raised = backend
+            .update_domain_settings_impl(&storage, "domain-1", update(Some(DpopMode::Required)))
+            .await
+            .unwrap();
+        assert_eq!(raised.dpop, DpopMode::Required);
+
+        // Other domains are unaffected.
+        assert!(
+            backend
+                .get_domain_settings_impl(&storage, "domain-2")
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        backend
+            .delete_domain_settings_impl(&storage, "domain-1")
+            .await
+            .unwrap();
+        assert!(
+            backend
+                .get_domain_settings_impl(&storage, "domain-1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_domain_settings_empty_update_writes_nothing() {
+        let backend = RaftOauth2ClientBackend::default();
+        let storage = MockStorage::default();
+
+        let unchanged = backend
+            .update_domain_settings_impl(
+                &storage,
+                "domain-1",
+                OAuth2DomainSettingsUpdate::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unchanged, OAuth2DomainSettings::default_for("domain-1"));
+        assert!(
+            backend
+                .get_domain_settings_impl(&storage, "domain-1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// A writer holding a stale view must not overwrite a newer record, and
+    /// a create must not overwrite a record that appeared meanwhile.
+    #[tokio::test]
+    async fn test_domain_settings_conflicts() {
+        let backend = RaftOauth2ClientBackend::default();
+        let storage = MockStorage::default();
+        let key = backend.get_domain_settings_key_name("domain-1");
+        let update = |dpop| OAuth2DomainSettingsUpdate { dpop: Some(dpop) };
+
+        // The record appears between the read and the write of a create.
+        let stale = OAuth2DomainSettings::default_for("domain-1")
+            .with_update(update(DpopMode::Optional), 1);
+        let create = || {
+            Mutation::create_if_absent(key.clone(), &stale, Metadata::new(), None::<&str>).unwrap()
+        };
+        storage.transaction(vec![create()]).await.unwrap();
+        let res = require_no_conflict(storage.transaction(vec![create()]).await, || {
+            StoreError::Conflict {
+                subject: key.clone(),
+                description: String::new(),
+            }
+        });
+        assert!(matches!(res, Err(StoreError::Conflict { .. })));
+
+        // A revision-guarded set and remove fail on a stale revision.
+        let rev = storage
+            .get_by_key(key.as_bytes(), None)
+            .await
+            .unwrap()
+            .unwrap()
+            .metadata
+            .revision;
+        backend
+            .update_domain_settings_impl(&storage, "domain-1", update(DpopMode::Required))
+            .await
+            .unwrap();
+        let stale_set = Mutation::set(
+            key.clone(),
+            &stale,
+            Metadata::new(),
+            None::<&str>,
+            Some(rev),
+        )
+        .unwrap();
+        let res = require_no_conflict(storage.transaction(vec![stale_set]).await, || {
+            StoreError::Conflict {
+                subject: key.clone(),
+                description: String::new(),
+            }
+        });
+        assert!(matches!(res, Err(StoreError::Conflict { .. })));
+        let stale_remove = Mutation::remove(key.clone(), None::<&str>, Some(rev));
+        let res = require_no_conflict(storage.transaction(vec![stale_remove]).await, || {
+            StoreError::Conflict {
+                subject: key.clone(),
+                description: String::new(),
+            }
+        });
+        assert!(matches!(res, Err(StoreError::Conflict { .. })));
+        assert_eq!(
+            backend
+                .get_domain_settings_impl(&storage, "domain-1")
+                .await
+                .unwrap()
+                .unwrap()
+                .dpop,
+            DpopMode::Required
+        );
     }
 
     #[tokio::test]

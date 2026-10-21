@@ -19,7 +19,7 @@
 //! sections when implemented.
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use validator::Validate;
 
 use crate::pagination::ListLimitConfig;
@@ -52,7 +52,11 @@ impl std::fmt::Display for SigningAlgorithm {
 ///
 /// The variants are ordered by strictness: the effective mode of a request is
 /// the maximum of the global, domain and client modes.
-#[derive(Debug, Default, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+///
+/// The lowercase variant names are also the persisted encoding of the
+/// per-domain setting: do not rename or reorder variants without a
+/// migration of the stored records.
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
 pub enum DpopMode {
     /// Proofs are ignored and tokens are issued as bearer tokens.
