@@ -25,6 +25,7 @@ pub mod dpop_replay;
 pub mod error;
 pub mod hook;
 pub mod id_token;
+pub mod on_behalf_of;
 pub mod pkce;
 mod provider_api;
 pub mod service;
@@ -44,5 +45,5 @@ pub use token_exchange::{TokenExchangeError, build_token_exchange_claims, valida
 pub use verify::{
     IntrospectedAccessToken, RevocableAccessToken, TokenVerificationError, verify_id_token_hint,
     verify_introspectable_access_token, verify_oidc_access_token, verify_openstack_access_token,
-    verify_revocable_access_token,
+    verify_openstack_subject_token, verify_revocable_access_token,
 };

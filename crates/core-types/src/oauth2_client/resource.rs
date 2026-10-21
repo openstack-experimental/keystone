@@ -91,6 +91,15 @@ pub struct DelegationPolicy {
 
 impl OAuth2ClientResource {
     /// Delegation policy, when the client is an enabled delegatable service
+    /// allowed to exchange user tokens on their behalf (ADR 0036 §6).
+    pub fn on_behalf_of_policy(&self) -> Option<&DelegationPolicy> {
+        if !self.enabled || self.deleted_at.is_some() {
+            return None;
+        }
+        self.delegation.as_ref().filter(|d| d.on_behalf_of)
+    }
+
+    /// Delegation policy, when the client is an enabled delegatable service
     /// accepting service grants.
     pub fn service_grant_policy(&self) -> Option<&DelegationPolicy> {
         if !self.enabled || self.deleted_at.is_some() {

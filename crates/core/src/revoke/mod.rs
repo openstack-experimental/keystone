@@ -115,6 +115,34 @@ impl TryFrom<&ValidatedSecurityContext> for RevocationEventListParametersBuilder
             }
 
             Ok(builder.to_owned())
+        } else if let AuthenticationContext::OnBehalfOf {
+            root_jti,
+            auth_time,
+            ..
+        } = value.authentication_context()
+        {
+            // An on-behalf-of chain is revoked with the user token that
+            // started it (ADR 0036 §6.3): match events against that token's
+            // audit id and the time the user authenticated.
+            let mut builder = RevocationEventListParametersBuilder::default();
+            builder.audit_id(root_jti);
+            builder.issued_before(*auth_time);
+            builder.user_ids(vec![value.principal().get_user_id()]);
+            if let Some(authz) = value.authorization() {
+                match &authz.scope {
+                    ScopeInfo::Project { project, .. } => {
+                        builder.project_id(&project.id);
+                    }
+                    ScopeInfo::Domain(domain) => {
+                        builder.domain_ids(vec![domain.id.clone()]);
+                    }
+                    _ => {}
+                }
+                if let Some(roles) = authz.effective_roles() {
+                    builder.role_refs(roles.iter());
+                }
+            }
+            Ok(builder.to_owned())
         } else {
             Err(RevokeProviderError::SecurityContextHasNoToken)
         }
@@ -382,6 +410,56 @@ mod tests {
             HashSet::<String>::from_iter(["role1".to_string(), "role2".to_string()]),
             HashSet::<String>::from_iter(params.role_ids.expect("roles must be there").into_iter())
         );
+    }
+
+    #[test]
+    fn test_revocation_list_on_behalf_of_chain() {
+        // The chain is matched on the token that started it, and on the
+        // time the user authenticated, not on the hop that was presented.
+        let auth_time = Utc::now() - chrono::TimeDelta::minutes(5);
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::OnBehalfOf {
+                actor: ActorInfo {
+                    client_id: "client".into(),
+                    spiffe_id: "spiffe://test/sa".into(),
+                },
+                delegated_project_id: None,
+                delegated_role_ids: None,
+                subject_methods: ["password".to_string()].into(),
+                auth_time,
+                root_jti: "root_audit_id".into(),
+            })
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("user_id")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build()
+            .unwrap();
+        let mut sc = crate::auth::SecurityContext::try_from(auth).unwrap();
+        sc.set_authorization(
+            AuthzInfoBuilder::default()
+                .scope(ScopeInfo::Project {
+                    project: make_project(),
+                    project_domain: make_domain(),
+                })
+                .roles(vec![make_role("r1")])
+                .build()
+                .unwrap(),
+        );
+        let vsc = crate::auth::ValidatedSecurityContext::test_new(sc);
+
+        let params = RevocationEventListParametersBuilder::try_from(&vsc)
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(params.audit_id, Some("root_audit_id".to_string()));
+        assert_eq!(params.issued_before, Some(auth_time));
+        assert_eq!(params.user_ids, Some(vec!["user_id".to_string()]));
+        assert_eq!(params.project_id, Some("pid".to_string()));
     }
 
     #[test]

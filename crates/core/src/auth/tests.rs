@@ -2882,6 +2882,11 @@ fn is_delegating_auth_context(ctx: &AuthenticationContext) -> bool {
         AuthenticationContext::ApplicationCredential { .. } => true,
         AuthenticationContext::Trust { .. } => true,
         AuthenticationContext::ServiceGrant { .. } => true,
+        // Delegating only when the exchanged subject was; a plain subject
+        // has no delegation role set to stay within.
+        AuthenticationContext::OnBehalfOf {
+            delegated_role_ids, ..
+        } => delegated_role_ids.is_some(),
         // The service acting as itself delegates nothing and holds no
         // roles (unscoped only).
         AuthenticationContext::ServiceClient { .. }
@@ -3070,6 +3075,12 @@ async fn test_delegation_scope_kind_matrix_roles_never_exceed_delegation() {
                     spiffe_id: "spiffe://cloud.example/ns/backup/sa/agent".into(),
                 },
             }),
+        ),
+        (
+            "on_behalf_of_app_cred",
+            "appcred_owner",
+            vec![allowed_rid],
+            Box::new(|| make_on_behalf_of_ctx(Some("pid"), Some(&["reader"]))),
         ),
     ];
 
@@ -4007,5 +4018,100 @@ async fn test_service_grant_grantor_mismatch_rejected() {
     assert!(matches!(
         ValidatedSecurityContext::new_for_scope(ctx, make_project_scope("pid"), &state).await,
         Err(AuthenticationError::AuthzPrincipalMismatch)
+    ));
+}
+
+// --- On-behalf-of (ADR 0036 §6): roles bounded by the subject's own
+// delegation and the user's live roles on every hop ---
+
+fn make_on_behalf_of_ctx(
+    delegated_project_id: Option<&str>,
+    delegated_role_ids: Option<&[&str]>,
+) -> AuthenticationContext {
+    AuthenticationContext::OnBehalfOf {
+        actor: openstack_keystone_core_types::auth::ActorInfo {
+            client_id: "cid".into(),
+            spiffe_id: "spiffe://cloud.example/ns/backup/sa/agent".into(),
+        },
+        delegated_project_id: delegated_project_id.map(str::to_string),
+        delegated_role_ids: delegated_role_ids
+            .map(|ids| ids.iter().map(|id| id.to_string()).collect()),
+        subject_methods: ["password".to_string()].into(),
+        auth_time: chrono::Utc::now(),
+        root_jti: "root".into(),
+    }
+}
+
+fn on_behalf_of_security_context(
+    context: AuthenticationContext,
+) -> openstack_keystone_core_types::auth::SecurityContext {
+    SecurityContextTestingBuilder::default()
+        .authentication_context(context)
+        .principal(make_user_identity("uid"))
+        .build()
+}
+
+#[tokio::test]
+async fn test_on_behalf_of_delegated_roles_are_ceiling_intersect_live() {
+    let state = service_grant_state(&["member", "admin"]).await;
+    let ctx = on_behalf_of_security_context(make_on_behalf_of_ctx(
+        Some("pid"),
+        Some(&["member", "reader"]),
+    ));
+    let roles = calculate_effective_roles(&state, &ctx, &make_project_scope("pid"))
+        .await
+        .unwrap();
+    // `admin` is live but outside the credential; `reader` is in the
+    // credential but no longer held.
+    assert_eq!(
+        roles.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+        ["member"]
+    );
+}
+
+#[tokio::test]
+async fn test_on_behalf_of_delegated_user_lost_all_roles() {
+    let state = service_grant_state(&["admin"]).await;
+    let ctx = on_behalf_of_security_context(make_on_behalf_of_ctx(Some("pid"), Some(&["member"])));
+    assert!(matches!(
+        calculate_effective_roles(&state, &ctx, &make_project_scope("pid")).await,
+        Err(AuthenticationError::ActorHasNoRolesOnTarget)
+    ));
+}
+
+#[tokio::test]
+async fn test_on_behalf_of_plain_subject_has_the_live_roles() {
+    let state = service_grant_state(&["member", "admin"]).await;
+    let ctx = on_behalf_of_security_context(make_on_behalf_of_ctx(None, None));
+    let mut roles: Vec<String> =
+        calculate_effective_roles(&state, &ctx, &make_project_scope("pid"))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+    roles.sort();
+    roles.dedup();
+    assert_eq!(roles, ["admin", "member"]);
+}
+
+#[tokio::test]
+async fn test_on_behalf_of_new_for_scope_projects_the_chain() {
+    let state = service_grant_state(&["member"]).await;
+    let ctx = on_behalf_of_security_context(make_on_behalf_of_ctx(Some("pid"), Some(&["member"])));
+    let validated = ValidatedSecurityContext::new_for_scope(ctx, make_project_scope("pid"), &state)
+        .await
+        .unwrap();
+    let creds = crate::policy::Credentials::try_from(&validated).unwrap();
+    assert_eq!(creds.auth_type, "on_behalf_of");
+    assert_eq!(creds.delegated_project_id.as_deref(), Some("pid"));
+    assert_eq!(creds.actor.map(|a| a.client_id), Some("cid".to_string()));
+
+    // The delegated project is the only one reachable.
+    let other =
+        on_behalf_of_security_context(make_on_behalf_of_ctx(Some("pid"), Some(&["member"])));
+    assert!(matches!(
+        ValidatedSecurityContext::new_for_scope(other, make_project_scope("other"), &state).await,
+        Err(AuthenticationError::ScopeNotAllowed)
     ));
 }

@@ -743,9 +743,10 @@ async fn calculate_effective_roles(
             return Err(AuthenticationError::ScopeNotAllowed);
         };
         let live = resolve_project_default_roles(state, ctx, &project.id).await?;
+        let mut seen = HashSet::new();
         let roles: Vec<RoleRef> = live
             .into_iter()
-            .filter(|role| ceiling.contains(&role.id))
+            .filter(|role| ceiling.contains(&role.id) && seen.insert(role.id.clone()))
             .collect();
         if roles.is_empty() {
             return Err(AuthenticationError::ActorHasNoRolesOnTarget);

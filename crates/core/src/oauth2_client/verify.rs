@@ -250,8 +250,6 @@ pub fn verify_openstack_access_token(
     service_type: Option<&str>,
     revoked_jtis: &HashSet<String>,
 ) -> Result<OpenStackAccessTokenClaims, TokenVerificationError> {
-    let (expected_alg, decoding_key) = resolve_decoding_key(token, jwks, expected_algorithm)?;
-
     // Accept the control-plane audience, or the audience narrowed to this
     // service's own type. A verifier that does not know its service type
     // accepts only the un-narrowed form (ADR 0036 §7.1).
@@ -259,13 +257,70 @@ pub fn verify_openstack_access_token(
     if let Some(service_type) = service_type {
         accepted_audiences.push(openstack_service_audience(service_type));
     }
+    verify_openstack_access_token_inner(
+        token,
+        jwks,
+        expected_algorithm,
+        expected_issuers,
+        Some(&accepted_audiences),
+        revoked_jtis,
+    )
+}
+
+/// Verify an [`OpenStackAccessTokenClaims`] access token that this
+/// Keystone minted and now receives back as a `subject_token` (ADR 0036
+/// §6.3), whatever service types its `aud` was narrowed to: narrowing only
+/// ever removes reach, so the holder may still renew it. Every other check
+/// is that of [`verify_openstack_access_token`].
+///
+/// # Errors
+/// See [`TokenVerificationError`] for each rejection reason.
+pub fn verify_openstack_subject_token(
+    token: &str,
+    jwks: &JwkSet,
+    expected_algorithm: SigningAlgorithm,
+    expected_issuers: &[String],
+    revoked_jtis: &HashSet<String>,
+) -> Result<OpenStackAccessTokenClaims, TokenVerificationError> {
+    verify_openstack_access_token_inner(
+        token,
+        jwks,
+        expected_algorithm,
+        expected_issuers,
+        None,
+        revoked_jtis,
+    )
+}
+
+/// Shared body of the OpenStack access token verifiers. `audiences` is the
+/// accepted `aud` set; `None` accepts any OpenStack audience (the
+/// control plane or a narrowing of it) and nothing else.
+fn verify_openstack_access_token_inner(
+    token: &str,
+    jwks: &JwkSet,
+    expected_algorithm: SigningAlgorithm,
+    expected_issuers: &[String],
+    audiences: Option<&[String]>,
+    revoked_jtis: &HashSet<String>,
+) -> Result<OpenStackAccessTokenClaims, TokenVerificationError> {
+    let (expected_alg, decoding_key) = resolve_decoding_key(token, jwks, expected_algorithm)?;
+
     let mut validation = Validation::new(expected_alg);
     validation.set_required_spec_claims(&["exp", "iat", "nbf", "iss", "aud", "sub"]);
-    validation.set_audience(&accepted_audiences);
+    match audiences {
+        Some(audiences) => validation.set_audience(audiences),
+        None => validation.validate_aud = false,
+    }
     validation.validate_nbf = true;
 
     let data = decode::<OpenStackAccessTokenClaims>(token, &decoding_key, &validation)?;
     let claims = data.claims;
+
+    if audiences.is_none() && !claims.aud.is_openstack() {
+        return Err(TokenVerificationError::Malformed(
+            jsonwebtoken::errors::ErrorKind::InvalidAudience.into(),
+        ));
+    }
 
     ensure_trusted_issuer(&claims.iss, expected_issuers)?;
 
