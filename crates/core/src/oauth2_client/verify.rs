@@ -11,7 +11,6 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-// Crypto inventory: TOK-4; see doc/src/contributor/crypto-inventory.md
 //! # Offline `OpenStackAccessTokenClaims` verification (ADR 0026 §6, §10 Phase 5)
 //!
 //! Rust-native equivalent of the ADR's `KeystoneNativeJwtMiddleware` Python
@@ -28,7 +27,9 @@
 //! algorithm.
 use jsonwebtoken::jwk::JwkSet;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
+use serde::{Serialize, de::DeserializeOwned};
 use std::collections::HashSet;
+use std::time::Duration;
 use thiserror::Error;
 
 use openstack_keystone_core_types::oauth2_client::{
@@ -37,10 +38,14 @@ use openstack_keystone_core_types::oauth2_client::{
 };
 use openstack_keystone_key_repository::asymmetric::{SigningAlgorithm, jwt_algorithm};
 
-/// Failure modes for offline [`OpenStackAccessTokenClaims`] verification.
+/// Failure modes for subject-token JWT verification.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum TokenVerificationError {
+    /// The validation profile has no issuer or audience constraints.
+    #[error("subject-token validation profile must specify issuers and audiences")]
+    InvalidProfile,
+
     /// The token's `alg` header does not match the operator-configured
     /// `[oauth2] signing_algorithm`. Rejected before key lookup to prevent
     /// cross-algorithm signature confusion (ADR 0026 §3).
@@ -58,7 +63,8 @@ pub enum TokenVerificationError {
         "delegated auth_method `{auth_method}` requires project scope, got `{scope_type}` (I5)"
     )]
     DelegatedScopeNotProject {
-        /// The delegated auth method (`trust`, `app_cred`, or `ec2`).
+        /// The delegated auth method (`trust`, `app_cred`, `ec2`, or
+        /// `service_grant`).
         auth_method: String,
         /// The token's actual `scope_type`.
         scope_type: String,
@@ -74,6 +80,11 @@ pub enum TokenVerificationError {
     #[error("token failed verification: {0}")]
     Malformed(#[from] jsonwebtoken::errors::Error),
 
+    /// The decoded claims could not be serialized into the profile's
+    /// validation representation.
+    #[error("token claims are malformed: {0}")]
+    MalformedClaims(String),
+
     /// The token header carries no `kid` -- every OP-issued token has one
     /// (ADR 0026 §3), so this always indicates a foreign/malformed token.
     #[error("token header has no `kid`")]
@@ -83,6 +94,28 @@ pub enum TokenVerificationError {
     /// Rotation, §11).
     #[error("jti `{0}` has been revoked")]
     Revoked(String),
+
+    /// The token's `iat` is older than the selected validation profile allows.
+    #[error("token was issued at {iat}, exceeding the maximum age of {max_age_secs}s")]
+    TokenTooOld {
+        /// The token's `iat` claim.
+        iat: i64,
+        /// The profile's maximum token age in seconds.
+        max_age_secs: u64,
+    },
+
+    /// The token's `exp - iat` exceeds the selected validation profile.
+    #[error("token lifetime {lifetime_secs}s exceeds the maximum of {max_lifetime_secs}s")]
+    TokenLifetimeTooLong {
+        /// The token's `exp - iat` in seconds.
+        lifetime_secs: i64,
+        /// The profile's maximum `exp - iat` in seconds.
+        max_lifetime_secs: u64,
+    },
+
+    /// The token's `iat` is ahead of the current time beyond allowed skew.
+    #[error("token `iat` is in the future")]
+    IssuedInFuture,
 
     /// Scope-drift tripwire (security.md I3): the token's project scope
     /// does not match its own `delegated_project_id`.
@@ -116,6 +149,72 @@ pub enum TokenVerificationError {
     /// endpoint it was presented to (e.g. `openid` for `/userinfo`).
     #[error("token scope does not include `{0}`")]
     InsufficientScope(String),
+}
+
+/// Subject-token verification constraints shared by token-exchange profiles.
+///
+/// Callers select a profile by token kind and supply the JWKS belonging to the
+/// expected issuer. The profile controls issuer and audience constraints,
+/// required claims, time skew, and optional age/lifetime limits.
+#[derive(Clone, Debug)]
+pub struct SubjectTokenValidationProfile {
+    expected_issuers: Vec<String>,
+    accepted_audiences: Vec<String>,
+    require_exact_audience: bool,
+    required_claims: Vec<String>,
+    max_token_age: Option<Duration>,
+    max_token_lifetime: Option<Duration>,
+    clock_skew: Duration,
+}
+
+impl SubjectTokenValidationProfile {
+    /// The existing Keystone-native OpenStack access-token profile.
+    ///
+    /// It preserves acceptance of the control-plane audience and, when
+    /// supplied, a token narrowed to this service type. The 60-second skew
+    /// matches the verifier's previous `jsonwebtoken` default.
+    pub fn keystone_native(expected_issuers: &[String], service_type: Option<&str>) -> Self {
+        let mut accepted_audiences = vec![OPENSTACK_APIS_AUDIENCE.to_string()];
+        if let Some(service_type) = service_type {
+            accepted_audiences.push(openstack_service_audience(service_type));
+        }
+
+        Self {
+            expected_issuers: expected_issuers.to_vec(),
+            accepted_audiences,
+            require_exact_audience: false,
+            required_claims: ["exp", "iat", "nbf", "iss", "aud", "sub", "jti"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            max_token_age: None,
+            max_token_lifetime: None,
+            clock_skew: Duration::from_secs(60),
+        }
+    }
+
+    /// A short-lived assertion profile for future external subject-token and
+    /// JWT-SVID exchange paths.
+    ///
+    /// The audience is the exact token-endpoint audience configured by the
+    /// caller. Issuance time may be at most 300 seconds old, `exp - iat` may
+    /// not exceed 300 seconds, and registered time claims allow 60 seconds of
+    /// clock skew. Replay detection for the required `jti` remains the
+    /// caller's responsibility.
+    pub fn external_assertion(expected_issuers: &[String], token_endpoint_audience: &str) -> Self {
+        Self {
+            expected_issuers: expected_issuers.to_vec(),
+            accepted_audiences: vec![token_endpoint_audience.to_string()],
+            require_exact_audience: true,
+            required_claims: ["exp", "iat", "nbf", "iss", "aud", "sub", "jti"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            max_token_age: Some(Duration::from_secs(300)),
+            max_token_lifetime: Some(Duration::from_secs(300)),
+            clock_skew: Duration::from_secs(60),
+        }
+    }
 }
 
 fn auth_method_str(ctx: &DelegationContext) -> &'static str {
@@ -214,6 +313,118 @@ fn ensure_trusted_issuer(
     }
 }
 
+/// Verify a signed JWT against a selected subject-token validation profile.
+///
+/// The supplied JWKS must belong to the expected issuer. This function
+/// validates the configured algorithm, signature, required claims, issuer,
+/// audience, registered time claims, and any profile age/lifetime limits. It
+/// does not perform JTI replay-cache or revocation checks.
+///
+/// # Errors
+/// Returns [`TokenVerificationError`] when the profile is incomplete or the
+/// JWT fails a cryptographic, claim, or time check.
+pub fn verify_subject_token_jwt<T>(
+    token: &str,
+    jwks: &JwkSet,
+    expected_algorithm: SigningAlgorithm,
+    profile: &SubjectTokenValidationProfile,
+) -> Result<T, TokenVerificationError>
+where
+    T: DeserializeOwned + Serialize,
+{
+    if profile.expected_issuers.is_empty()
+        || profile.expected_issuers.iter().any(String::is_empty)
+        || profile.accepted_audiences.is_empty()
+        || profile.accepted_audiences.iter().any(String::is_empty)
+    {
+        return Err(TokenVerificationError::InvalidProfile);
+    }
+
+    let (expected_alg, decoding_key) = resolve_decoding_key(token, jwks, expected_algorithm)?;
+    let mut validation = Validation::new(expected_alg);
+    validation.set_required_spec_claims(&profile.required_claims);
+    validation.set_audience(&profile.accepted_audiences);
+    validation.validate_nbf = true;
+    validation.leeway = profile.clock_skew.as_secs();
+
+    let data = decode::<T>(token, &decoding_key, &validation)?;
+    let serialized = serde_json::to_value(&data.claims)
+        .map_err(|e| TokenVerificationError::MalformedClaims(e.to_string()))?;
+    for claim in &profile.required_claims {
+        if serialized.get(claim).is_none_or(serde_json::Value::is_null) {
+            return Err(TokenVerificationError::MalformedClaims(format!(
+                "missing required claim `{claim}`"
+            )));
+        }
+    }
+    let issuer = serialized
+        .get("iss")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| TokenVerificationError::MalformedClaims("missing string `iss`".into()))?;
+    ensure_trusted_issuer(issuer, &profile.expected_issuers)?;
+    if profile.require_exact_audience {
+        let exact_audience = match serialized.get("aud") {
+            Some(serde_json::Value::String(audience)) => profile
+                .accepted_audiences
+                .iter()
+                .any(|accepted| audience == accepted),
+            Some(serde_json::Value::Array(audiences)) if audiences.len() == 1 => audiences[0]
+                .as_str()
+                .is_some_and(|audience| profile.accepted_audiences.iter().any(|a| a == audience)),
+            _ => false,
+        };
+        if !exact_audience {
+            return Err(TokenVerificationError::MalformedClaims(
+                "audience must exactly match the configured token endpoint".into(),
+            ));
+        }
+    }
+    validate_profile_time_claims(&serialized, profile, chrono::Utc::now().timestamp())?;
+    Ok(data.claims)
+}
+
+fn validate_profile_time_claims(
+    claims: &serde_json::Value,
+    profile: &SubjectTokenValidationProfile,
+    now: i64,
+) -> Result<(), TokenVerificationError> {
+    let iat = claims
+        .get("iat")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or_else(|| TokenVerificationError::MalformedClaims("missing integer `iat`".into()))?;
+
+    if iat > now.saturating_add(profile.clock_skew.as_secs() as i64) {
+        return Err(TokenVerificationError::IssuedInFuture);
+    }
+
+    if let Some(max_age) = profile.max_token_age
+        && now.saturating_sub(iat) > max_age.as_secs() as i64
+    {
+        return Err(TokenVerificationError::TokenTooOld {
+            iat,
+            max_age_secs: max_age.as_secs(),
+        });
+    }
+
+    if let Some(max_lifetime) = profile.max_token_lifetime {
+        let exp = claims
+            .get("exp")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| {
+                TokenVerificationError::MalformedClaims("missing integer `exp`".into())
+            })?;
+        let lifetime = exp.saturating_sub(iat);
+        if lifetime > max_lifetime.as_secs() as i64 {
+            return Err(TokenVerificationError::TokenLifetimeTooLong {
+                lifetime_secs: lifetime,
+                max_lifetime_secs: max_lifetime.as_secs(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
 /// Verify an `OpenStackAccessTokenClaims` access token fully offline (ADR
 /// 0026 §6), given an already-fetched [`JwkSet`] and JTI revocation set.
 ///
@@ -240,24 +451,13 @@ pub fn verify_openstack_access_token(
     service_type: Option<&str>,
     revoked_jtis: &HashSet<String>,
 ) -> Result<OpenStackAccessTokenClaims, TokenVerificationError> {
-    let (expected_alg, decoding_key) = resolve_decoding_key(token, jwks, expected_algorithm)?;
-
-    // Accept the control-plane audience, or the audience narrowed to this
-    // service's own type. A verifier that does not know its service type
-    // accepts only the un-narrowed form (ADR 0036 §7.1).
-    let mut accepted_audiences = vec![OPENSTACK_APIS_AUDIENCE.to_string()];
-    if let Some(service_type) = service_type {
-        accepted_audiences.push(openstack_service_audience(service_type));
-    }
-    let mut validation = Validation::new(expected_alg);
-    validation.set_required_spec_claims(&["exp", "iat", "nbf", "iss", "aud", "sub"]);
-    validation.set_audience(&accepted_audiences);
-    validation.validate_nbf = true;
-
-    let data = decode::<OpenStackAccessTokenClaims>(token, &decoding_key, &validation)?;
-    let claims = data.claims;
-
-    ensure_trusted_issuer(&claims.iss, expected_issuers)?;
+    let profile = SubjectTokenValidationProfile::keystone_native(expected_issuers, service_type);
+    let claims = verify_subject_token_jwt::<OpenStackAccessTokenClaims>(
+        token,
+        jwks,
+        expected_algorithm,
+        &profile,
+    )?;
 
     if claims.token_use != "access" {
         return Err(TokenVerificationError::WrongTokenUse(claims.token_use));
@@ -516,7 +716,7 @@ mod tests {
     use super::*;
     use jsonwebtoken::{EncodingKey, Header, encode};
     use openstack_keystone_core_types::oauth2_client::{
-        IdTokenClaims, OpenStackContext, OpenStackScope,
+        ActClaim, ActSubType, IdTokenClaims, OpenStackContext, OpenStackScope,
     };
     use openstack_keystone_core_types::role::RoleRef;
     use openstack_keystone_key_repository::asymmetric::{generate_keypair, to_encoding_key};
@@ -590,6 +790,179 @@ mod tests {
             family_id: None,
             cnf: None,
         }
+    }
+
+    fn assertion_claims(now: i64) -> serde_json::Value {
+        serde_json::json!({
+            "iss": "https://issuer.example",
+            "sub": "subject-1",
+            "aud": "https://keystone.example/v4/oauth2/token",
+            "exp": now + 300,
+            "iat": now,
+            "nbf": now,
+            "jti": "assertion-1"
+        })
+    }
+
+    fn verify_assertion(
+        claims: &serde_json::Value,
+        profile: &SubjectTokenValidationProfile,
+    ) -> Result<serde_json::Value, TokenVerificationError> {
+        let (token, jwks, _) = sign(claims);
+        verify_subject_token_jwt(&token, &jwks, SigningAlgorithm::Es256, profile)
+    }
+
+    #[test]
+    fn subject_token_profile_accepts_short_lived_assertion() {
+        let profile = SubjectTokenValidationProfile::external_assertion(
+            &["https://issuer.example".to_string()],
+            "https://keystone.example/v4/oauth2/token",
+        );
+        let claims = assertion_claims(chrono::Utc::now().timestamp());
+
+        assert_eq!(verify_assertion(&claims, &profile).unwrap(), claims);
+    }
+
+    #[test]
+    fn subject_token_profile_rejects_bad_signature_and_algorithm() {
+        let profile = SubjectTokenValidationProfile::external_assertion(
+            &["https://issuer.example".to_string()],
+            "https://keystone.example/v4/oauth2/token",
+        );
+        let claims = assertion_claims(chrono::Utc::now().timestamp());
+        let (token, jwks, _) = sign(&claims);
+
+        let parts: Vec<_> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
+        let [header, payload, signature] = parts.as_slice() else {
+            return;
+        };
+        let replacement = if signature.starts_with('A') { 'B' } else { 'A' };
+        let tampered = format!("{header}.{payload}.{replacement}{}", &signature[1..]);
+
+        assert!(matches!(
+            verify_subject_token_jwt::<serde_json::Value>(
+                &tampered,
+                &jwks,
+                SigningAlgorithm::Es256,
+                &profile,
+            ),
+            Err(TokenVerificationError::Malformed(_))
+        ));
+
+        assert!(matches!(
+            verify_subject_token_jwt::<serde_json::Value>(
+                &token,
+                &jwks,
+                SigningAlgorithm::Rs256,
+                &profile,
+            ),
+            Err(TokenVerificationError::AlgorithmMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn subject_token_profile_rejects_untrusted_issuer() {
+        let profile = SubjectTokenValidationProfile::external_assertion(
+            &["https://issuer.example".to_string()],
+            "https://keystone.example/v4/oauth2/token",
+        );
+        let mut claims = assertion_claims(chrono::Utc::now().timestamp());
+        claims["iss"] = "https://untrusted.example".into();
+
+        assert!(matches!(
+            verify_assertion(&claims, &profile),
+            Err(TokenVerificationError::UntrustedIssuer(_))
+        ));
+    }
+
+    #[test]
+    fn subject_token_profile_requires_exact_endpoint_audience() {
+        let profile = SubjectTokenValidationProfile::external_assertion(
+            &["https://issuer.example".to_string()],
+            "https://keystone.example/v4/oauth2/token",
+        );
+        let now = chrono::Utc::now().timestamp();
+
+        let mut wrong_audience = assertion_claims(now);
+        wrong_audience["aud"] = "https://other.example/token".into();
+        assert!(matches!(
+            verify_assertion(&wrong_audience, &profile),
+            Err(TokenVerificationError::Malformed(_))
+        ));
+
+        let mut extra_audience = assertion_claims(now);
+        extra_audience["aud"] = serde_json::json!([
+            "https://keystone.example/v4/oauth2/token",
+            "https://other.example/token"
+        ]);
+        assert!(matches!(
+            verify_assertion(&extra_audience, &profile),
+            Err(TokenVerificationError::MalformedClaims(_))
+        ));
+    }
+
+    #[test]
+    fn subject_token_profile_requires_jti() {
+        let profile = SubjectTokenValidationProfile::external_assertion(
+            &["https://issuer.example".to_string()],
+            "https://keystone.example/v4/oauth2/token",
+        );
+        let mut claims = assertion_claims(chrono::Utc::now().timestamp());
+        assert!(
+            claims
+                .as_object_mut()
+                .is_some_and(|object| object.remove("jti").is_some())
+        );
+
+        assert!(matches!(
+            verify_assertion(&claims, &profile),
+            Err(TokenVerificationError::MalformedClaims(_))
+        ));
+    }
+
+    #[test]
+    fn subject_token_profile_enforces_maximum_lifetime_and_age() {
+        let profile = SubjectTokenValidationProfile::external_assertion(
+            &["https://issuer.example".to_string()],
+            "https://keystone.example/v4/oauth2/token",
+        );
+        let now = chrono::Utc::now().timestamp();
+
+        let mut long_lived = assertion_claims(now);
+        long_lived["exp"] = (now + 301).into();
+        assert!(matches!(
+            verify_assertion(&long_lived, &profile),
+            Err(TokenVerificationError::TokenLifetimeTooLong { .. })
+        ));
+
+        let mut old = assertion_claims(now - 301);
+        old["exp"] = (now - 1).into();
+        assert!(matches!(
+            verify_assertion(&old, &profile),
+            Err(TokenVerificationError::TokenTooOld { .. })
+        ));
+
+        let mut future = assertion_claims(now);
+        future["iat"] = (now + 120).into();
+        assert!(matches!(
+            verify_assertion(&future, &profile),
+            Err(TokenVerificationError::IssuedInFuture)
+        ));
+    }
+
+    #[test]
+    fn subject_token_profile_rejects_empty_issuer_allowlist() {
+        let profile = SubjectTokenValidationProfile::external_assertion(
+            &[],
+            "https://keystone.example/v4/oauth2/token",
+        );
+        let claims = assertion_claims(chrono::Utc::now().timestamp());
+
+        assert!(matches!(
+            verify_assertion(&claims, &profile),
+            Err(TokenVerificationError::InvalidProfile)
+        ));
     }
 
     fn verify_oidc(
@@ -937,28 +1310,26 @@ mod tests {
         ));
     }
 
-    /// A service grant token (ADR 0036 §5.2) verifies with its `act` claim
-    /// and is held to its own project like any delegated token.
     #[test]
-    fn test_service_grant_token_round_trip_and_tripwire() {
+    fn test_service_grant_scope_drift_tripwire_trips() {
         let now = chrono::Utc::now().timestamp();
         let mut claims = valid_claims(now);
         claims.delegation_context = DelegationContext::ServiceGrant {
             project_id: "project-1".to_string(),
-            grant_id: "g1".to_string(),
+            grant_id: "grant-1".to_string(),
         };
-        claims.act = Some(openstack_keystone_core_types::oauth2_client::ActClaim {
-            client_id: "heat".to_string(),
-            sub_type: openstack_keystone_core_types::oauth2_client::ActSubType::Spiffe,
-            sub: "spiffe://td/heat".to_string(),
+        claims.act = Some(ActClaim {
+            client_id: "service-1".to_string(),
+            sub_type: ActSubType::Spiffe,
+            sub: "spiffe://example/service-1".to_string(),
         });
         claims.openstack_context.scope = OpenStackScope::Project {
-            project_id: "project-1".to_string(),
+            project_id: "project-2".to_string(),
             project_domain_id: DOMAIN_ID.to_string(),
             roles: vec![],
         };
         let (token, jwks, _kid) = sign(&claims);
-        let verified = verify_openstack_access_token(
+        let err = verify_openstack_access_token(
             &token,
             &jwks,
             SigningAlgorithm::Es256,
@@ -966,26 +1337,13 @@ mod tests {
             None,
             &HashSet::new(),
         )
-        .unwrap();
-        assert_eq!(verified.act, claims.act);
-        assert_eq!(verified.delegation_context, claims.delegation_context);
-
-        claims.openstack_context.scope = OpenStackScope::Project {
-            project_id: "project-2".to_string(),
-            project_domain_id: DOMAIN_ID.to_string(),
-            roles: vec![],
-        };
-        let (token, jwks, _kid) = sign(&claims);
+        .unwrap_err();
         assert!(matches!(
-            verify_openstack_access_token(
-                &token,
-                &jwks,
-                SigningAlgorithm::Es256,
-                &[ISSUER.to_string()],
-                None,
-                &HashSet::new(),
-            ),
-            Err(TokenVerificationError::ScopeDrift { .. })
+            err,
+            TokenVerificationError::ScopeDrift {
+                token_project_id,
+                delegated_project_id,
+            } if token_project_id == "project-2" && delegated_project_id == "project-1"
         ));
     }
 

@@ -2,13 +2,11 @@
 
 **Date:** 2026-09-10
 
-**Updated:** 2026-10-15
+**Updated:** 2026-10-13
 
 ## Status
 
-Proposed. Phase 1 (§11) is implemented; see
-[Service grants](../admin/features/service-grants.md) for operation and the
-phase 1 implementation notes below for where it differs from this text.
+Proposed.
 
 Supersedes the trust mechanism (`/v3/OS-TRUST`, `AuthenticationContext::Trust`,
 `ScopeInfo::TrustProject`, `trust-driver-sql`) once the phases in §11 are
@@ -325,13 +323,10 @@ client lives in the operator's infrastructure domain. Therefore:
   is permitted **only** when `client.delegation.cross_domain == true`. Every
   other client authentication path at `/v4/oauth2/{domain_id}/token` keeps
   today's same-domain-only rule.
-- The minted token is signed by the key of the **target project's** domain and
-  carries `aud = openstack-apis` with `iss` naming that domain (ADR 0026 §5
-  domain key isolation: isolation rests on `iss` + the issuer's own JWKS, so a
-  domain's key only vouches for that domain's projects). The grantor may belong
-  to another domain, exactly as a user may hold roles on projects of other
-  domains; the token's user claims name the grantor's own domain. The grantee's
-  own domain never appears in the token; it is a registry fact only.
+- The minted token is still signed by the **grantor's** domain key and carries
+  `aud = openstack-apis` with `iss` naming the grantor's domain (ADR 0026 §5
+  domain key isolation: isolation rests on `iss` + the issuer's own JWKS). The
+  grantee's own domain never appears in the token; it is a registry fact only.
 
 ### 4. Service grant resource
 
@@ -341,7 +336,7 @@ client lives in the operator's infrastructure domain. Therefore:
 pub struct ServiceGrant {
     pub id: String,
     pub version: u64,                  // bumped on every change; compared by the resolver (§7)
-    pub domain_id: String,             // target project's domain; the token endpoint the grant is redeemed at
+    pub domain_id: String,             // grantor's domain; the token endpoint the grant is redeemed at
     pub grantor_user_id: String,
     pub grantee: Grantee,              // v1: Client { client_id, client_domain_id } (§3.2); later: User { user_id } (§9)
     pub target: GrantTarget,           // v1: Project { project_id }; the I2 delegation boundary
@@ -514,8 +509,8 @@ The endpoint checks, in order:
 3. `grant.domain_id == {domain_id}` from the request path — a grant is only ever
    redeemable at its own domain's token endpoint.
 4. Grant exists, `enabled`, not expired, `grantee` is this client, and either
-   the client's domain equals both `grant.domain_id` and the grantor's domain,
-   or `client.delegation.cross_domain` (§3.2).
+   `grant.grantee.client_domain_id == grant.domain_id` or
+   `client.delegation.cross_domain` (§3.2).
 5. Grantor is enabled and the grantor's domain is enabled.
 6. Effective roles =
    `grant.role_ids ∩ grantor's live effective roles on target ∩ roles narrowing`.
@@ -715,9 +710,15 @@ not grow two answers to any of them:
   parameter of `verify_openstack_access_token`). #1018 still breaks on a fixed
   audience because an external token's `aud` is never `openstack-apis`; this ADR
   needs §7.1 narrowing (`openstack-apis:<service type>`) accepted when §6.3
-  re-exchanges such a token as `subject_token`. One refactor to a
-  per-subject-kind validation profile (expected issuers, accepted audiences,
-  required claims) serves both; doing it twice guarantees divergence.
+  re-exchanges such a token as `subject_token`. A per-subject-kind profile
+  captures expected issuers, accepted audiences, required claims, and
+  time-limits so both paths can use one verifier. The shared profile API and
+  Keystone-native compatibility profile are now implemented in
+  `crates/core/src/oauth2_client/verify.rs`; the external-assertion profile
+  enforces the configured audience, required claims, 300-second maximum age
+  and lifetime, and 60-second clock skew. Endpoint dispatch, external issuer
+  key discovery, replay-cache checks, and mapping-engine integration remain
+  separate work.
 - **Confused-deputy replay gets one rule.** #1018's concern (an external token
   minted for someone else replayed at Keystone) is the same one §5.1 answers for
   JWT-SVID client assertions: pin `aud` to the fixed Keystone token-endpoint
@@ -1118,43 +1119,6 @@ with a description and an expiry, and can delete any of them.
    The `Ec2` variant and its rejection arm stay while plain EC2 credentials
    exist. Only after every deployment that shares a database with Python
    Keystone has moved trust creation off it.
-
-### Phase 1 implementation notes
-
-Where the phase 1 implementation refines or departs from the decision above:
-
-- **Grant domain.** A grant lives in, and is redeemed at, its target
-  project's domain rather than the grantor's (§3.2 and §4.1 were amended), so
-  a user may delegate their roles on a project of another domain while each
-  domain's key still only signs tokens for its own projects.
-- **`cross_domain` scope.** The opt-in is required whenever the client's
-  domain differs from either the grantor's domain or the project's domain.
-- **`target_disabled` reason.** §8 disables grants when their project is
-  disabled but names no reason; `DisabledReason::TargetDisabled` was added.
-- **Partial role loss.** The lifecycle hook disables a grant as `role_lost`
-  only when the grantor holds none of its roles any more. On partial loss the
-  grant stays enabled and tokens carry the remaining intersection, which
-  redemption computes anyway. Redemption itself marks `role_lost` only when
-  the request did not narrow the roles.
-- **Grantee self-service.** The grantee's own `GET`/`DELETE` runs under a new
-  `AuthenticationContext::ServiceClient` (unscoped, no roles) and reaches
-  policy as `auth_type: service_client`. A missing grant answers `404` to it
-  after the SVID is authenticated.
-- **Client authentication.** Only `tls_client_auth` with an X.509-SVID on the
-  internal interface is implemented; JWT-SVID `private_key_jwt` is phase 3.
-- **Errors and limits.** A disabled grant or lost role answers `403` with
-  error code `invalid_grant`. Redemption uses the token endpoint limiter's
-  quota with its own per-SVID key (`service_grant:<svid>`) rather than a
-  separately configured limiter. A grant quota answers `429` without
-  `Retry-After`, since waiting does not free quota.
-- **Registry.** Removing a client's policy is `remove_delegation: true` on
-  update (a JSON `null` cannot be told apart from an absent field).
-  `max_role_ids` entries added by a write must be existing roles; ids
-  already in the stored ceiling are not re-checked, so a role deleted later
-  does not block unrelated edits.
-- **List filter.** `domain_id` on `GET /v4/service-grants` filters on the
-  grant's domain, which is the target project's domain. Domain managers
-  are authorized on that same domain.
 
 ## Alternatives considered
 
