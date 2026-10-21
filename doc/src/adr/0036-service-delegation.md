@@ -624,10 +624,14 @@ accepts an application-credential subject and rejects everything else.
    bearer token (expiry, revocation, user enabled). When the subject is itself
    an on-behalf-of token, its `delegation_context.root_jti` is checked against
    the revocation store as well (§6.3).
-2. The subject's chain must be plain, application-credential, or an on-behalf-of
-   token previously minted **for the same actor** (§6.3). A trust,
-   service-grant, or on-behalf-of-for-another-actor subject is rejected: no
-   re-delegation.
+2. The subject's chain must be plain, unrestricted application-credential, or an
+   on-behalf-of token previously minted **for the same actor** (§6.3). A trust,
+   service-grant, restricted application credential, or
+   on-behalf-of-for-another-actor subject is rejected: no re-delegation, and a
+   restriction cannot be carried along. The exchanged token is always treated as
+   delegated by policy (`is_delegated`), even for a plain subject, so the rules
+   that bound a delegated caller (trusts, credentials, EC2) apply to a token a
+   service holds.
 3. `sub` = the subject's user id; `act` = this client, with `sub_type: "spiffe"`
    as in §5.2; `amr` = the **set union** of the subject's `amr` and
    `on_behalf_of` — a union, not an append, so a chain re-exchanged twenty times
@@ -650,7 +654,12 @@ accepts an application-credential subject and rejects everything else.
    time, which is the point of §7.
 
 5. `auth_time` and `root_jti` are taken from the subject on the first hop and
-   preserved unchanged on every re-exchange (§6.3).
+   preserved unchanged on every re-exchange (§6.3). A rescoped token has a fresh
+   `issued_at` but inherits its parent's expiry, so `auth_time` is the earlier
+   of `issued_at` and `expires_at` less the token lifetime, and `root_jti` is the
+   _last_ audit id of the token (the one the user authenticated with), so that
+   rescoping can neither extend the chain nor hide it from a revocation of the
+   original token.
 
 #### 6.3 Renewal without a stored record
 
@@ -671,7 +680,9 @@ hop then re-runs, against `keystone-rs`:
    gets, applied to the _root_ identifier rather than to the hop token that was
    presented).
 2. The user is enabled, the domain is enabled.
-3. Live role and delegation-boundary checks, as on the first hop.
+3. When the chain started from an application credential, the credential still
+   exists and has not expired (`delegation_context` carries its id).
+4. Live role and delegation-boundary checks, as on the first hop.
 
 Without the `root_jti` binding, re-exchange would present a _different_ token
 than the one the user handed over, with a different `jti`, and an explicit
@@ -803,6 +814,7 @@ OnBehalfOf   {
     subject: Box<AuthenticationContext>,
     auth_time: DateTime<Utc>,
     root_jti: String,   // §6.3: the chain is revoked with the token that started it
+    application_credential_id: Option<String>, // §6.3: rechecked on every hop
 },
 ```
 

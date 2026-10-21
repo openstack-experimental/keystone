@@ -5147,6 +5147,7 @@ dependencies = [
  "data-encoding",
  "derive_builder",
  "eyre",
+ "futures-util",
  "governor",
  "hmac 0.13.0",
  "inventory",

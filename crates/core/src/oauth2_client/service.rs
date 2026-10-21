@@ -398,21 +398,19 @@ async fn ensure_roles_exist(
         return Ok(());
     };
     let roles = ctx.state().provider.get_role_provider();
-    for role_id in delegation
+    // One lookup per role, concurrently: the ceiling holds up to 64 ids.
+    let ids: Vec<&String> = delegation
         .max_role_ids
         .iter()
         .filter(|id| !unchanged.contains(id))
-    {
-        if roles
-            .get_role(ctx, role_id)
-            .await
-            .map_err(|e| Oauth2ClientProviderError::Dependency(e.to_string()))?
-            .is_none()
-        {
-            return Err(Oauth2ClientProviderError::Validation(format!(
-                "delegation.max_role_ids names an unknown role: {role_id}"
-            )));
-        }
+        .collect();
+    let found = futures_util::future::try_join_all(ids.iter().map(|id| roles.get_role(ctx, id)))
+        .await
+        .map_err(|e| Oauth2ClientProviderError::Dependency(e.to_string()))?;
+    if let Some((role_id, _)) = ids.iter().zip(found).find(|(_, role)| role.is_none()) {
+        return Err(Oauth2ClientProviderError::Validation(format!(
+            "delegation.max_role_ids names an unknown role: {role_id}"
+        )));
     }
     Ok(())
 }

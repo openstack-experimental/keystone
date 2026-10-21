@@ -19,7 +19,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use cadf::Outcome;
+use cadf::{Outcome, OutcomeReason};
 use governor::clock::Clock as _;
 
 use openstack_keystone_core::common::SpiffeId;
@@ -28,12 +28,16 @@ use openstack_keystone_core::oauth2_client::on_behalf_of::{
     exchange_on_behalf_of,
 };
 use openstack_keystone_core_types::auth::AuthenticationContext;
+use openstack_keystone_core_types::oauth2_client::Audience;
 use openstack_keystone_key_repository::asymmetric::SigningAlgorithm;
 
-use crate::audit::{Oauth2Grant, build_initiator_from_vsc, emit_on_behalf_of_event};
+use crate::audit::{
+    Oauth2Grant, build_initiator_from_vsc, build_initiator_unknown, emit_oauth2_grant_event,
+    emit_on_behalf_of_event,
+};
 use crate::keystone::ServiceState;
 
-use super::common::sign_jwt;
+use super::common::{client_credentials_from_request, rate_limit_key, sign_jwt};
 use super::token_exchange::requested_audience;
 use super::{Oauth2TokenError, TokenForm, TokenResponse};
 use crate::api::v4::oauth2::well_known::base_url;
@@ -42,12 +46,6 @@ use crate::api::v4::oauth2::well_known::base_url;
 const KEYSTONE_TOKEN_TYPE: &str = "urn:openstack:params:oauth:token-type:keystone";
 /// `subject_token_type` of an access token this endpoint minted earlier.
 const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
-
-/// Rate limiter key of an exchange: a bucket of its own per presented SVID,
-/// never shared with the `client_id`-keyed grants or with redemption.
-fn rate_limit_key(svid: &str) -> String {
-    format!("on_behalf_of:{svid}")
-}
 
 /// Exchange a user's token for a token of the calling service, naming the
 /// user as `sub` and the service as `act` (ADR 0036 §6).
@@ -66,11 +64,60 @@ pub(super) async fn handle_on_behalf_of_grant(
     correlation_id: &str,
     svid: &SpiffeId,
 ) -> Result<Response, Oauth2TokenError> {
-    let Some(client_id) = form.client_id.as_deref().filter(|c| !c.is_empty()) else {
+    let result = exchange(
+        state,
+        domain_id,
+        headers,
+        form,
+        oauth2_cfg,
+        correlation_id,
+        svid,
+    )
+    .await;
+    // A refusal is audited (ADR 0036 §8) so a replayed or probing caller
+    // leaves a record. A rate limited request is not: the limiter exists to
+    // keep a flood from costing anything.
+    if let Err(e) = &result
+        && e.status() != StatusCode::TOO_MANY_REQUESTS
+    {
+        let client_id = client_credentials_from_request(headers, form)
+            .map_or_else(|| "unknown".to_string(), |(client_id, _)| client_id);
+        emit_oauth2_grant_event(
+            &state.audit_dispatcher,
+            correlation_id,
+            "authenticate",
+            build_initiator_unknown(),
+            Oauth2Grant {
+                client_id: &client_id,
+                grant_type: "on_behalf_of",
+            },
+            Outcome::Failure,
+            Some(OutcomeReason::literal(e.error_code())),
+        );
+    }
+    result
+}
+
+async fn exchange(
+    state: &ServiceState,
+    domain_id: &str,
+    headers: &HeaderMap,
+    form: &TokenForm,
+    oauth2_cfg: &openstack_keystone_config::Oauth2Provider,
+    correlation_id: &str,
+    svid: &SpiffeId,
+) -> Result<Response, Oauth2TokenError> {
+    // The client id travels in the body or in a Basic header with an empty
+    // secret, as the dispatcher accepts either.
+    let Some(client_id) = client_credentials_from_request(headers, form)
+        .map(|(client_id, _)| client_id)
+        .filter(|c| !c.is_empty())
+    else {
         return Err(Oauth2TokenError::invalid_request(
             "missing required parameter: client_id",
         ));
     };
+    let client_id = client_id.as_str();
     let Some(subject_token) = form.subject_token.as_deref().filter(|t| !t.is_empty()) else {
         return Err(Oauth2TokenError::invalid_request(
             "missing required parameter: subject_token",
@@ -95,7 +142,7 @@ pub(super) async fn handle_on_behalf_of_grant(
     // presented identity.
     if let Err(not_until) = state
         .oauth2_token_rate_limiter
-        .check_key(&rate_limit_key(svid.as_str()))
+        .check_key(&rate_limit_key("on_behalf_of", svid.as_str()))
     {
         let retry_after = not_until
             .wait_time_from(state.oauth2_token_rate_limiter.clock().now())
@@ -141,7 +188,11 @@ pub(super) async fn handle_on_behalf_of_grant(
         }
         None => "openstack:api".to_string(),
     };
-    let audience = requested_audience(state, &form.audience).await?;
+    let audience = bound_audience(
+        requested_audience(state, &form.audience).await?,
+        form.audience.is_empty(),
+        exchanged.subject_audience.as_ref(),
+    )?;
 
     let now = chrono::Utc::now().timestamp();
     // The token never outlives the chain: the client's operation lifetime
@@ -202,6 +253,33 @@ pub(super) async fn handle_on_behalf_of_grant(
     Ok((StatusCode::OK, Json(response)).into_response())
 }
 
+/// Keep a renewed token from reaching further than the hop token it was
+/// exchanged from: without a requested audience the subject's carries over,
+/// and a requested one must be within it. A user's Keystone token, or an
+/// un-narrowed hop token, bounds nothing.
+fn bound_audience(
+    audience: Audience,
+    none_requested: bool,
+    subject: Option<&Audience>,
+) -> Result<Audience, Oauth2TokenError> {
+    let Some(subject) = subject.filter(|s| **s != Audience::control_plane()) else {
+        return Ok(audience);
+    };
+    if none_requested {
+        return Ok(subject.clone());
+    }
+    if audience
+        .values()
+        .iter()
+        .all(|value| subject.values().contains(value))
+    {
+        return Ok(audience);
+    }
+    Err(Oauth2TokenError::invalid_target(
+        "requested audience exceeds that of the subject token",
+    ))
+}
+
 /// Map a refused exchange to its token endpoint error.
 fn exchange_error(e: OnBehalfOfError) -> Oauth2TokenError {
     match e {
@@ -260,11 +338,29 @@ mod tests {
         &subject_token_type=urn%3Aopenstack%3Aparams%3Aoauth%3Atoken-type%3Akeystone";
 
     #[test]
-    fn test_rate_limit_key_is_namespaced() {
+    fn test_bound_audience() {
+        use super::bound_audience;
+        use openstack_keystone_core_types::oauth2_client::Audience;
+        let glance = Audience::narrowed(&["image"]);
+        let both = Audience::narrowed(&["image", "volume"]);
+        // Nothing to bound by.
+        assert_eq!(bound_audience(both.clone(), false, None).unwrap(), both);
         assert_eq!(
-            super::rate_limit_key("spiffe://x/ns/a"),
-            "on_behalf_of:spiffe://x/ns/a"
+            bound_audience(both.clone(), false, Some(&Audience::control_plane())).unwrap(),
+            both
         );
+        // The narrowing carries over to a renewal that asks for none.
+        assert_eq!(
+            bound_audience(Audience::control_plane(), true, Some(&glance)).unwrap(),
+            glance
+        );
+        // A request may narrow further, never widen.
+        assert_eq!(
+            bound_audience(glance.clone(), false, Some(&both)).unwrap(),
+            glance
+        );
+        assert!(bound_audience(both, false, Some(&glance)).is_err());
+        assert!(bound_audience(Audience::control_plane(), false, Some(&glance)).is_err());
     }
 
     async fn service_client() -> OAuth2ClientResource {

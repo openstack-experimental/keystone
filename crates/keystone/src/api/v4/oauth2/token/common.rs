@@ -95,6 +95,13 @@ pub(in crate::api::v4::oauth2) fn client_credentials_from_parts(
     })
 }
 
+/// Rate limiter key of the SVID-authenticated grants: a bucket of its own
+/// per grant `prefix` and presented SVID, never shared with the
+/// `client_id`-keyed grants or with another SVID grant.
+pub(super) fn rate_limit_key(prefix: &str, svid: &str) -> String {
+    format!("{prefix}:{svid}")
+}
+
 /// Sign `claims` into a compact JWS using the domain's active OAuth2
 /// signing key (shared by every grant that mints a token).
 pub(super) async fn sign_jwt<T: Serialize>(
@@ -287,6 +294,18 @@ pub(super) async fn discard_refresh_family(state: &ServiceState, family_id: Opti
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_rate_limit_key_is_namespaced() {
+        assert_eq!(
+            super::rate_limit_key("on_behalf_of", "spiffe://x/ns/a"),
+            "on_behalf_of:spiffe://x/ns/a"
+        );
+        assert_ne!(
+            super::rate_limit_key("service_grant", "spiffe://x/ns/a"),
+            super::rate_limit_key("on_behalf_of", "spiffe://x/ns/a")
+        );
+    }
+
     use axum::{http::StatusCode, response::IntoResponse};
     use openstack_keystone_core_types::oauth2_client::Oauth2ClientProviderError;
 

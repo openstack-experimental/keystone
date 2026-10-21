@@ -1478,6 +1478,9 @@ pub enum AuthenticationContext {
         delegated_project_id: Option<String>,
         /// The roles of the subject's own delegation, if it had one.
         delegated_role_ids: Option<Vec<String>>,
+        /// The application credential of the subject's own delegation, if
+        /// it had one. Every hop checks it still exists and is unexpired.
+        application_credential_id: Option<String>,
         /// Authentication methods of the subject, carried into `amr`.
         subject_methods: std::collections::BTreeSet<String>,
         /// When the user authenticated. Fixed for the whole chain.
@@ -1603,13 +1606,12 @@ impl AuthenticationContext {
         matches!(
             self,
             Self::ApplicationCredential { .. } | Self::Trust { .. } | Self::ServiceGrant { .. }
-        ) || matches!(
-            self,
-            Self::OnBehalfOf {
-                delegated_project_id: Some(_),
-                ..
-            }
-        ) || self
+        ) || matches!(self, Self::OnBehalfOf { .. })
+            // An on-behalf-of token is held by a service, not by the user:
+            // it is delegated even when the subject was a plain session, so
+            // that policies bounding delegated callers (trusts, credentials,
+            // EC2) apply to it (ADR 0036 §6.3).
+            || self
             .methods()
             .iter()
             .any(|m| m == "trust" || m == "application_credential" || m == "service_grant")

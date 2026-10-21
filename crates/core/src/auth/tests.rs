@@ -4036,6 +4036,7 @@ fn make_on_behalf_of_ctx(
         delegated_project_id: delegated_project_id.map(str::to_string),
         delegated_role_ids: delegated_role_ids
             .map(|ids| ids.iter().map(|id| id.to_string()).collect()),
+        application_credential_id: delegated_project_id.map(|_| "ac1".to_string()),
         subject_methods: ["password".to_string()].into(),
         auth_time: chrono::Utc::now(),
         root_jti: "root".into(),

@@ -119,6 +119,9 @@ pub struct ExchangedOnBehalfOf {
     /// When the chain ends: `auth_time` plus the client's
     /// `max_operation_lifetime`. Tokens must not outlive it.
     pub valid_until: DateTime<Utc>,
+    /// The audience of the hop token that was exchanged, `None` for a
+    /// user's Keystone token. A renewed token must not widen it.
+    pub subject_audience: Option<Audience>,
 }
 
 /// The facts of the subject's own authentication the chain keeps.
@@ -127,9 +130,11 @@ struct Subject {
     scope: ScopeInfo,
     delegated_project_id: Option<String>,
     delegated_role_ids: Option<Vec<String>>,
+    application_credential_id: Option<String>,
     methods: BTreeSet<String>,
     auth_time: DateTime<Utc>,
     root_jti: String,
+    audience: Option<Audience>,
 }
 
 /// Exchange the subject token of `request` for a user security context
@@ -205,6 +210,7 @@ pub async fn exchange_on_behalf_of(
             },
             delegated_project_id: subject.delegated_project_id,
             delegated_role_ids: subject.delegated_role_ids,
+            application_credential_id: subject.application_credential_id,
             subject_methods: subject.methods,
             auth_time: subject.auth_time,
             root_jti: subject.root_jti,
@@ -242,6 +248,7 @@ pub async fn exchange_on_behalf_of(
         vsc,
         client,
         valid_until,
+        subject_audience: subject.audience,
     })
 }
 
@@ -285,7 +292,20 @@ async fn keystone_subject(state: &ServiceState, token: &str) -> Result<Subject, 
     };
     // No re-delegation: only a plain chain or an application credential can
     // be exchanged, and a restriction cannot be carried along.
-    let (delegated_project_id, delegated_role_ids) = match sc.authentication_context() {
+    let (delegated_project_id, delegated_role_ids, application_credential_id) = match sc
+        .authentication_context()
+    {
+        // A restricted credential (`unrestricted == false`) must not mint
+        // the credentials and trusts it is forbidden to, and the chain
+        // cannot carry that restriction along.
+        AuthenticationContext::ApplicationCredential {
+            application_credential,
+            ..
+        } if !application_credential.unrestricted => {
+            return Err(OnBehalfOfError::UnsupportedSubject(
+                "restricted application credential".into(),
+            ));
+        }
         AuthenticationContext::ApplicationCredential {
             application_credential,
             ..
@@ -298,6 +318,7 @@ async fn keystone_subject(state: &ServiceState, token: &str) -> Result<Subject, 
                     .map(|r| r.id.clone())
                     .collect(),
             ),
+            Some(application_credential.id.clone()),
         ),
         other if other.is_delegated() => {
             return Err(OnBehalfOfError::UnsupportedSubject(
@@ -309,7 +330,7 @@ async fn keystone_subject(state: &ServiceState, token: &str) -> Result<Subject, 
                 sc.authentication_context().auth_type().into_owned(),
             ));
         }
-        _ => (None, None),
+        _ => (None, None, None),
     };
     if sc.token_restriction().is_some() {
         return Err(OnBehalfOfError::UnsupportedSubject(
@@ -317,11 +338,26 @@ async fn keystone_subject(state: &ServiceState, token: &str) -> Result<Subject, 
         ));
     }
     let fernet = vsc.token().map_err(|_| OnBehalfOfError::InvalidSubject)?;
+    // The last audit id is that of the token the user authenticated with:
+    // a rescoped token lists its own id first and its parents' after it.
     let root_jti = fernet
         .audit_ids()
-        .first()
+        .last()
         .cloned()
         .ok_or(OnBehalfOfError::InvalidSubject)?;
+    // A rescoped token carries a fresh `issued_at` but inherits the expiry
+    // of its parent, so the user's authentication time is no later than
+    // the expiry less the token lifetime. Using it keeps rescoping from
+    // moving `auth_time` (and with it the chain's end) forward.
+    let token_lifetime = Duration::try_seconds(
+        i64::try_from(state.config_manager.config.read().await.token.expiration)
+            .unwrap_or(i64::MAX),
+    )
+    .unwrap_or(Duration::MAX);
+    let auth_time = fernet
+        .expires_at()
+        .checked_sub_signed(token_lifetime)
+        .map_or(*fernet.issued_at(), |t| t.min(*fernet.issued_at()));
     let scope = sc
         .authorization()
         .ok_or(OnBehalfOfError::InvalidSubject)?
@@ -332,9 +368,11 @@ async fn keystone_subject(state: &ServiceState, token: &str) -> Result<Subject, 
         scope,
         delegated_project_id,
         delegated_role_ids,
+        application_credential_id,
         methods: sc.authentication_context().methods().into_iter().collect(),
-        auth_time: *fernet.issued_at(),
+        auth_time,
         root_jti,
+        audience: None,
     })
 }
 
@@ -375,6 +413,7 @@ async fn hop_subject(
         root_jti,
         project_id,
         delegated_role_ids,
+        application_credential_id,
     } = claims.delegation_context
     else {
         return Err(OnBehalfOfError::UnsupportedSubject(
@@ -392,6 +431,22 @@ async fn hop_subject(
         .ok_or(OnBehalfOfError::InvalidSubject)?;
 
     let internal = ExecutionContext::internal(state);
+    // The chain ends with the application credential it was started from.
+    if let Some(id) = &application_credential_id {
+        let credential = state
+            .provider
+            .get_application_credential_provider()
+            .get_application_credential(&internal, id)
+            .await
+            .map_err(OnBehalfOfError::provider)?
+            .ok_or(OnBehalfOfError::InvalidSubject)?;
+        if credential.user_id != claims.sub {
+            return Err(OnBehalfOfError::InvalidSubject);
+        }
+        if credential.expires_at.is_some_and(|t| t < Utc::now()) {
+            return Err(AuthenticationError::AuthApplicationCredentialExpired.into());
+        }
+    }
     let resource = state.provider.get_resource_provider();
     let scope = match claims.openstack_context.scope {
         OpenStackScope::Project {
@@ -435,6 +490,8 @@ async fn hop_subject(
         scope,
         delegated_project_id: project_id,
         delegated_role_ids,
+        application_credential_id,
+        audience: Some(claims.aud),
         methods: claims
             .amr
             .into_iter()
@@ -468,6 +525,7 @@ pub fn build_on_behalf_of_claims(
         actor,
         delegated_project_id,
         delegated_role_ids,
+        application_credential_id,
         auth_time,
         root_jti,
         ..
@@ -523,6 +581,7 @@ pub fn build_on_behalf_of_claims(
             root_jti: root_jti.clone(),
             project_id: delegated_project_id.clone(),
             delegated_role_ids: delegated_role_ids.clone(),
+            application_credential_id: application_credential_id.clone(),
         },
         act: Some(ActClaim {
             client_id: actor.client_id.clone(),
@@ -625,13 +684,17 @@ mod tests {
     }
 
     fn token(issued_at: DateTime<Utc>) -> FernetToken {
+        token_expiring(issued_at, Utc::now() + Duration::hours(1))
+    }
+
+    fn token_expiring(issued_at: DateTime<Utc>, expires_at: DateTime<Utc>) -> FernetToken {
         FernetToken::ProjectScope(
             ProjectScopePayloadBuilder::default()
                 .methods(vec!["password".to_string()].into_iter())
                 .audit_ids(vec!["audit-1".to_string()].into_iter())
                 .user_id("u1")
                 .project_id("p1")
-                .expires_at(Utc::now() + Duration::hours(1))
+                .expires_at(expires_at)
                 .issued_at(issued_at)
                 .build()
                 .unwrap(),
@@ -662,6 +725,14 @@ mod tests {
         issued_at: DateTime<Utc>,
         scope_domain: &str,
     ) -> ValidatedSecurityContext {
+        subject_vsc_with_token(context, token(issued_at), scope_domain)
+    }
+
+    fn subject_vsc_with_token(
+        context: AuthenticationContext,
+        token: FernetToken,
+        scope_domain: &str,
+    ) -> ValidatedSecurityContext {
         let auth = AuthenticationResultBuilder::default()
             .context(context)
             .principal(PrincipalInfo {
@@ -676,7 +747,7 @@ mod tests {
             .build()
             .unwrap();
         let mut sc = SecurityContext::try_from(auth).unwrap();
-        sc.set_token(token(issued_at));
+        sc.set_token(token);
         sc.set_authorization(
             AuthzInfoBuilder::default()
                 .scope(project(scope_domain))
@@ -705,7 +776,7 @@ mod tests {
                     name: Some("member".into()),
                     domain_id: None,
                 }],
-                unrestricted: false,
+                unrestricted: true,
                 user_id: "u1".into(),
             },
             token: None,
@@ -872,6 +943,7 @@ mod tests {
                 root_jti: "audit-1".into(),
                 project_id: Some("p1".into()),
                 delegated_role_ids: Some(vec!["member".into()]),
+                application_credential_id: Some("ac1".into()),
             }
         );
         // `admin` is live but not part of the credential.
@@ -884,6 +956,59 @@ mod tests {
             DelegationContext::OnBehalfOf { auth_time, .. } => *auth_time,
             _ => 0,
         }
+    }
+
+    #[tokio::test]
+    async fn test_restricted_application_credential_is_not_exchangeable() {
+        let issued_at = Utc::now();
+        let AuthenticationContext::ApplicationCredential {
+            mut application_credential,
+            token,
+        } = app_cred()
+        else {
+            unreachable!()
+        };
+        application_credential.unrestricted = false;
+        let state = state(
+            Some(subject_vsc(
+                AuthenticationContext::ApplicationCredential {
+                    application_credential,
+                    token,
+                },
+                issued_at,
+                "d1",
+            )),
+            client(policy(false), "d1"),
+            false,
+        )
+        .await;
+        assert!(matches!(
+            exchange(&state).await,
+            Err(OnBehalfOfError::UnsupportedSubject(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_rescoped_token_keeps_the_parents_auth_time() {
+        // The parent was issued 50 minutes ago with the default one hour
+        // lifetime; the rescoped token is new but expires with its parent.
+        let parent_issued_at = Utc::now() - Duration::minutes(50);
+        let rescoped = token_expiring(Utc::now(), parent_issued_at + Duration::hours(1));
+        let state = state(
+            Some(subject_vsc_with_token(
+                AuthenticationContext::Token(rescoped.clone()),
+                rescoped,
+                "d1",
+            )),
+            client(policy(false), "d1"),
+            false,
+        )
+        .await;
+        let claims = claims(&exchange(&state).await.unwrap());
+        let DelegationContext::OnBehalfOf { auth_time, .. } = claims.delegation_context else {
+            panic!("not an on-behalf-of context");
+        };
+        assert!((auth_time - parent_issued_at.timestamp()).abs() <= 1);
     }
 
     #[tokio::test]

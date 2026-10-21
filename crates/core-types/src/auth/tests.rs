@@ -1955,6 +1955,7 @@ fn make_on_behalf_of(
         actor: make_actor(),
         delegated_project_id: delegated_project_id.map(str::to_string),
         delegated_role_ids: delegated_project_id.map(|_| vec!["member".to_string()]),
+        application_credential_id: delegated_project_id.map(|_| "ac1".to_string()),
         subject_methods: methods.iter().map(|m| m.to_string()).collect(),
         auth_time: Utc::now(),
         root_jti: "root".into(),
@@ -2048,7 +2049,7 @@ fn test_on_behalf_of_methods_are_a_union() {
 }
 
 #[test]
-fn test_on_behalf_of_delegation_flag_follows_the_subject() {
-    assert!(!make_on_behalf_of(None, &["password"]).is_delegated());
+fn test_on_behalf_of_is_always_delegated() {
+    assert!(make_on_behalf_of(None, &["password"]).is_delegated());
     assert!(make_on_behalf_of(Some("pid"), &["application_credential"]).is_delegated());
 }

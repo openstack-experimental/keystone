@@ -425,6 +425,7 @@ mod tests {
                 },
                 delegated_project_id: None,
                 delegated_role_ids: None,
+                application_credential_id: None,
                 subject_methods: ["password".to_string()].into(),
                 auth_time,
                 root_jti: "root_audit_id".into(),

@@ -23,6 +23,7 @@ openstack-keystone-auth-plugin-core.workspace = true
 # Only used by the end-to-end wasm plugin tests (`wasm_plugins` feature).
 openstack-keystone-auth-plugin-runtime = { workspace = true, optional = true }
 eyre.workspace = true
+futures-util.workspace = true
 governor.workspace = true
 hmac.workspace = true
 dashmap.workspace = true

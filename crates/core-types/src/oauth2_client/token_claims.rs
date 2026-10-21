@@ -319,6 +319,10 @@ pub enum DelegationContext {
         /// hop is bounded by them (security.md I4).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         delegated_role_ids: Option<Vec<String>>,
+        /// The application credential of the subject's own delegation, if
+        /// it had one. Every hop checks it still exists and is unexpired.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        application_credential_id: Option<String>,
     },
 }
 
