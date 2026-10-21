@@ -27,6 +27,7 @@ mod client_credentials;
 mod common;
 pub(super) use common::sign_jwt_typed;
 mod device_code;
+mod dpop;
 mod error;
 mod on_behalf_of;
 mod refresh_token;
@@ -264,6 +265,7 @@ pub(super) async fn token(
                     &state,
                     &domain_id,
                     &headers,
+                    peer_addr,
                     &form,
                     &oauth2_cfg,
                     &correlation_id.0,

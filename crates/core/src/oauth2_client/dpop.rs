@@ -361,6 +361,38 @@ fn validate_key(alg: Algorithm, jwk: &Map<String, Value>) -> Result<(), DpopProo
     }
 }
 
+/// The thumbprint of the key embedded in a proof, **without** verifying the
+/// proof.
+///
+/// Used only to key the pre-verification rate limit (ADR 0043 §2): the value
+/// is attacker-chosen until [`verify_dpop_proof`] has checked the signature,
+/// so it must never be trusted for anything else.
+///
+/// # Errors
+/// [`DpopProofError::Malformed`] or [`DpopProofError::InvalidKey`] when the
+/// header or the `jwk` cannot be read.
+pub fn peek_proof_jkt(proof: &str) -> Result<String, DpopProofError> {
+    if proof.len() > MAX_PROOF_LEN {
+        return Err(DpopProofError::Malformed("proof too large".into()));
+    }
+    let header_b64 = proof
+        .split('.')
+        .next()
+        .ok_or_else(|| DpopProofError::Malformed("not a compact JWS".into()))?;
+    let header: Map<String, Value> = URL_SAFE_NO_PAD
+        .decode(header_b64)
+        .map_err(|e| DpopProofError::Malformed(e.to_string()))
+        .and_then(|raw| {
+            serde_json::from_slice(&raw).map_err(|e| DpopProofError::Malformed(e.to_string()))
+        })?;
+    let jwk = header
+        .get("jwk")
+        .ok_or(DpopProofError::MissingKey)?
+        .as_object()
+        .ok_or_else(|| DpopProofError::InvalidKey("`jwk` is not an object".into()))?;
+    jwk_thumbprint(jwk)
+}
+
 /// Validate a DPoP proof against the request (ADR 0043 §2).
 ///
 /// All checks are fail-closed. The returned thumbprint is what the caller
@@ -1018,6 +1050,36 @@ iInRUT3PWlw/HKU=
                 "{proof}"
             );
         }
+    }
+
+    #[test]
+    fn test_peek_proof_jkt_matches_verified_thumbprint() {
+        let proof = sign(
+            Algorithm::ES256,
+            EC_PEM,
+            json!({"typ": "dpop+jwt", "alg": "ES256", "jwk": ec_jwk()}),
+            json!({"jti": "a", "htm": "POST", "htu": "https://x/t", "iat": NOW}),
+        );
+        assert_eq!(
+            peek_proof_jkt(&proof).unwrap(),
+            jwk_thumbprint(&ec_jwk()).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_peek_proof_jkt_rejects_unreadable_proofs() {
+        assert!(matches!(
+            peek_proof_jkt("garbage"),
+            Err(DpopProofError::Malformed(_))
+        ));
+        let no_key = sign(
+            Algorithm::ES256,
+            EC_PEM,
+            json!({"typ": "dpop+jwt", "alg": "ES256"}),
+            json!({}),
+        );
+        assert_eq!(peek_proof_jkt(&no_key), Err(DpopProofError::MissingKey));
+        assert!(peek_proof_jkt(&"a".repeat(MAX_PROOF_LEN + 1)).is_err());
     }
 
     #[test]

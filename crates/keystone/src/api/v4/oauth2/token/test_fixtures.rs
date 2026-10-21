@@ -266,3 +266,57 @@ pub(in crate::api::v4::oauth2) fn jwt_claims(token: &str) -> Value {
     let payload = token.split('.').nth(1).unwrap();
     serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
 }
+
+/// Fixed DPoP proof key shared by the `/token` handler tests.
+const DPOP_TEST_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg0mBL+Hphh8GGUGdi
+gmBwdXtr0cZMOm/ZXd7WQelR3umhRANCAASxIa1qgs06aj9LNbZGgn5Mf+pjqf/q
+u9kjxPUBs14LLJlWTBwQxPJ6GLO+UoZswTJWTmawRuC2EyKWhJaSPxwA
+-----END PRIVATE KEY-----
+";
+const DPOP_TEST_KEY_X: &str = "sSGtaoLNOmo_SzW2RoJ-TH_qY6n_6rvZI8T1AbNeCyw";
+const DPOP_TEST_KEY_Y: &str = "mVZMHBDE8noYs75ShmzBMlZOZrBG4LYTIpaElpI_HAA";
+
+/// RFC 7638 thumbprint of the fixed DPoP test key.
+pub(super) fn dpop_test_jkt() -> String {
+    openstack_keystone_core::oauth2_client::dpop::jwk_thumbprint(
+        serde_json::json!({
+            "kty": "EC",
+            "crv": "P-256",
+            "x": DPOP_TEST_KEY_X,
+            "y": DPOP_TEST_KEY_Y,
+        })
+        .as_object()
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+/// A DPoP proof for `POST {htu}` signed with the fixed test key.
+pub(super) fn dpop_proof(htu: &str, jti: &str, nonce: Option<&str>) -> String {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    let header = serde_json::json!({
+        "typ": "dpop+jwt",
+        "alg": "ES256",
+        "jwk": {"kty": "EC", "crv": "P-256", "x": DPOP_TEST_KEY_X, "y": DPOP_TEST_KEY_Y},
+    });
+    let mut claims = serde_json::json!({
+        "jti": jti,
+        "htm": "POST",
+        "htu": htu,
+        "iat": chrono::Utc::now().timestamp(),
+    });
+    if let Some(nonce) = nonce {
+        claims["nonce"] = nonce.into();
+    }
+    let message = format!(
+        "{}.{}",
+        URL_SAFE_NO_PAD.encode(header.to_string()),
+        URL_SAFE_NO_PAD.encode(claims.to_string())
+    );
+    let key = jsonwebtoken::EncodingKey::from_ec_pem(DPOP_TEST_KEY_PEM.as_bytes()).unwrap();
+    let signature =
+        jsonwebtoken::crypto::sign(message.as_bytes(), &key, jsonwebtoken::Algorithm::ES256)
+            .unwrap();
+    format!("{message}.{signature}")
+}

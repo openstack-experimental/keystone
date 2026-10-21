@@ -111,6 +111,9 @@ pub struct Service {
     /// `api_key_rate_limiter` above, own tunable blast radius.
     pub oauth2_token_rate_limiter: Arc<DefaultKeyedRateLimiter<String>>,
 
+    /// DPoP replay cache and nonce generator (ADR 0043 §2).
+    pub dpop: crate::oauth2_client::dpop_runtime::DpopRuntime,
+
     /// Loaded dynamic auth plugins (ADR 0025). Empty (an
     /// [`EmptyAuthPluginRuntime`]) until `crates/keystone`'s
     /// `load_auth_plugins` runs post-construction - `CoreHostFunctions`
@@ -223,6 +226,9 @@ impl Service {
         );
         let oauth2_token_rate_limiter = Arc::new(RateLimiter::keyed(oauth2_token_quota));
 
+        let dpop =
+            crate::oauth2_client::dpop_runtime::DpopRuntime::from_config(&*cfg.config.read().await);
+
         // Build rate-limiting state from config. Fails fast (Invariant 2) if
         // any enabled bucket has zero burst or replenish rate.
         let rate_limiters = {
@@ -242,6 +248,7 @@ impl Service {
             local_emergency_leaderless_tracker: LeaderlessTracker::new(),
             api_key_rate_limiter,
             oauth2_token_rate_limiter,
+            dpop,
             auth_plugin_registry: RwLock::new(Arc::new(EmptyAuthPluginRuntime)),
             core_host_functions: RwLock::new(None),
             rate_limiters,

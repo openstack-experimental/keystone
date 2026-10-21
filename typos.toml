@@ -17,7 +17,7 @@ identifier-leading-digits = false
 locale = "en"
 extend-ignore-identifiers-re = []
 extend-ignore-words-re = []
-extend-ignore-re = []
+extend-ignore-re = ["mVZMHBDE8noYs75ShmzBMlZOZrBG4LYTIpaElpI_HAA"]
 
 [default.extend-identifiers]
 
@@ -54,7 +54,7 @@ extend-glob = []
 check-file = false
 extend-ignore-identifiers-re = []
 extend-ignore-words-re = []
-extend-ignore-re = []
+extend-ignore-re = ["mVZMHBDE8noYs75ShmzBMlZOZrBG4LYTIpaElpI_HAA"]
 
 [type.lock.extend-identifiers]
 

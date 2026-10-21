@@ -29,6 +29,9 @@ pub(crate) struct Oauth2TokenError {
     status: StatusCode,
     #[serde(skip)]
     retry_after: Option<u64>,
+    /// Value of the `DPoP-Nonce` response header (RFC 9449 §8).
+    #[serde(skip)]
+    dpop_nonce: Option<String>,
     error: &'static str,
     error_description: String,
 }
@@ -42,6 +45,7 @@ impl Oauth2TokenError {
         Self {
             status,
             retry_after: None,
+            dpop_nonce: None,
             error,
             error_description: description.into(),
         }
@@ -85,6 +89,23 @@ impl Oauth2TokenError {
     /// deployment can mint a token for.
     pub(crate) fn invalid_target(description: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_target", description)
+    }
+
+    /// RFC 9449 §5: the `DPoP` proof is missing, malformed or not acceptable.
+    pub(crate) fn invalid_dpop_proof(description: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, "invalid_dpop_proof", description)
+    }
+
+    /// RFC 9449 §8: the proof must carry a server-provided nonce; the one in
+    /// `nonce` is returned in the `DPoP-Nonce` header.
+    pub(crate) fn use_dpop_nonce(nonce: String) -> Self {
+        let mut error = Self::new(
+            StatusCode::BAD_REQUEST,
+            "use_dpop_nonce",
+            "the DPoP proof must include the nonce from the DPoP-Nonce header",
+        );
+        error.dpop_nonce = Some(nonce);
+        error
     }
 
     pub(crate) fn invalid_grant(description: impl Into<String>) -> Self {
@@ -147,6 +168,7 @@ impl Oauth2TokenError {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
             retry_after: Some(retry_after),
+            dpop_nonce: None,
             error: "temporarily_unavailable",
             error_description: description.into(),
         }
@@ -156,6 +178,7 @@ impl Oauth2TokenError {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,
             retry_after: Some(retry_after),
+            dpop_nonce: None,
             // RFC 6749 §5.2 predates 429 and has no dedicated error code for
             // rate limiting; `invalid_request` is the closest defined code
             // (malformed/unacceptable request). The `429` status + `Retry-After`
@@ -184,7 +207,11 @@ impl IntoResponse for Oauth2TokenError {
     fn into_response(self) -> Response {
         let status = self.status;
         let retry_after = self.retry_after;
+        let dpop_nonce = self.dpop_nonce.clone();
         let mut response = (status, Json(self)).into_response();
+        if let Some(nonce) = dpop_nonce.and_then(|n| header::HeaderValue::from_str(&n).ok()) {
+            response.headers_mut().insert("DPoP-Nonce", nonce);
+        }
         if let Some(retry_after) = retry_after {
             response
                 .headers_mut()
