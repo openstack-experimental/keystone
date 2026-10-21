@@ -207,7 +207,10 @@
 //! must find attachments by `name`, not by position. Events built with
 //! [`CadfEventPayload::with_service_grant`] likewise carry a
 //! `service_grant` attachment (`grant_id`, `grantor_user_id`,
-//! `actor_client_id`, `actor_spiffe_id`, `delegated_project_id`).
+//! `actor_client_id`, `actor_spiffe_id`, `delegated_project_id`). Events built
+//! with [`CadfEventPayload::with_on_behalf_of`] carry an `on_behalf_of`
+//! attachment (`root_jti`, `user_id`, `actor_client_id`, `actor_spiffe_id`
+//! and, when the subject was delegated, `delegated_project_id`).
 //!
 //! ### Choosing a channel
 //!
@@ -286,6 +289,6 @@ pub use spool::{HmacKeyStore, SpoolConfig, SpoolError};
 #[cfg(feature = "syslog")]
 pub use syslog::{SyslogSink, SyslogSinkConfig};
 pub use types::{
-    CadfEvent, CadfEventPayload, Host, Initiator, Observer, Outcome, OutcomeReason,
-    ServiceGrantAudit, Target,
+    CadfEvent, CadfEventPayload, Host, Initiator, Observer, OnBehalfOfAudit, Outcome,
+    OutcomeReason, ServiceGrantAudit, Target,
 };

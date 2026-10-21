@@ -57,6 +57,8 @@ pub struct CadfEventPayload {
     pub(crate) oauth2: Option<(String, String)>,
     /// The service grant a delegated request was made under, if any.
     pub(crate) service_grant: Option<ServiceGrantAudit>,
+    /// The on-behalf-of chain a delegated request was made under, if any.
+    pub(crate) on_behalf_of: Option<OnBehalfOfAudit>,
     /// Per-boot sequence number; filled in at signing.
     pub(crate) seq: u64,
     /// The resource the action was on.
@@ -80,6 +82,9 @@ const OAUTH2_ATTACHMENT: &str = "oauth2";
 /// Name of the optional attachment carrying the service grant of a
 /// delegated request.
 const SERVICE_GRANT_ATTACHMENT: &str = "service_grant";
+/// Name of the optional attachment carrying the on-behalf-of chain of a
+/// delegated request.
+const ON_BEHALF_OF_ATTACHMENT: &str = "on_behalf_of";
 
 /// The delegation facts of an event recorded under a service grant (ADR
 /// 0036 §8). Every value is reduced to the audit-safe character set.
@@ -112,6 +117,42 @@ impl ServiceGrantAudit {
             actor_client_id: sanitize_audit_value(actor_client_id),
             actor_spiffe_id: sanitize_audit_value(actor_spiffe_id),
             delegated_project_id: sanitize_audit_value(delegated_project_id),
+        }
+    }
+}
+
+/// The delegation facts of an event recorded under an on-behalf-of exchange
+/// (ADR 0036 §6, §8). Every value is reduced to the audit-safe character
+/// set.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OnBehalfOfAudit {
+    /// Identifier of the user token that started the chain.
+    pub root_jti: String,
+    /// User whose token the service acts on.
+    pub user_id: String,
+    /// `client_id` of the acting service.
+    pub actor_client_id: String,
+    /// SPIFFE ID the acting service authenticated with.
+    pub actor_spiffe_id: String,
+    /// Project of the subject's own delegation, when it had one.
+    pub delegated_project_id: Option<String>,
+}
+
+impl OnBehalfOfAudit {
+    /// Build the attachment, sanitizing each value.
+    pub fn new(
+        root_jti: &str,
+        user_id: &str,
+        actor_client_id: &str,
+        actor_spiffe_id: &str,
+        delegated_project_id: Option<&str>,
+    ) -> Self {
+        Self {
+            root_jti: sanitize_audit_value(root_jti),
+            user_id: sanitize_audit_value(user_id),
+            actor_client_id: sanitize_audit_value(actor_client_id),
+            actor_spiffe_id: sanitize_audit_value(actor_spiffe_id),
+            delegated_project_id: delegated_project_id.map(sanitize_audit_value),
         }
     }
 }
@@ -271,6 +312,46 @@ impl CadfEventPayload {
                 }
             }
         };
+        let on_behalf_of = match value
+            .get("attachments")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|a| {
+                a.iter().find(|a| {
+                    a.get("name").and_then(serde_json::Value::as_str)
+                        == Some(ON_BEHALF_OF_ATTACHMENT)
+                })
+            }) {
+            None => None,
+            Some(attachment) => {
+                let content = attachment.get("content");
+                let field = |key: &str| {
+                    content
+                        .and_then(|c| c.get(key))
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                };
+                match (
+                    field("root_jti"),
+                    field("user_id"),
+                    field("actor_client_id"),
+                    field("actor_spiffe_id"),
+                ) {
+                    (
+                        Some(root_jti),
+                        Some(user_id),
+                        Some(actor_client_id),
+                        Some(actor_spiffe_id),
+                    ) => Some(OnBehalfOfAudit {
+                        root_jti,
+                        user_id,
+                        actor_client_id,
+                        actor_spiffe_id,
+                        delegated_project_id: field("delegated_project_id"),
+                    }),
+                    _ => return Err(wire_err("malformed `on_behalf_of` attachment")),
+                }
+            }
+        };
         let number = |key: &str| -> Result<u64, WireError> {
             integrity
                 .get(key)
@@ -311,6 +392,7 @@ impl CadfEventPayload {
                 .map(str::to_string),
             oauth2,
             service_grant,
+            on_behalf_of,
             seq: number("seq")?,
             // In-crate struct literals on purpose: wire values are kept
             // verbatim so a record round-trips byte-exact — its signature
@@ -380,6 +462,27 @@ impl CadfEventPayload {
                     "actor_spiffe_id": sg.actor_spiffe_id,
                     "delegated_project_id": sg.delegated_project_id,
                 },
+            }));
+        }
+        if let (Some(chain), Some(attachments)) = (
+            &self.on_behalf_of,
+            event.get_mut("attachments").and_then(Value::as_array_mut),
+        ) {
+            let mut content = json!({
+                "root_jti": chain.root_jti,
+                "user_id": chain.user_id,
+                "actor_client_id": chain.actor_client_id,
+                "actor_spiffe_id": chain.actor_spiffe_id,
+            });
+            if let (Some(project_id), Value::Object(map)) =
+                (&chain.delegated_project_id, &mut content)
+            {
+                map.insert("delegated_project_id".into(), json!(project_id));
+            }
+            attachments.push(json!({
+                "name": ON_BEHALF_OF_ATTACHMENT,
+                "contentType": "application/json",
+                "content": content,
             }));
         }
         if let (Some(reason), Value::Object(map)) = (&self.outcome_reason, &mut event) {
@@ -472,6 +575,7 @@ impl CadfEventPayload {
             outcome_reason: outcome_reason.map(OutcomeReason::into_string),
             oauth2: None,
             service_grant: None,
+            on_behalf_of: None,
             seq: 0,
             target,
             version: sanitize_audit_value(&version),
@@ -496,6 +600,19 @@ impl CadfEventPayload {
     pub fn with_service_grant(mut self, audit: ServiceGrantAudit) -> Self {
         self.service_grant = Some(audit);
         self
+    }
+
+    /// Attach the on-behalf-of chain the event was made under (ADR 0036
+    /// §8).
+    #[must_use]
+    pub fn with_on_behalf_of(mut self, audit: OnBehalfOfAudit) -> Self {
+        self.on_behalf_of = Some(audit);
+        self
+    }
+
+    /// The on-behalf-of chain attached to the event, if any.
+    pub fn on_behalf_of(&self) -> Option<&OnBehalfOfAudit> {
+        self.on_behalf_of.as_ref()
     }
 
     /// The service grant attached to the event, if any.
@@ -1020,6 +1137,37 @@ mod tests {
         );
         assert!(dispatcher.verify_hmac(&parsed, &key));
         assert_eq!(serde_json::to_value(&parsed).unwrap(), json);
+    }
+
+    #[test]
+    fn on_behalf_of_context_is_signed_and_round_trips() {
+        let key: Arc<[u8]> = Arc::from(b"test-key-32-bytes-0123456789abcd".as_slice());
+        let (dispatcher, _rx) = make_dispatcher("node-a", key.clone());
+        for project in [None, Some("p1")] {
+            let audit = OnBehalfOfAudit::new("root1", "u1", "c1", "spiffe://td/svc/a", project);
+            let event = make_payload(&dispatcher)
+                .with_oauth2_context("c1", "on_behalf_of")
+                .with_on_behalf_of(audit.clone())
+                .sign(&dispatcher);
+            let json = serde_json::to_value(&event).unwrap();
+            assert_eq!(json["attachments"][2]["name"], "on_behalf_of");
+            assert_eq!(json["attachments"][2]["content"]["root_jti"], "root1");
+            assert_eq!(
+                json["attachments"][2]["content"]
+                    .get("delegated_project_id")
+                    .is_some(),
+                project.is_some()
+            );
+            let parsed: CadfEvent = serde_json::from_value(json.clone()).unwrap();
+            assert_eq!(parsed.payload().on_behalf_of(), Some(&audit));
+            assert!(dispatcher.verify_hmac(&parsed, &key));
+            assert_eq!(serde_json::to_value(&parsed).unwrap(), json);
+
+            let mut tampered = json.clone();
+            tampered["attachments"][2]["content"]["user_id"] = serde_json::json!("u2");
+            let tampered: CadfEvent = serde_json::from_value(tampered).unwrap();
+            assert!(!dispatcher.verify_hmac(&tampered, &key));
+        }
     }
 
     #[test]

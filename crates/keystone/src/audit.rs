@@ -461,6 +461,34 @@ pub fn emit_service_grant_event(
     dispatcher.dispatch(payload.sign(dispatcher));
 }
 
+/// Like [`emit_oauth2_grant_event`], additionally recording the on-behalf-of
+/// chain the request is made under in an `on_behalf_of` attachment (ADR 0036
+/// §8).
+#[allow(clippy::too_many_arguments)]
+pub fn emit_on_behalf_of_event(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    action: &str,
+    initiator: Initiator,
+    grant: Oauth2Grant<'_>,
+    chain: cadf::OnBehalfOfAudit,
+    outcome: Outcome,
+    outcome_reason: Option<OutcomeReason>,
+) {
+    let payload = oauth2_payload(
+        dispatcher,
+        correlation_id,
+        action,
+        initiator,
+        grant.client_id,
+        outcome,
+        outcome_reason,
+    )
+    .with_oauth2_context(grant.client_id, grant.grant_type)
+    .with_on_behalf_of(chain);
+    dispatcher.dispatch(payload.sign(dispatcher));
+}
+
 fn oauth2_payload(
     dispatcher: &Arc<AuditDispatcher>,
     correlation_id: &str,

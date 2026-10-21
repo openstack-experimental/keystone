@@ -28,6 +28,7 @@ mod common;
 pub(super) use common::sign_jwt_typed;
 mod device_code;
 mod error;
+mod on_behalf_of;
 mod refresh_token;
 mod service_grant;
 #[cfg(test)]
@@ -56,11 +57,13 @@ use super::well_known::ensure_trusted_issuer;
 
 use authorization_code::handle_authorization_code_grant;
 use client_credentials::handle_client_credentials_grant;
+use common::client_credentials_from_request;
 pub(super) use common::{
     authenticate_client, client_credentials_from_parts, validate_device_code_client,
 };
 use device_code::handle_device_code_grant;
 pub(super) use error::Oauth2TokenError;
+use on_behalf_of::handle_on_behalf_of_grant;
 use refresh_token::handle_refresh_token_grant;
 use service_grant::{SERVICE_GRANT_GRANT_TYPE, handle_service_grant_grant};
 use token_exchange::handle_token_exchange_grant;
@@ -265,6 +268,34 @@ pub(super) async fn token(
                 &correlation_id.0,
             )
             .await
+        }
+        // A service that authenticated with its SVID on the internal
+        // interface and presents no secret exchanges on behalf of a user
+        // (ADR 0036 §6); every other caller keeps the secret-authenticated
+        // exchange of a delegated credential.
+        "urn:ietf:params:oauth:grant-type:token-exchange"
+            if interface
+                .as_ref()
+                .is_some_and(|Extension(i)| *i == Interface::Internal)
+                && svid.is_some()
+                && client_credentials_from_request(&headers, &form)
+                    .is_none_or(|(_, secret)| secret.is_none()) =>
+        {
+            match svid.as_ref() {
+                Some(Extension(svid)) => {
+                    handle_on_behalf_of_grant(
+                        &state,
+                        &domain_id,
+                        &headers,
+                        &form,
+                        &oauth2_cfg,
+                        &correlation_id.0,
+                        svid,
+                    )
+                    .await
+                }
+                None => Err(Oauth2TokenError::invalid_client("no SVID presented")),
+            }
         }
         "urn:ietf:params:oauth:grant-type:token-exchange" => {
             handle_token_exchange_grant(
