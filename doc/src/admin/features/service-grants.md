@@ -221,9 +221,13 @@ token: the scope-drift tripwire (`project_id` equals `delegated_project_id`) is 
 `verify_openstack_access_token` and must be kept by policy. `act` identifies
 the acting service in audit records and is also returned by introspection.
 
-Keystone itself does not accept these tokens as its own bearer credential, so a
-service grant token cannot be used to create grants, application credentials,
-EC2 credentials or trusts at Keystone.
+Keystone accepts such a token on its own internal interface only together with
+the SVID of the acting service: send `Authorization: Bearer <token>` over the
+mutual TLS connection. The SVID must match the client named in `act`;
+otherwise, or without an SVID, the request is a `401`. The grant is checked
+again on every request, so a revoked grant stops working at once. The request
+is a delegated call: a service grant token cannot be used to create grants,
+application credentials, EC2 credentials or trusts at Keystone.
 
 ## On-behalf-of exchange
 
@@ -296,8 +300,9 @@ renewal.
 an application credential. A plain subject has no boundary of its own; its
 authority is whatever the user's live assignments say at that moment. The token
 has the scope of the subject (project, or domain for a plain subject) and no
-refresh token is issued. Like service grant tokens it is not accepted as a
-Keystone bearer credential.
+refresh token is issued. Like service grant tokens it is accepted at Keystone
+itself only together with the acting client's SVID, and counts as a delegated
+caller even for a plain subject.
 
 Errors are those of redemption: `invalid_client` (`401`) when the SVID does not
 authenticate the client or it lacks the capability, `invalid_grant` (`400`) for

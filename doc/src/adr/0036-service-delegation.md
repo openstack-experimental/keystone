@@ -890,6 +890,44 @@ target resource type (`service_grant` or `on_behalf_of`) tells them apart. Each
 event carries `grant_id`, `grantor_user_id`, `actor.client_id`,
 `actor.spiffe_id`, `delegated_project_id`.
 
+#### 8.1 Requests carrying both an SVID and a delegated token
+
+A delegatable service keeps its mutual TLS connection after it received a
+service grant or on-behalf-of token, so a request to Keystone's own internal
+interface can carry two proofs: the SVID (which service calls) and an
+`Authorization: Bearer` JWT (for whom). The `Auth` extractor handles the
+combination before the plain-SVID path:
+
+1. The `iss` claim is read unverified only to pick the domain, and only when it
+   equals `{public_endpoint}/v4/oauth2/{domain_id}`. Without a configured
+   `public_endpoint` the token is refused. The signature, `exp`, `aud`
+   (service type `identity`) and the revoked `jti` list are then checked
+   against that domain's own keys through `verify_openstack_access_token`.
+2. The token must name an actor, and `act.client_id` must equal the token's
+   client. The connection's SVID must authenticate exactly that client
+   (the client's `spiffe_ids` patterns, not equality with `act.sub`, because
+   SPIRE rotates certificates and hosts differ). A mismatch is a `401`; the
+   request never falls back to the SVID's own identity, so a stolen token is
+   useless without the actor's SVID.
+3. The delegation is re-evaluated against live state through the code of
+   redemption (service grant) or exchange (on-behalf-of, `Hop`), so a deleted
+   or disabled grant, a lost role or a revoked root token stops working on the
+   next request. For a service grant the token's roles narrow the grant's
+   roles, never widen them.
+4. The result is an ordinary `ServiceGrant` or `OnBehalfOf` context, with the
+   project scope and delegated roles of the token.
+
+Any other bearer (a plain, trust, application credential or EC2 token, or a
+token of another issuer) is not accepted this way and is a `401`. Without an
+SVID a JWT is never a Keystone credential.
+
+Both contexts count as delegated for policy (`is_delegated`), including an
+on-behalf-of chain over a plain subject. Identity management (credentials,
+application credentials, trusts, service grants, listing a user's projects)
+stays closed to them, so a service acting for a user cannot mint persistent
+authority as that user. Plain-subject chains have no `delegated_project_id`,
+so the project-bounded allow rules do not match them either.
+
 ### 9. Human-to-human delegation (later phase)
 
 The same grant record with `grantee: User { user_id }`. The grantee redeems on
