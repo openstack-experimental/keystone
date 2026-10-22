@@ -49,6 +49,7 @@ mod resource_dpop;
 mod revocations;
 mod revoke;
 mod rotate_signing_key;
+mod settings;
 mod sso;
 mod static_files;
 mod token;
@@ -103,6 +104,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         ))
         .routes(routes!(local_emergency_key::reconcile_local_emergency_key))
         .merge(clients::openapi_router())
+        .merge(settings::openapi_router())
         .layer(axum::middleware::from_fn(renderer::locale_middleware))
 }
 
