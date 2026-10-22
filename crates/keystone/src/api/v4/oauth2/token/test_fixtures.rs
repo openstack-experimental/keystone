@@ -278,7 +278,7 @@ const DPOP_TEST_KEY_X: &str = "sSGtaoLNOmo_SzW2RoJ-TH_qY6n_6rvZI8T1AbNeCyw";
 const DPOP_TEST_KEY_Y: &str = "mVZMHBDE8noYs75ShmzBMlZOZrBG4LYTIpaElpI_HAA";
 
 /// RFC 7638 thumbprint of the fixed DPoP test key.
-pub(super) fn dpop_test_jkt() -> String {
+pub(in crate::api::v4::oauth2) fn dpop_test_jkt() -> String {
     openstack_keystone_core::oauth2_client::dpop::jwk_thumbprint(
         serde_json::json!({
             "kty": "EC",
@@ -294,6 +294,18 @@ pub(super) fn dpop_test_jkt() -> String {
 
 /// A DPoP proof for `POST {htu}` signed with the fixed test key.
 pub(super) fn dpop_proof(htu: &str, jti: &str, nonce: Option<&str>) -> String {
+    dpop_proof_for("POST", htu, jti, nonce, None)
+}
+
+/// A DPoP proof for `{htm} {htu}` signed with the fixed test key; `ath` is
+/// the access token the proof is made for, on resource requests.
+pub(in crate::api::v4::oauth2) fn dpop_proof_for(
+    htm: &str,
+    htu: &str,
+    jti: &str,
+    nonce: Option<&str>,
+    access_token: Option<&str>,
+) -> String {
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     let header = serde_json::json!({
         "typ": "dpop+jwt",
@@ -302,10 +314,14 @@ pub(super) fn dpop_proof(htu: &str, jti: &str, nonce: Option<&str>) -> String {
     });
     let mut claims = serde_json::json!({
         "jti": jti,
-        "htm": "POST",
+        "htm": htm,
         "htu": htu,
         "iat": chrono::Utc::now().timestamp(),
     });
+    if let Some(access_token) = access_token {
+        claims["ath"] =
+            openstack_keystone_core::oauth2_client::dpop::access_token_hash(access_token).into();
+    }
     if let Some(nonce) = nonce {
         claims["nonce"] = nonce.into();
     }
