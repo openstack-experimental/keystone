@@ -633,6 +633,96 @@ ordinary emergency path's stage/confirm asymmetry); only reconciliation is.
   `deploy/prometheus/alert_rules.yaml` (group `keystone_oauth2`) are loaded,
   see [ADR 0031](../../adr/0031-prometheus-metrics.md).
 
+## Sender-constrained tokens (DPoP)
+
+With DPoP ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449), ADR 0043) an
+access token, and the refresh token family behind it, is bound to a key the
+client holds. A stolen token is useless without that key. Binding is opt-in
+per deployment, domain or client; with `disabled` (the default) nothing
+changes.
+
+### Modes and who sets them
+
+The effective mode of a request is the **strictest** of three levels
+(`disabled` < `optional` < `required`):
+
+| Level  | Where                                             | Notes                                                                     |
+| ------ | ------------------------------------------------- | ------------------------------------------------------------------------- |
+| Global | `[oauth2] dpop` in `keystone.conf`                | A floor: a domain or client can raise it, never weaken it.                |
+| Domain | `GET`/`PUT /v4/oauth2/{domain_id}/settings`       | Stored in the cluster; an unset value inherits the global one.            |
+| Client | `dpop_bound_access_tokens: true` on the client    | Means `required` for that client only.                                    |
+
+* `optional`: a token is bound whenever the client sends a proof; a client
+  without a proof keeps getting bearer tokens. Use it while clients are
+  being migrated.
+* `required`: `/token` rejects requests without a valid proof, and
+  `/userinfo` rejects unbound access tokens.
+
+Anything but `disabled` needs `[mapping] cluster_salt` (the nonces are derived
+from it) and `[DEFAULT] public_endpoint` (the proof is bound to the external
+URL of the endpoint, not to the internal listener address).
+
+```
+PUT /v4/oauth2/{domain_id}/settings
+{"settings": {"dpop": "required"}}
+```
+
+A domain `manager` can **raise** the mode of the own domain. Lowering it, or
+setting it below the global mode, needs `admin`, so a compromised domain
+manager cannot switch DPoP off. Every change emits an
+`oauth2/domain_settings_changed` audit event carrying the old and the new
+mode. The change applies to the next request.
+
+Switching a domain to `required` does not end existing sessions: a refresh
+token family that was issued unbound is refused at its next refresh without a
+proof, and the client signs in again with a key. A family that **is** bound
+needs a proof on every refresh whatever the mode is now.
+
+### What a client sends
+
+Every `/token` request carries a `DPoP` proof header. The server answers the
+first proof with `400 use_dpop_nonce` and a `DPoP-Nonce` header; the client
+retries once with that nonce in a new proof. A successful response with
+`token_type: DPoP` means the token is bound; `Bearer` means it is not. A
+proof is never reused, and a proof signed by a key other than the one a
+refresh token family is bound to **revokes the family** (suspected theft),
+while a missing, stale or replayed proof is only a rejected request.
+
+A bound token is used as `Authorization: DPoP <token>` with a new proof (that
+carries the hash of the token) in the `DPoP` header. Presenting it as
+`Bearer` is rejected, and so is a proof next to an unbound token.
+
+### Resource servers
+
+* Keystone's own `/userinfo` applies the rule above and answers failures with
+  `WWW-Authenticate: DPoP error="invalid_token"` or
+  `error="invalid_dpop_proof"`, listing the accepted algorithms in `algs`.
+* `/introspect` reports a bound token with `token_type: DPoP` and
+  `cnf: {"jkt": ...}`; the introspecting service decides whether it saw a
+  proof from that key.
+* The discovery document advertises `dpop_signing_alg_values_supported`
+  (`ES256`, `RS256`) while DPoP is enabled for the domain, and `dpop_required`
+  for the effective domain mode. A verifier must reject the **unbound** tokens
+  of an issuer with `dpop_required: true`, or a token issued before the switch
+  would still work as a bearer token until it expires. The reference verifier
+  (`openstack_keystone_core::oauth2_client::dpop_required::DpopRequiredCache`)
+  keeps the flag for 60 seconds and fails closed: when the value is older and
+  the document cannot be fetched, the request is rejected.
+* `/revoke` of a bound token needs no proof; the client is authenticated by
+  its credentials.
+
+### Limits
+
+* The proof replay cache is per node and in memory. A proof can be replayed
+  against another node inside its lifetime (`dpop_proof_lifetime_seconds`);
+  the method and URL binding and the short lifetime bound the damage, and the
+  nonce at `/token` closes it there.
+* Service grants and on-behalf-of tokens are authenticated by the SPIFFE ID of
+  the acting service and are not DPoP-bound. They are refused if they carry
+  a `cnf` claim, and so is a DPoP-bound `subject_token` at the token exchange
+  endpoint: a bound token cannot be traded for an unbound one.
+* Fernet tokens and Horizon cookie sessions are not covered.
+
 ## Downstream control-plane enforcement (Nova/Neutron/etc.)
 
 > **Design only.** The Python middleware described here is **not** part of this
@@ -829,3 +919,6 @@ migration runbook.
 | Downstream service rejects all OP tokens after Keystone/network blip          | Expected fail-closed behavior — check JWKS/revocation endpoint reachability from the service                                     |
 | `rotate-signing-key --local-quorum-bypass` refused                            | `[local_emergency] enabled = false` on that node, or leader has not been unknown long enough (`leaderless_grace_period_seconds`) |
 | `reconcile-local-emergency-key` fails with dual-control error                 | Confirming operator matches the one who staged the candidate — use a different operator                                          |
+| `400 use_dpop_nonce` on `/token`                                              | Expected on the first request; retry once with the `DPoP-Nonce` header value in a new proof                                      |
+| `401 invalid_dpop_proof` on `/token` or `/userinfo`                           | Proof has the wrong `htm`/`htu`, is stale or replayed, lacks `ath`, or `public_endpoint` differs from the URL the client signed |
+| Bound token rejected as `Bearer`                                              | Expected: send `Authorization: DPoP <token>` together with a proof                                                               |
