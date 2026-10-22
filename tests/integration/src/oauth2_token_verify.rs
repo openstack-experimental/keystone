@@ -34,14 +34,15 @@ use tracing_test::traced_test;
 use uuid::Uuid;
 
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core::oauth2_client::dpop_required::DpopRequiredCache;
 use openstack_keystone_core::oauth2_client::{
-    TokenVerificationError, build_access_token_claims, hydrate_client_credentials_context,
-    verify_openstack_access_token,
+    TokenPresentation, TokenVerificationError, build_access_token_claims, enforce_token_binding,
+    hydrate_client_credentials_context, verify_openstack_access_token,
 };
 use openstack_keystone_core_types::mapping::authorization::Authorization;
 use openstack_keystone_core_types::mapping::*;
 use openstack_keystone_core_types::oauth2_client::{
-    Audience, GrantType, OAuth2ClientResourceCreateBuilder,
+    Audience, Confirmation, GrantType, OAuth2ClientResourceCreateBuilder,
 };
 use openstack_keystone_core_types::role::RoleRefBuilder;
 use openstack_keystone_key_repository::asymmetric::{
@@ -160,6 +161,15 @@ async fn mint_access_token(
     state: &openstack_keystone::keystone::ServiceState,
     client: &openstack_keystone_core_types::oauth2_client::OAuth2ClientResource,
 ) -> Result<String> {
+    mint_access_token_bound(state, client, None).await
+}
+
+/// Like [`mint_access_token`], bound to the DPoP key `cnf` (ADR 0043 §3).
+async fn mint_access_token_bound(
+    state: &openstack_keystone::keystone::ServiceState,
+    client: &openstack_keystone_core_types::oauth2_client::OAuth2ClientResource,
+    cnf: Option<Confirmation>,
+) -> Result<String> {
     let (vsc, ruleset_version) = hydrate_client_credentials_context(state, client).await?;
 
     let issuer = format!("https://ks.example/v4/oauth2/{}", client.domain_id);
@@ -167,7 +177,9 @@ async fn mint_access_token(
     let exp = now + 900;
     let jti = Uuid::new_v4().to_string();
 
-    let claims = build_access_token_claims(client, &vsc, &issuer, jti, ruleset_version, now, exp)?;
+    let mut claims =
+        build_access_token_claims(client, &vsc, &issuer, jti, ruleset_version, now, exp)?;
+    claims.cnf = cnf;
 
     let signing_key = state
         .provider
@@ -215,6 +227,94 @@ async fn test_client_credentials_token_verifies_fully_offline() -> Result<()> {
     assert_eq!(claims.aud, Audience::control_plane());
     assert_eq!(claims.openstack_context.roles, vec!["member".to_string()]);
 
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_bound_token_verifies_offline_and_needs_its_key() -> Result<()> {
+    // ADR 0043 §4: after the signature, `aud`, `token_use` and revocation
+    // checks the verifier requires a proof from the key in `cnf`, and a
+    // bound token is never accepted as `Bearer`.
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let client = provision_client_credentials_client(&state, &domain.id, "provider-1").await?;
+    let bound = mint_access_token_bound(
+        &state,
+        &client,
+        Some(Confirmation {
+            jkt: "client-key-thumbprint".into(),
+        }),
+    )
+    .await?;
+    let unbound = mint_access_token(&state, &client).await?;
+
+    let jwks = state
+        .provider
+        .get_oauth2_key_provider()
+        .jwks(&state, &domain.id)
+        .await?;
+    let algorithm = to_key_signing_algorithm(
+        state
+            .config_manager
+            .config
+            .read()
+            .await
+            .oauth2
+            .signing_algorithm,
+    );
+    let issuer = format!("https://ks.example/v4/oauth2/{}", domain.id);
+    let verify = |token: &str| {
+        verify_openstack_access_token(
+            token,
+            &jwks,
+            algorithm,
+            std::slice::from_ref(&issuer),
+            None,
+            &HashSet::new(),
+        )
+    };
+
+    let claims = verify(&bound)?;
+    let cnf = claims.cnf.as_ref().expect("a bound token carries cnf");
+    assert_eq!(cnf.jkt, "client-key-thumbprint");
+    let dpop = |jkt| TokenPresentation::Dpop {
+        proof_jkt: Some(jkt),
+    };
+    enforce_token_binding(claims.cnf.as_ref(), dpop("client-key-thumbprint"), false)?;
+    assert!(matches!(
+        enforce_token_binding(claims.cnf.as_ref(), dpop("thief-key"), false),
+        Err(TokenVerificationError::ProofKeyMismatch)
+    ));
+    assert!(matches!(
+        enforce_token_binding(claims.cnf.as_ref(), TokenPresentation::Bearer, false),
+        Err(TokenVerificationError::BoundTokenWithoutProof)
+    ));
+
+    // An unbound token follows the issuer's `dpop_required`, fetched from
+    // its discovery document and cached.
+    let unbound_claims = verify(&unbound)?;
+    assert!(unbound_claims.cnf.is_none());
+    let cache = DpopRequiredCache::default();
+    let required = cache
+        .is_required(&issuer, || async {
+            Ok::<_, String>(serde_json::json!({"dpop_required": true}))
+        })
+        .await?;
+    assert!(required);
+    assert!(matches!(
+        enforce_token_binding(
+            unbound_claims.cnf.as_ref(),
+            TokenPresentation::Bearer,
+            required
+        ),
+        Err(TokenVerificationError::UnboundTokenRejected)
+    ));
+    enforce_token_binding(
+        unbound_claims.cnf.as_ref(),
+        TokenPresentation::Bearer,
+        false,
+    )?;
     Ok(())
 }
 
