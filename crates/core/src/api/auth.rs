@@ -118,6 +118,37 @@ where
             )
         };
 
+        // ADR 0036 §8.1: a delegatable service keeps its mTLS connection after
+        // it received a service grant or on-behalf-of token, so the request
+        // carries an SVID and a bearer JWT. The JWT is accepted only bound to
+        // the SVID; a failed binding is a 401, never a fallback to the plain
+        // SVID identity.
+        if interface == Interface::Internal
+            && let Some(svid) = parts.extensions.get::<SpiffeId>()
+            && let Some(token) = parts
+                .headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|h| h.to_str().ok())
+                .and_then(|h| h.strip_prefix("Bearer "))
+        {
+            tracing::debug!("authenticating the svid {} bound delegated bearer", svid);
+            let mut vsc =
+                crate::oauth2_client::bound_bearer::authenticate_bound_bearer(&state, svid, token)
+                    .await
+                    .map_err(|e| {
+                        tracing::debug!("delegated bearer rejected: {e}");
+                        KeystoneApiError::from(AuthenticationError::Unauthorized)
+                    })?;
+            if let Some(addr) = peer_addr {
+                vsc.set_peer_addr(addr.to_string());
+            }
+            enforce_access_rules(&vsc, parts)?;
+            crate::audit_context::record_initiator(crate::cadf_hook::build_initiator_from_vsc(
+                &vsc,
+            ));
+            return Ok(Auth(vsc));
+        }
+
         // Check the SPIFFE svid first as the primary identity source
         if let Some(svid) = parts.extensions.get::<SpiffeId>() {
             tracing::debug!("authenticating the spiffe svid {}", svid);

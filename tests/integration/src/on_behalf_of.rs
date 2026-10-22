@@ -44,6 +44,9 @@ use openstack_keystone_key_repository::asymmetric::{
 use crate::assignment::grant_role_to_user_on_project;
 use crate::service_grant::{TRUST_DOMAIN, get_grant_state, svid, user_context};
 use crate::{create_domain, create_project, create_role, create_user};
+use openstack_keystone_core::oauth2_client::bound_bearer::{
+    BoundBearerError, authenticate_bound_bearer,
+};
 
 const ISSUER: &str = "https://ks.example/v4/oauth2";
 
@@ -394,6 +397,47 @@ async fn test_operation_lifetime_ends_the_chain() -> Result<()> {
         )
         .await,
         Err(OnBehalfOfError::OperationExpired)
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_bound_bearer_hop_is_accepted_only_with_the_actors_svid() -> Result<()> {
+    let f = fixture(3600).await?;
+    let first = exchange(
+        &f.state,
+        &f.domain_id,
+        &f.client,
+        OnBehalfOfSubject::Keystone(&f.encoded),
+    )
+    .await?;
+    let hop = mint_hop(&f.state, &f.domain_id, &first).await?;
+
+    // Keystone's own API takes the hop token together with the actor's SVID,
+    // and a service holding the user's token is a delegated caller.
+    let vsc = authenticate_bound_bearer(&f.state, &svid(&f.client), &hop).await?;
+    assert!(vsc.authentication_context().is_delegated());
+    assert!(matches!(
+        vsc.authentication_context(),
+        openstack_keystone_core_types::auth::AuthenticationContext::OnBehalfOf { .. }
+    ));
+
+    let other = register_service(&f.state, &f.domain_id, 3600).await?;
+    assert!(matches!(
+        authenticate_bound_bearer(&f.state, &svid(&other), &hop).await,
+        Err(BoundBearerError::NotBound(_))
+    ));
+
+    // Revoking the root token ends the chain on this API too.
+    f.state
+        .provider
+        .get_revoke_provider()
+        .revoke_token(&ExecutionContext::internal(&f.state), &f.token)
+        .await?;
+    assert!(matches!(
+        authenticate_bound_bearer(&f.state, &svid(&f.client), &hop).await,
+        Err(BoundBearerError::NotBound(_))
     ));
     Ok(())
 }

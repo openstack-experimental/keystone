@@ -34,6 +34,9 @@ use openstack_keystone::keystone::{Service, ServiceState};
 use openstack_keystone_config::InternalInterface;
 use openstack_keystone_core::auth::{ExecutionContext, ValidatedSecurityContext};
 use openstack_keystone_core::common::SpiffeId;
+use openstack_keystone_core::oauth2_client::bound_bearer::{
+    BoundBearerError, authenticate_bound_bearer,
+};
 use openstack_keystone_core::service_grant::backend::ServiceGrantBackend;
 use openstack_keystone_core::service_grant::redeem::{
     ServiceGrantRedeemError, build_service_grant_claims, redeem_service_grant,
@@ -56,6 +59,7 @@ pub(crate) const TRUST_DOMAIN: &str = "example.org";
 
 pub(crate) async fn get_grant_state() -> Result<(Arc<Service>, tempfile::TempDir)> {
     get_state_with_config(|cfg| {
+        cfg.default.public_endpoint = "https://ks.example".parse().ok();
         cfg.interface_internal = serde_json::from_value::<InternalInterface>(json!({
             "type": "spiffe",
             "trust_domains": TRUST_DOMAIN,
@@ -587,5 +591,83 @@ async fn test_janitor_disables_expired_and_purges_after_retention() -> Result<()
     assert!(!expired_after.enabled);
     assert_eq!(expired_after.disabled_reason, Some(DisabledReason::Expired));
     assert!(stored(&f.state, &old).await?.is_none(), "past retention");
+    Ok(())
+}
+
+/// Sign `claims` with the domain's real active key.
+pub(crate) async fn sign_claims(
+    state: &ServiceState,
+    domain_id: &str,
+    claims: &openstack_keystone_core_types::oauth2_client::OpenStackAccessTokenClaims,
+) -> Result<String> {
+    use openstack_keystone_key_repository::asymmetric::{
+        derive_kid, jwt_algorithm, to_encoding_key,
+    };
+    let key = state
+        .provider
+        .get_oauth2_key_provider()
+        .active_signing_key(state, domain_id)
+        .await?;
+    let mut header = jsonwebtoken::Header::new(jwt_algorithm(key.algorithm));
+    header.kid = Some(derive_kid(&key.public_key_der));
+    Ok(jsonwebtoken::encode(
+        &header,
+        claims,
+        &to_encoding_key(&key)?,
+    )?)
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_bound_bearer_is_accepted_only_with_the_actors_svid() -> Result<()> {
+    let f = fixture().await?;
+    let domain = f.grant.domain_id.clone();
+    f.state
+        .provider
+        .get_oauth2_key_provider()
+        .ensure_domain_keys(&f.state, &domain)
+        .await?;
+    let redeemed = redeem_service_grant(
+        &f.state,
+        &domain,
+        &svid(&f.client),
+        Some(&f.client.client_id),
+        &f.grant.id,
+        None,
+    )
+    .await?;
+    let token = sign_claims(&f.state, &domain, &claims_of(&redeemed, &domain)?).await?;
+
+    // The actor's own SVID turns the token into the grant's context.
+    let vsc = authenticate_bound_bearer(&f.state, &svid(&f.client), &token).await?;
+    assert!(vsc.authentication_context().is_delegated());
+    assert!(matches!(
+        vsc.authentication_context(),
+        AuthenticationContext::ServiceGrant { .. }
+    ));
+
+    // Another service's SVID is no proof for this token.
+    let other = register_service(&f.state, &domain, false, vec![]).await?;
+    assert!(matches!(
+        authenticate_bound_bearer(&f.state, &svid(&other), &token).await,
+        Err(BoundBearerError::NotBound(_))
+    ));
+
+    // A foreign or unsigned token never reaches the grant.
+    assert!(matches!(
+        authenticate_bound_bearer(&f.state, &svid(&f.client), "a.b.c").await,
+        Err(BoundBearerError::InvalidToken(_))
+    ));
+
+    // The live grant is re-checked on every request.
+    f.state
+        .provider
+        .get_service_grant_provider()
+        .delete_service_grant(&ExecutionContext::internal(&f.state), &domain, &f.grant.id)
+        .await?;
+    assert!(matches!(
+        authenticate_bound_bearer(&f.state, &svid(&f.client), &token).await,
+        Err(BoundBearerError::NotBound(_))
+    ));
     Ok(())
 }

@@ -18,6 +18,7 @@
 //! `IdentitySource` for actual `/token` issuance is Phase 3/4.
 
 pub mod backend;
+pub mod bound_bearer;
 pub mod crypto;
 pub mod dpop;
 pub mod dpop_mode;
