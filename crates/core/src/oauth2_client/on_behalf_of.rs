@@ -37,7 +37,9 @@ use crate::auth::{ExecutionContext, ValidatedSecurityContext};
 use crate::common::SpiffeId;
 use crate::keystone::ServiceState;
 use crate::oauth2_client::service::TLS_CLIENT_AUTH;
-use crate::oauth2_client::verify::verify_openstack_subject_token;
+use crate::oauth2_client::verify::{
+    TokenPresentation, enforce_token_binding, verify_openstack_subject_token,
+};
 
 /// The `amr` entry every on-behalf-of token carries.
 const ON_BEHALF_OF: &str = "on_behalf_of";
@@ -403,6 +405,13 @@ async fn hop_subject(
     )
     .map_err(|e| {
         warn!(error = %e, "on-behalf-of hop token rejected");
+        OnBehalfOfError::InvalidSubject
+    })?;
+
+    // A hop token is presented without a DPoP proof; a bound one is refused
+    // rather than used as a bearer credential (ADR 0043 §4).
+    enforce_token_binding(claims.cnf.as_ref(), TokenPresentation::Bearer, false).map_err(|e| {
+        warn!(error = %e, "on-behalf-of hop token is bound to a DPoP key");
         OnBehalfOfError::InvalidSubject
     })?;
 
