@@ -584,6 +584,7 @@ pub fn build_on_behalf_of_claims(
             delegated_role_ids: delegated_role_ids.clone(),
             application_credential_id: application_credential_id.clone(),
         },
+        cnf: None,
         act: Some(ActClaim {
             client_id: actor.client_id.clone(),
             sub_type: ActSubType::Spiffe,
@@ -642,6 +643,7 @@ mod tests {
             token_endpoint_auth_method: TLS_CLIENT_AUTH.into(),
             grant_types: vec![],
             require_pkce: false,
+            dpop_bound_access_tokens: false,
             allowed_scopes: vec![],
             pre_authorized: false,
             enabled: true,
