@@ -179,10 +179,9 @@ pub(super) async fn revoke(
         client_id: &client_id,
         correlation_id: &correlation_id.0,
         peer_addr,
-        signing_algorithm: match oauth2_cfg.signing_algorithm {
-            openstack_keystone_config::SigningAlgorithm::Es256 => SigningAlgorithm::Es256,
-            openstack_keystone_config::SigningAlgorithm::Rs256 => SigningAlgorithm::Rs256,
-        },
+        signing_algorithm: openstack_keystone_core::oauth2_key::signing_algorithm(
+            oauth2_cfg.signing_algorithm,
+        ),
     };
 
     // The hint only picks which lookup runs first; a wrong hint must still

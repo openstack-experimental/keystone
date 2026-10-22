@@ -226,8 +226,12 @@ the SVID of the acting service: send `Authorization: Bearer <token>` over the
 mutual TLS connection. The SVID must match the client named in `act`;
 otherwise, or without an SVID, the request is a `401`. The grant is checked
 again on every request, so a revoked grant stops working at once. The request
-is a delegated call: a service grant token cannot be used to create grants,
-application credentials, EC2 credentials or trusts at Keystone.
+is a delegated call limited to read operations: a service grant or
+on-behalf-of token cannot be used to create, update or delete anything at
+Keystone (grants, application credentials, EC2 credentials, trusts, users,
+projects, role assignments). Any `Authorization` header sent with an SVID that
+is not a valid bound bearer is a `401`. Only tokens issued under
+`[DEFAULT] public_endpoint` are accepted.
 
 ## On-behalf-of exchange
 

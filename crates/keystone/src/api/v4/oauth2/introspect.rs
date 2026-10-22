@@ -181,10 +181,9 @@ pub(super) async fn introspect(
         state: &state,
         headers: &headers,
         domain_id: &domain_id,
-        signing_algorithm: match oauth2_cfg.signing_algorithm {
-            openstack_keystone_config::SigningAlgorithm::Es256 => SigningAlgorithm::Es256,
-            openstack_keystone_config::SigningAlgorithm::Rs256 => SigningAlgorithm::Rs256,
-        },
+        signing_algorithm: openstack_keystone_core::oauth2_key::signing_algorithm(
+            oauth2_cfg.signing_algorithm,
+        ),
     };
 
     // The hint only picks which lookup runs first; a wrong hint must still

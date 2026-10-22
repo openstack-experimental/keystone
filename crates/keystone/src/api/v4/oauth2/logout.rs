@@ -39,7 +39,6 @@ use openstack_keystone_core::oauth2_client::verify_id_token_hint;
 use openstack_keystone_core_types::oauth2_client::{IdTokenClaims, OAuth2ClientResource};
 use openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError;
 use openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason;
-use openstack_keystone_key_repository::asymmetric::SigningAlgorithm;
 
 use super::authorize::{cookie_secure, redirect_with_params};
 use super::backchannel::{
@@ -192,17 +191,15 @@ async fn verify_hint(
             ));
         }
     };
-    let algorithm = match state
-        .config_manager
-        .config
-        .read()
-        .await
-        .oauth2
-        .signing_algorithm
-    {
-        openstack_keystone_config::SigningAlgorithm::Es256 => SigningAlgorithm::Es256,
-        openstack_keystone_config::SigningAlgorithm::Rs256 => SigningAlgorithm::Rs256,
-    };
+    let algorithm = openstack_keystone_core::oauth2_key::signing_algorithm(
+        state
+            .config_manager
+            .config
+            .read()
+            .await
+            .oauth2
+            .signing_algorithm,
+    );
     let issuer = format!("{}/v4/oauth2/{domain_id}", base_url(state, headers).await);
     verify_id_token_hint(token, &jwks, algorithm, &[issuer]).map_err(|e| {
         tracing::debug!(error = %e, "oauth2 logout: id_token_hint rejected");

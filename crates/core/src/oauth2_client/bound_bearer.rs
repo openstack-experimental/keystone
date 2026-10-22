@@ -32,7 +32,6 @@ use tracing::debug;
 use openstack_keystone_core_types::oauth2_client::{
     DelegationContext, OpenStackAccessTokenClaims, OpenStackScope,
 };
-use openstack_keystone_key_repository::asymmetric::SigningAlgorithm;
 
 use crate::auth::{ExecutionContext, ValidatedSecurityContext};
 use crate::common::SpiffeId;
@@ -41,7 +40,7 @@ use crate::oauth2_client::on_behalf_of::{
     OnBehalfOfRequest, OnBehalfOfSubject, exchange_on_behalf_of,
 };
 use crate::oauth2_client::verify::verify_openstack_access_token;
-use crate::service_grant::redeem::redeem_service_grant;
+use crate::service_grant::redeem::redeem_loaded_service_grant;
 
 /// The OpenStack service type of Keystone, accepted in a narrowed `aud`.
 const IDENTITY_SERVICE_TYPE: &str = "identity";
@@ -87,10 +86,7 @@ pub async fn authenticate_bound_bearer(
         let config = state.config_manager.config.read().await;
         (
             config.default.public_endpoint.clone(),
-            match config.oauth2.signing_algorithm {
-                openstack_keystone_config::SigningAlgorithm::Es256 => SigningAlgorithm::Es256,
-                openstack_keystone_config::SigningAlgorithm::Rs256 => SigningAlgorithm::Rs256,
-            },
+            crate::oauth2_key::signing_algorithm(config.oauth2.signing_algorithm),
         )
     };
     let public_endpoint = public_endpoint
@@ -198,7 +194,7 @@ async fn bound_grant(
         ));
     }
     let roles = (narrowed.len() != grant.role_ids.len()).then_some(narrowed);
-    let redeemed = redeem_service_grant(state, domain_id, svid, Some(client_id), grant_id, roles)
+    let redeemed = redeem_loaded_service_grant(state, svid, Some(client_id), grant, roles, false)
         .await
         .map_err(|e| BoundBearerError::NotBound(e.to_string()))?;
     Ok(redeemed.vsc)

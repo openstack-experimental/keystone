@@ -921,12 +921,30 @@ Any other bearer (a plain, trust, application credential or EC2 token, or a
 token of another issuer) is not accepted this way and is a `401`. Without an
 SVID a JWT is never a Keystone credential.
 
+An `Authorization` header next to an SVID on the internal interface is always
+a delegation attempt: a scheme other than `Bearer` (matched case-insensitively),
+a missing token or a non-UTF-8 value is a `401`, never a fallback to the plain
+SVID identity. The same holds for `GET` and `DELETE /v4/service_grants/{id}`:
+with an `Authorization` header they go through the bound-bearer path instead of
+the SVID-only service caller. A rejection is logged at `warn` with its reason.
+
 Both contexts count as delegated for policy (`is_delegated`), including an
-on-behalf-of chain over a plain subject. Identity management (credentials,
-application credentials, trusts, service grants, listing a user's projects)
-stays closed to them, so a service acting for a user cannot mint persistent
-authority as that user. Plain-subject chains have no `delegated_project_id`,
-so the project-bounded allow rules do not match them either.
+on-behalf-of chain over a plain subject. A role-only allow rule (for example
+`"admin" in roles`) does not look at delegation, so the policy enforcer closes
+every non-read action before OPA is asked: for these two contexts only policy
+actions named `show`, `list` or `check` are evaluated, all others are
+forbidden. Credentials, application credentials, trusts, service grants,
+user, project and role management therefore stay closed to a service acting
+for a user, which cannot mint persistent authority as that user. The read
+policies still apply their own delegation boundary; plain-subject chains have
+no `delegated_project_id`, so the project-bounded allow rules do not match
+them.
+
+The presented token is re-evaluated on every request without refreshing the
+grant's `last_redeemed_at`, which keeps meaning "last redemption at the token
+endpoint". Only issuers derived from `[DEFAULT] public_endpoint` are accepted:
+a token minted under the development-only `[oauth2] allow_host_header_issuer`
+override has a Host-derived `iss` and is refused here.
 
 ### 9. Human-to-human delegation (later phase)
 

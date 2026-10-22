@@ -92,8 +92,14 @@ impl FromRequestParts<ServiceState> for Caller {
         parts: &mut Parts,
         state: &ServiceState,
     ) -> Result<Self, Self::Rejection> {
+        // An SVID next to an `Authorization` header is a delegated bearer
+        // bound to it (ADR 0036 §8.1): it goes through `Auth`, which
+        // rejects a bearer the SVID does not match instead of ignoring it.
         if parts.extensions.get::<Interface>() == Some(&Interface::Internal)
             && let Some(svid) = parts.extensions.get::<SpiffeId>()
+            && !parts
+                .headers
+                .contains_key(axum::http::header::AUTHORIZATION)
         {
             return Ok(Self::Service(svid.clone()));
         }

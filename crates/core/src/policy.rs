@@ -461,6 +461,44 @@ impl TryFrom<&ValidatedSecurityContext> for Credentials {
     }
 }
 
+/// Policy actions a service acting under a service grant or on-behalf-of
+/// token (ADR 0036) may reach: reads only. Everything else is closed to it
+/// before the policy engine is asked, so a role-only allow rule (for example
+/// `"admin" in roles`) can never let a service mint persistent authority as
+/// the user, whatever roles the delegation carries.
+const SERVICE_DELEGATION_ACTIONS: [&str; 3] = ["show", "list", "check"];
+
+/// Pre-flight gate for service delegation (ADR 0036 §8.1).
+///
+/// Returns a denial when `credentials` come from a service grant or an
+/// on-behalf-of chain and `policy_name` is not a read action. Policies in
+/// the allowed set are still evaluated, so their delegation-boundary rules
+/// apply as for any delegated caller.
+#[must_use]
+pub fn service_delegation_denial(
+    policy_name: &str,
+    credentials: &Credentials,
+) -> Option<PolicyEvaluationResult> {
+    if !matches!(
+        credentials.auth_type.as_str(),
+        "service_grant" | "on_behalf_of"
+    ) {
+        return None;
+    }
+    let action = policy_name.rsplit('/').next().unwrap_or_default();
+    if SERVICE_DELEGATION_ACTIONS.contains(&action) {
+        return None;
+    }
+    Some(PolicyEvaluationResult {
+        allow: false,
+        can_see_other_domain_resources: None,
+        violations: Some(vec![Violation {
+            msg: "service delegation tokens are limited to read operations.".into(),
+            field: None,
+        }]),
+    })
+}
+
 /// A single violation of a policy.
 #[derive(Clone, Deserialize, Debug, Serialize)]
 pub struct Violation {
@@ -651,6 +689,34 @@ mod tests {
         // Catches the `!matches!(.., Unscoped)` guard being inverted,
         // which would skip role population for every scoped case.
         assert_eq!(creds.roles, vec!["admin".to_string()]);
+    }
+
+    /// A service acting under a delegation reaches reads only; other callers
+    /// are never gated here.
+    #[test]
+    fn service_delegation_denial_limits_writes() {
+        let creds = |auth_type: &str| {
+            CredentialsBuilder::default()
+                .is_admin(false)
+                .user_id("uid")
+                .auth_type(auth_type)
+                .is_delegated(true)
+                .build()
+                .unwrap()
+        };
+        for auth_type in ["service_grant", "on_behalf_of"] {
+            let c = creds(auth_type);
+            for name in [
+                "identity/user/create",
+                "identity/user/application_credential/create",
+            ] {
+                assert!(service_delegation_denial(name, &c).is_some(), "{name}");
+            }
+            for name in ["identity/user/show", "identity/auth/project/list"] {
+                assert!(service_delegation_denial(name, &c).is_none(), "{name}");
+            }
+        }
+        assert!(service_delegation_denial("identity/user/create", &creds("password")).is_none());
     }
 
     /// Gate I (security review V9, issue #987): a structural test that

@@ -42,7 +42,6 @@ use openstack_keystone_core::oauth2_client::{
     TemplateScope, TokenVerificationError, verify_oidc_access_token,
 };
 use openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError;
-use openstack_keystone_key_repository::asymmetric::SigningAlgorithm;
 
 use crate::api::common::PeerAddr;
 use crate::api::v4::oauth2::well_known::{base_url, ensure_trusted_issuer};
@@ -282,17 +281,15 @@ async fn userinfo_inner(
             UserinfoError::Internal
         })?;
 
-    let signing_algorithm = match state
-        .config_manager
-        .config
-        .read()
-        .await
-        .oauth2
-        .signing_algorithm
-    {
-        openstack_keystone_config::SigningAlgorithm::Es256 => SigningAlgorithm::Es256,
-        openstack_keystone_config::SigningAlgorithm::Rs256 => SigningAlgorithm::Rs256,
-    };
+    let signing_algorithm = openstack_keystone_core::oauth2_key::signing_algorithm(
+        state
+            .config_manager
+            .config
+            .read()
+            .await
+            .oauth2
+            .signing_algorithm,
+    );
     let issuer = format!("{}/v4/oauth2/{domain_id}", base_url(state, headers).await);
     let claims =
         verify_oidc_access_token(token, &jwks, signing_algorithm, &[issuer], &revoked_jtis)

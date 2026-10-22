@@ -38,3 +38,15 @@ pub use error::Oauth2KeyProviderError;
 pub use hook::Oauth2KeyHook;
 pub use provider_api::Oauth2KeyApi;
 pub use service::Oauth2KeyService;
+
+/// Map the configured `signing_algorithm` to the key repository's.
+#[must_use]
+pub fn signing_algorithm(
+    algorithm: openstack_keystone_config::SigningAlgorithm,
+) -> openstack_keystone_key_repository::asymmetric::SigningAlgorithm {
+    use openstack_keystone_key_repository::asymmetric::SigningAlgorithm;
+    match algorithm {
+        openstack_keystone_config::SigningAlgorithm::Es256 => SigningAlgorithm::Es256,
+        openstack_keystone_config::SigningAlgorithm::Rs256 => SigningAlgorithm::Rs256,
+    }
+}

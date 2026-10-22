@@ -57,10 +57,8 @@ pub struct SpiffeKeyService {
 impl SpiffeKeyService {
     /// Create a new `SpiffeKeyService` from `[vendordata]` configuration.
     pub fn new(config: &Config) -> Result<Self, SpiffeKeyProviderError> {
-        let signing_algorithm = match config.vendordata.signing_algorithm {
-            openstack_keystone_config::SigningAlgorithm::Es256 => KeySigningAlgorithm::Es256,
-            openstack_keystone_config::SigningAlgorithm::Rs256 => KeySigningAlgorithm::Rs256,
-        };
+        let signing_algorithm =
+            crate::oauth2_key::signing_algorithm(config.vendordata.signing_algorithm);
         Ok(Self {
             key_repository_base: config.vendordata.key_repository.clone(),
             signing_algorithm,

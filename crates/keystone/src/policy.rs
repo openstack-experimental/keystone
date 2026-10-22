@@ -126,6 +126,9 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
             // Convert SecurityContext into Credentials object that is passed to
             // OPA
             let creds: Credentials = credentials.try_into()?;
+            if let Some(denial) = service_delegation_denial(policy_name, &creds) {
+                return Err(PolicyError::Forbidden(denial));
+            }
             let input = json!({
                 "credentials": creds,
                 "target": target,

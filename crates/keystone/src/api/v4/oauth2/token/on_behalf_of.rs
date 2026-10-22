@@ -29,7 +29,6 @@ use openstack_keystone_core::oauth2_client::on_behalf_of::{
 };
 use openstack_keystone_core_types::auth::AuthenticationContext;
 use openstack_keystone_core_types::oauth2_client::Audience;
-use openstack_keystone_key_repository::asymmetric::SigningAlgorithm;
 
 use crate::audit::{
     Oauth2Grant, build_initiator_from_vsc, build_initiator_unknown, emit_oauth2_grant_event,
@@ -158,10 +157,9 @@ async fn exchange(
         &OnBehalfOfRequest {
             domain_id,
             issuer: &issuer,
-            signing_algorithm: match oauth2_cfg.signing_algorithm {
-                openstack_keystone_config::SigningAlgorithm::Es256 => SigningAlgorithm::Es256,
-                openstack_keystone_config::SigningAlgorithm::Rs256 => SigningAlgorithm::Rs256,
-            },
+            signing_algorithm: openstack_keystone_core::oauth2_key::signing_algorithm(
+                oauth2_cfg.signing_algorithm,
+            ),
             svid,
             client_id,
             subject,

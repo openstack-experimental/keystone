@@ -125,18 +125,21 @@ where
         // SVID identity.
         if interface == Interface::Internal
             && let Some(svid) = parts.extensions.get::<SpiffeId>()
-            && let Some(token) = parts
-                .headers
-                .get(axum::http::header::AUTHORIZATION)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|h| h.strip_prefix("Bearer "))
+            && let Some(header) = parts.headers.get(axum::http::header::AUTHORIZATION)
         {
+            // Any `Authorization` header next to an SVID is a delegation
+            // attempt: one that is not a well-formed bearer is a 401, never
+            // a silent fallback to the plain SVID identity.
+            let token = bearer_token(header).ok_or_else(|| {
+                tracing::warn!("delegated bearer rejected: malformed Authorization header");
+                KeystoneApiError::from(AuthenticationError::Unauthorized)
+            })?;
             tracing::debug!("authenticating the svid {} bound delegated bearer", svid);
             let mut vsc =
                 crate::oauth2_client::bound_bearer::authenticate_bound_bearer(&state, svid, token)
                     .await
                     .map_err(|e| {
-                        tracing::debug!("delegated bearer rejected: {e}");
+                        tracing::warn!("delegated bearer rejected: {e}");
                         KeystoneApiError::from(AuthenticationError::Unauthorized)
                     })?;
             if let Some(addr) = peer_addr {
@@ -409,6 +412,15 @@ fn enforce_access_rules(
     Ok(())
 }
 
+/// The token of an `Authorization: Bearer <token>` header; the scheme is
+/// case-insensitive (RFC 7235 §2.1). `None` for any other scheme, a missing
+/// token or a header that is not valid UTF-8.
+pub fn bearer_token(header: &axum::http::HeaderValue) -> Option<&str> {
+    let (scheme, token) = header.to_str().ok()?.split_once(' ')?;
+    let token = token.trim();
+    (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,6 +522,77 @@ mod tests {
 
         let result = Auth::from_request_parts(&mut parts, &state).await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_bearer_token() {
+        use axum::http::HeaderValue;
+        for (header, expected) in [
+            ("Bearer abc", Some("abc")),
+            ("bearer abc", Some("abc")),
+            ("BEARER  abc ", Some("abc")),
+            ("Bearer ", None),
+            ("Bearer", None),
+            ("Basic abc", None),
+            ("abc", None),
+        ] {
+            assert_eq!(
+                bearer_token(&HeaderValue::from_static(header)),
+                expected,
+                "{header}"
+            );
+        }
+        assert_eq!(
+            bearer_token(&HeaderValue::from_bytes(b"Bearer \xff").unwrap()),
+            None
+        );
+    }
+
+    /// An SVID next to a malformed or unbindable `Authorization` header on
+    /// the internal interface is a 401: no fallback to the mapping engine
+    /// (which is therefore never called) and no acceptance on the public
+    /// interface path.
+    #[tokio::test]
+    async fn test_svid_with_authorization_never_falls_back() {
+        for header in ["bearer", "Basic abc", "Bearer not-a-jwt"] {
+            let state = create_test_state(MockMappingProvider::new()).await;
+            let mut parts = make_parts();
+            parts.extensions.insert(Interface::Internal);
+            parts
+                .extensions
+                .insert(SpiffeId::new("spiffe://test.domain/test-workload").unwrap());
+            parts.headers.insert(
+                axum::http::header::AUTHORIZATION,
+                axum::http::HeaderValue::from_static(header),
+            );
+            let err = Auth::from_request_parts(&mut parts, &state)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, KeystoneApiError::Unauthorized { .. }),
+                "{header}: {err:?}"
+            );
+        }
+    }
+
+    /// Off the internal interface the header is not a delegation attempt.
+    #[tokio::test]
+    async fn test_svid_with_authorization_on_public_interface_uses_mapping() {
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_authenticate_by_mapping()
+            .once()
+            .returning(|_, _| Err(MappingProviderError::NoMatchingRule));
+        let state = create_test_state(mapping_mock).await;
+        let mut parts = make_parts();
+        parts
+            .extensions
+            .insert(SpiffeId::new("spiffe://test.domain/test-workload").unwrap());
+        parts.headers.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_static("Bearer x"),
+        );
+        assert!(Auth::from_request_parts(&mut parts, &state).await.is_err());
     }
 
     #[tokio::test]

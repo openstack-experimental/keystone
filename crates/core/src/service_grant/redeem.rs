@@ -103,18 +103,35 @@ pub async fn redeem_service_grant(
     grant_id: &str,
     roles: Option<Vec<String>>,
 ) -> Result<RedeemedServiceGrant, ServiceGrantRedeemError> {
-    let internal = ExecutionContext::internal(state);
-
     // Check 3: a grant is only redeemable at its own domain's endpoint,
     // which is the domain of its project (the grantor may belong to
     // another one).
     let grant = state
         .provider
         .get_service_grant_provider()
-        .get_service_grant(&internal, domain_id, grant_id)
+        .get_service_grant(&ExecutionContext::internal(state), domain_id, grant_id)
         .await
         .map_err(ServiceGrantRedeemError::provider)?
         .ok_or(ServiceGrantRedeemError::UnknownGrant)?;
+    redeem_loaded_service_grant(state, svid, client_id, grant, roles, true).await
+}
+
+/// Redeem `grant`, already loaded from the endpoint's domain, with checks
+/// 2 and 4-6 of [`redeem_service_grant`].
+///
+/// `touch` tells whether `last_redeemed_at` is refreshed: a redemption at
+/// the token endpoint does, the per-request re-evaluation of a presented
+/// token (ADR 0036 §8.1) does not, so the field keeps meaning "last
+/// redeemed".
+pub async fn redeem_loaded_service_grant(
+    state: &ServiceState,
+    svid: &SpiffeId,
+    client_id: Option<&str>,
+    grant: ServiceGrant,
+    roles: Option<Vec<String>>,
+    touch: bool,
+) -> Result<RedeemedServiceGrant, ServiceGrantRedeemError> {
+    let internal = ExecutionContext::internal(state);
 
     // Check 2: the client is resolved from the grant (ADR 0036 §3.2) and
     // authenticated by the SVID against its own `spiffe_ids`.
@@ -258,7 +275,9 @@ pub async fn redeem_service_grant(
         Err(e) => return Err(e.into()),
     };
 
-    touch_last_redeemed(state, &grant).await;
+    if touch {
+        touch_last_redeemed(state, &grant).await;
+    }
 
     Ok(RedeemedServiceGrant {
         vsc,

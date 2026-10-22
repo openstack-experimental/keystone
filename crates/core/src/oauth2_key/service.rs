@@ -65,10 +65,8 @@ impl Oauth2KeyService {
         plugin_manager: &P,
     ) -> Result<Self, Oauth2KeyProviderError> {
         let backend_driver = plugin_manager.get_oauth2_key_backend(BACKEND_NAME)?.clone();
-        let signing_algorithm = match config.oauth2.signing_algorithm {
-            openstack_keystone_config::SigningAlgorithm::Es256 => KeySigningAlgorithm::Es256,
-            openstack_keystone_config::SigningAlgorithm::Rs256 => KeySigningAlgorithm::Rs256,
-        };
+        let signing_algorithm =
+            crate::oauth2_key::signing_algorithm(config.oauth2.signing_algorithm);
         Ok(Self {
             backend_driver,
             signing_algorithm,
