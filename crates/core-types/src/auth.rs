@@ -896,7 +896,7 @@ impl SecurityContext {
                         Some(delegated) if *delegated != project.id => {
                             Err(AuthenticationError::ScopeNotAllowed)
                         }
-                        _ => Ok(()),
+                        Some(_) | None => Ok(()),
                     },
                 }
             }
