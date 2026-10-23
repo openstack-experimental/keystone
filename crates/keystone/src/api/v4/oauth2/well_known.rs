@@ -25,11 +25,15 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::HeaderMap,
+    http::{HeaderMap, header},
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
 use utoipa::ToSchema;
+
+use openstack_keystone_config::DpopMode;
+use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core::oauth2_client::dpop::SUPPORTED_ALGORITHMS;
 
 use crate::api::common::PeerAddr;
 use crate::api::error::KeystoneApiError;
@@ -92,6 +96,14 @@ pub struct OpenIdConfiguration {
     pub response_types_supported: Vec<String>,
     /// Token introspection endpoint URL (RFC 7662).
     pub introspection_endpoint: String,
+    /// JWS algorithms accepted for DPoP proofs (RFC 9449 §5.1). Absent while
+    /// DPoP is disabled for the domain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dpop_signing_alg_values_supported: Option<Vec<String>>,
+    /// Whether the effective DPoP mode of the domain is `required`, so a
+    /// resource server must reject access tokens of this issuer that are not
+    /// DPoP-bound (ADR 0043 §4).
+    pub dpop_required: bool,
     /// Client authentication methods accepted by the introspection endpoint
     /// (confidential clients only).
     pub introspection_endpoint_auth_methods_supported: Vec<String>,
@@ -160,6 +172,8 @@ impl Default for OpenIdConfiguration {
             response_modes_supported: strings(&["query"]),
             response_types_supported: strings(&["code"]),
             introspection_endpoint: String::new(),
+            dpop_signing_alg_values_supported: None,
+            dpop_required: false,
             introspection_endpoint_auth_methods_supported: strings(&[
                 "client_secret_basic",
                 "client_secret_post",
@@ -263,6 +277,15 @@ pub(super) async fn well_known(
         .jwks(&state, &domain_id)
         .await?;
 
+    // The strictest of the global and the domain mode (ADR 0043 §1). Not
+    // client specific: a client flagged `dpop_bound_access_tokens` is
+    // `required` for itself only.
+    let dpop_mode = state
+        .provider
+        .get_oauth2_client_provider()
+        .effective_dpop_mode(&ExecutionContext::internal(&state), &domain_id, false)
+        .await?;
+
     let base = base_url(&state, &headers).await;
     let issuer = format!("{base}/v4/oauth2/{domain_id}");
     let signing_algorithm = state
@@ -282,13 +305,18 @@ pub(super) async fn well_known(
         issuer: issuer.clone(),
         jwks_uri: format!("{issuer}/jwks"),
         introspection_endpoint: format!("{issuer}/introspect"),
+        dpop_signing_alg_values_supported: (dpop_mode != DpopMode::Disabled)
+            .then(|| strings(&SUPPORTED_ALGORITHMS)),
+        dpop_required: dpop_mode == DpopMode::Required,
         revocation_endpoint: format!("{issuer}/revoke"),
         token_endpoint: format!("{issuer}/token"),
         userinfo_endpoint: format!("{issuer}/userinfo"),
         ..OpenIdConfiguration::default()
     };
 
-    Ok(Json(doc).into_response())
+    // The verifier re-reads `dpop_required` at least every 60 seconds, which
+    // is shorter than this lifetime (ADR 0043 §4).
+    Ok(([(header::CACHE_CONTROL, "public, max-age=300")], Json(doc)).into_response())
 }
 
 #[cfg(test)]
@@ -332,9 +360,23 @@ mod tests {
         mock
     }
 
+    fn dpop_client_mock(
+        mode: openstack_keystone_config::DpopMode,
+    ) -> crate::oauth2_client::MockOauth2ClientProvider {
+        let mut mock = crate::oauth2_client::MockOauth2ClientProvider::default();
+        mock.expect_effective_dpop_mode()
+            .withf(|_, domain_id, client_bound| domain_id == "domain-1" && !client_bound)
+            .returning(move |_, _, _| Ok(mode));
+        mock
+    }
+
     #[tokio::test]
     async fn test_well_known_has_required_fields() {
-        let provider = Provider::mocked_builder().mock_oauth2_key(ok_mock());
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_key(ok_mock())
+            .mock_oauth2_client(dpop_client_mock(
+                openstack_keystone_config::DpopMode::Disabled,
+            ));
         let state = default_get_mocked_state(provider, true, None).await;
 
         let mut api = openapi_router()
@@ -453,7 +495,11 @@ mod tests {
     async fn test_well_known_unauthenticated_reachability() {
         // No `Auth` extractor and no `.extension(vsc)`: must stay reachable
         // without any authentication context.
-        let provider = Provider::mocked_builder().mock_oauth2_key(ok_mock());
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_key(ok_mock())
+            .mock_oauth2_client(dpop_client_mock(
+                openstack_keystone_config::DpopMode::Disabled,
+            ));
         let state = default_get_mocked_state(provider, true, None).await;
 
         let mut api = openapi_router()
@@ -491,6 +537,9 @@ mod tests {
 
         let provider = Provider::mocked_builder()
             .mock_oauth2_key(ok_mock())
+            .mock_oauth2_client(dpop_client_mock(
+                openstack_keystone_config::DpopMode::Disabled,
+            ))
             .build()
             .unwrap();
 
@@ -532,5 +581,59 @@ mod tests {
             api.as_service().oneshot(req2).await.unwrap().status(),
             StatusCode::TOO_MANY_REQUESTS
         );
+    }
+
+    async fn discovery_with(mode: openstack_keystone_config::DpopMode) -> axum::response::Response {
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_key(ok_mock())
+            .mock_oauth2_client(dpop_client_mock(mode));
+        let state = default_get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        api.as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/domain-1/.well-known/openid-configuration")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_discovery_advertises_dpop_by_the_effective_mode() {
+        use openstack_keystone_config::DpopMode;
+        for (mode, algs, required) in [
+            (DpopMode::Disabled, None, false),
+            (
+                DpopMode::Optional,
+                Some(serde_json::json!(["ES256", "RS256"])),
+                false,
+            ),
+            (
+                DpopMode::Required,
+                Some(serde_json::json!(["ES256", "RS256"])),
+                true,
+            ),
+        ] {
+            let response = discovery_with(mode).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let doc: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(
+                doc.get("dpop_signing_alg_values_supported"),
+                algs.as_ref(),
+                "{mode:?}"
+            );
+            assert_eq!(doc["dpop_required"], required, "{mode:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_discovery_is_cacheable_for_less_than_the_stale_limit() {
+        let response = discovery_with(openstack_keystone_config::DpopMode::Required).await;
+        assert_eq!(response.headers()["cache-control"], "public, max-age=300");
     }
 }
