@@ -325,7 +325,19 @@ impl IntrospectContext<'_> {
 
         let mut out = Map::new();
         out.insert("active".into(), json!(true));
-        out.insert("token_type".into(), json!("Bearer"));
+        // A bound token is reported with its key (RFC 9449 §6.2), so the
+        // resource server knows to require a proof (ADR 0043 §4).
+        let cnf = match &verified {
+            IntrospectedAccessToken::Oidc(c) => c.cnf.as_ref(),
+            IntrospectedAccessToken::OpenStack(c) => c.cnf.as_ref(),
+        };
+        out.insert(
+            "token_type".into(),
+            json!(if cnf.is_some() { "DPoP" } else { "Bearer" }),
+        );
+        if let Some(cnf) = cnf {
+            out.insert("cnf".into(), json!({ "jkt": cnf.jkt }));
+        }
         match verified {
             IntrospectedAccessToken::Oidc(c) => {
                 out.insert("scope".into(), json!(c.scope));
@@ -664,6 +676,35 @@ mod tests {
         assert_eq!(body["openstack_context"]["roles"], json!(["member"]));
         assert_eq!(body["openstack_context"]["user_id"], "shadow");
         assert_eq!(body["delegation_context"]["auth_method"], "plain");
+    }
+
+    #[tokio::test]
+    async fn test_bound_access_tokens_report_dpop_and_their_key() {
+        for mut claims in [oidc_claims(900), openstack_claims()] {
+            claims["cnf"] = json!({"jkt": "thumbprint-1"});
+            let (token, key_mock) = signed(claims, &[]);
+            let provider = Provider::mocked_builder()
+                .mock_oauth2_client(client_mock().await)
+                .mock_oauth2_session(session_with(None))
+                .mock_oauth2_key(key_mock);
+            let (status, body) = call(provider, &form(&token)).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["active"], true);
+            assert_eq!(body["token_type"], "DPoP");
+            assert_eq!(body["cnf"], json!({"jkt": "thumbprint-1"}));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unbound_access_token_has_no_cnf() {
+        let (token, key_mock) = signed(openstack_claims(), &[]);
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock().await)
+            .mock_oauth2_session(session_with(None))
+            .mock_oauth2_key(key_mock);
+        let (_, body) = call(provider, &form(&token)).await;
+        assert_eq!(body["token_type"], "Bearer");
+        assert!(body.get("cnf").is_none());
     }
 
     #[tokio::test]
