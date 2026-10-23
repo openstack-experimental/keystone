@@ -608,6 +608,41 @@ pub fn emit_oauth2_client_revoked_event(
     dispatcher.dispatch(event);
 }
 
+/// Emit the `oauth2/domain_settings_changed` CADF event when the DPoP mode of
+/// a domain changes (ADR 0043 §1). The old and the new mode are recorded in
+/// the outcome reason; both come from a closed vocabulary.
+pub fn emit_oauth2_domain_settings_event(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    initiator: Initiator,
+    domain_id: &str,
+    old_dpop: openstack_keystone_config::DpopMode,
+    new_dpop: openstack_keystone_config::DpopMode,
+) {
+    tracing::info!(domain_id, %old_dpop, %new_dpop, "oauth2 domain DPoP mode changed");
+    let node_id = dispatcher.node_id().to_string();
+    let event_id = format!("{}:{}", node_id, Uuid::new_v4());
+    let payload = CadfEventPayload::new(
+        event_id,
+        "1.1".to_string(),
+        correlation_id.to_string(),
+        chrono::Utc::now().to_rfc3339(),
+        "oauth2/domain_settings_changed".to_string(),
+        Outcome::Success,
+        Some(OutcomeReason::variant(&format!(
+            "DpopMode_{old_dpop}_to_{new_dpop}"
+        ))),
+        with_request_address(initiator),
+        Target::new(domain_id, "data/security/keystone/oauth2_domain_settings"),
+        Observer::new(
+            node_id.clone(),
+            format!("service/security/keystone/{node_id}"),
+        ),
+    );
+    let event = payload.sign(dispatcher);
+    dispatcher.dispatch(event);
+}
+
 /// Emit the critical `oauth2/emergency_key_rotation` CADF event (ADR 0026
 /// §3, "Emergency Rotation and Signing Key Compromise", step 4) once a
 /// pending emergency rotation is confirmed and the compromised key's JTIs
