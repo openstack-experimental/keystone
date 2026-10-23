@@ -441,3 +441,273 @@ async fn test_bound_bearer_hop_is_accepted_only_with_the_actors_svid() -> Result
     ));
     Ok(())
 }
+
+/// A project-scoped token authenticated by a fresh unrestricted application
+/// credential of the fixture user, and the credential.
+async fn app_cred_token(
+    f: &Fixture,
+) -> Result<(
+    String,
+    openstack_keystone_core_types::application_credential::ApplicationCredentialCreateResponse,
+)> {
+    use openstack_keystone::auth::*;
+    use openstack_keystone_core_types::application_credential::ApplicationCredentialCreate;
+    use openstack_keystone_core_types::resource::{DomainBuilder, ProjectBuilder};
+    use openstack_keystone_core_types::role::RoleRefBuilder;
+
+    let cred = f
+        .state
+        .provider
+        .get_application_credential_provider()
+        .create_application_credential(
+            &ExecutionContext::internal(&f.state),
+            ApplicationCredentialCreate {
+                name: Uuid::new_v4().to_string(),
+                project_id: f.project_id.clone(),
+                roles: vec![RoleRefBuilder::default().id(f.role_id.clone()).build()?],
+                unrestricted: Some(true),
+                user_id: f.user_id.clone(),
+                ..Default::default()
+            },
+        )
+        .await?;
+    let user = f
+        .state
+        .provider
+        .get_identity_provider()
+        .get_user(&ExecutionContext::internal(&f.state), &f.user_id)
+        .await?
+        .ok_or_else(|| eyre::eyre!("fixture user is gone"))?;
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::ApplicationCredential {
+            application_credential: cred.clone().into(),
+            token: None,
+        })
+        .principal(PrincipalInfo {
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(f.user_id.clone())
+                    .user(user)
+                    .build()?,
+            ),
+        })
+        .build()?;
+    let vsc = f
+        .state
+        .provider
+        .get_token_provider()
+        .issue_token_context(
+            &ExecutionContext::internal(&f.state),
+            &SecurityContext::try_from(auth)?,
+            &ScopeInfo::Project {
+                project: ProjectBuilder::default()
+                    .id(f.project_id.clone())
+                    .name(f.project_id.clone())
+                    .domain_id(f.domain_id.clone())
+                    .enabled(true)
+                    .build()?,
+                project_domain: DomainBuilder::default()
+                    .id(f.domain_id.clone())
+                    .name(f.domain_id.clone())
+                    .enabled(true)
+                    .build()?,
+            },
+        )
+        .await?;
+    let encoded = f
+        .state
+        .provider
+        .get_token_provider()
+        .encode_token(vsc.token()?)?;
+    Ok((encoded, cred))
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_deleting_the_application_credential_ends_the_chain() -> Result<()> {
+    let f = fixture(3600).await?;
+    let (encoded, cred) = app_cred_token(&f).await?;
+    let first = exchange(
+        &f.state,
+        &f.domain_id,
+        &f.client,
+        OnBehalfOfSubject::Keystone(&encoded),
+    )
+    .await?;
+    let hop = mint_hop(&f.state, &f.domain_id, &first).await?;
+    // The chain keeps working while the credential does.
+    exchange(
+        &f.state,
+        &f.domain_id,
+        &f.client,
+        OnBehalfOfSubject::Hop(&hop),
+    )
+    .await?;
+    authenticate_bound_bearer(&f.state, &svid(&f.client), &hop).await?;
+
+    // Removing the record ends the chain even though the tokens issued from
+    // it were not revoked.
+    f.state
+        .provider
+        .get_application_credential_provider()
+        .delete_application_credential(&ExecutionContext::internal(&f.state), cred.into())
+        .await?;
+    assert!(matches!(
+        exchange(
+            &f.state,
+            &f.domain_id,
+            &f.client,
+            OnBehalfOfSubject::Hop(&hop)
+        )
+        .await,
+        Err(OnBehalfOfError::InvalidSubject)
+    ));
+    assert!(matches!(
+        authenticate_bound_bearer(&f.state, &svid(&f.client), &hop).await,
+        Err(BoundBearerError::NotBound(_))
+    ));
+    Ok(())
+}
+
+/// Claims of a plain user JWT the OAuth2 provider issued, derived from the
+/// claims of a chain's first hop so every other field is valid.
+fn plain_user_claims(
+    first: &ExchangedOnBehalfOf,
+    domain_id: &str,
+    amr: Vec<String>,
+) -> Result<openstack_keystone_core_types::oauth2_client::OpenStackAccessTokenClaims> {
+    let now = Utc::now().timestamp();
+    let mut claims = build_on_behalf_of_claims(
+        first,
+        &format!("{ISSUER}/{domain_id}"),
+        Uuid::new_v4().to_string(),
+        now,
+        now + 300,
+        Audience::control_plane(),
+    )?;
+    claims.delegation_context = DelegationContext::Plain;
+    claims.act = None;
+    claims.amr = amr;
+    Ok(claims)
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_a_plain_user_jwt_starts_a_chain() -> Result<()> {
+    let f = fixture(3600).await?;
+    let seed = exchange(
+        &f.state,
+        &f.domain_id,
+        &f.client,
+        OnBehalfOfSubject::Keystone(&f.encoded),
+    )
+    .await?;
+    let claims = plain_user_claims(&seed, &f.domain_id, vec!["password".into()])?;
+    let jwt = crate::service_grant::sign_claims(&f.state, &f.domain_id, &claims).await?;
+
+    // The user's JWT is exchangeable like a Keystone token, and is the root.
+    let first = exchange(
+        &f.state,
+        &f.domain_id,
+        &f.client,
+        OnBehalfOfSubject::Hop(&jwt),
+    )
+    .await?;
+    let hop = mint_hop(&f.state, &f.domain_id, &first).await?;
+    exchange(
+        &f.state,
+        &f.domain_id,
+        &f.client,
+        OnBehalfOfSubject::Hop(&hop),
+    )
+    .await?;
+    // The same JWT is not a Keystone credential on its own.
+    assert!(matches!(
+        authenticate_bound_bearer(&f.state, &svid(&f.client), &jwt).await,
+        Err(BoundBearerError::NotDelegated)
+    ));
+
+    // Revoking the JWT ends the chain, including the hops already minted.
+    f.state
+        .provider
+        .get_oauth2_key_provider()
+        .revoke_jti(&f.state, &f.domain_id, &claims.jti, claims.exp)
+        .await?;
+    for subject in [&jwt, &hop] {
+        assert!(matches!(
+            exchange(
+                &f.state,
+                &f.domain_id,
+                &f.client,
+                OnBehalfOfSubject::Hop(subject)
+            )
+            .await,
+            Err(OnBehalfOfError::InvalidSubject)
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_a_service_credentials_jwt_is_not_exchangeable() -> Result<()> {
+    let f = fixture(3600).await?;
+    let seed = exchange(
+        &f.state,
+        &f.domain_id,
+        &f.client,
+        OnBehalfOfSubject::Keystone(&f.encoded),
+    )
+    .await?;
+    let claims = plain_user_claims(&seed, &f.domain_id, vec!["client_credentials".into()])?;
+    let jwt = crate::service_grant::sign_claims(&f.state, &f.domain_id, &claims).await?;
+    assert!(matches!(
+        exchange(
+            &f.state,
+            &f.domain_id,
+            &f.client,
+            OnBehalfOfSubject::Hop(&jwt)
+        )
+        .await,
+        Err(OnBehalfOfError::UnsupportedSubject(_))
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_introspection_sees_the_chain_end() -> Result<()> {
+    use openstack_keystone_core::oauth2_client::on_behalf_of::is_chain_live;
+
+    let f = fixture(3600).await?;
+    let first = exchange(
+        &f.state,
+        &f.domain_id,
+        &f.client,
+        OnBehalfOfSubject::Keystone(&f.encoded),
+    )
+    .await?;
+    let hop = mint_hop(&f.state, &f.domain_id, &first).await?;
+    let issuer = format!("{ISSUER}/{}", f.domain_id);
+    let live = || {
+        is_chain_live(
+            &f.state,
+            &f.domain_id,
+            &issuer,
+            SigningAlgorithm::Es256,
+            &f.client.client_id,
+            &hop,
+        )
+    };
+    assert!(live().await);
+
+    // Revoking the user's token ends the chain for a resource server that
+    // asks, although the hop token itself is neither expired nor revoked.
+    f.state
+        .provider
+        .get_revoke_provider()
+        .revoke_token(&ExecutionContext::internal(&f.state), &f.token)
+        .await?;
+    assert!(!live().await);
+    Ok(())
+}
