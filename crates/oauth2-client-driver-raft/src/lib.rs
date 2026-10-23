@@ -384,6 +384,11 @@ impl RaftOauth2ClientBackend {
                 "the OAuth2 settings of domain `{domain_id}` were changed concurrently"
             ),
         };
+        if let Some(expected) = data.expected_dpop
+            && expected != curr.as_ref().map(|c| c.data.dpop).unwrap_or_default()
+        {
+            return Err(conflict());
+        }
         let (new, mutation) = match curr {
             Some(curr) => {
                 let new = curr.data.clone().with_update(data, now);
@@ -987,7 +992,10 @@ mod tests {
                 .is_none()
         );
 
-        let update = |dpop| OAuth2DomainSettingsUpdate { dpop };
+        let update = |dpop| OAuth2DomainSettingsUpdate {
+            dpop,
+            ..Default::default()
+        };
         let created = backend
             .update_domain_settings_impl(&storage, "domain-1", update(Some(DpopMode::Optional)))
             .await
@@ -1066,7 +1074,10 @@ mod tests {
         let backend = RaftOauth2ClientBackend::default();
         let storage = MockStorage::default();
         let key = backend.get_domain_settings_key_name("domain-1");
-        let update = |dpop| OAuth2DomainSettingsUpdate { dpop: Some(dpop) };
+        let update = |dpop| OAuth2DomainSettingsUpdate {
+            dpop: Some(dpop),
+            ..Default::default()
+        };
 
         // The record appears between the read and the write of a create.
         let stale = OAuth2DomainSettings::default_for("domain-1")
@@ -1339,5 +1350,60 @@ mod tests {
             .unwrap();
         assert!(fetched.is_some());
         assert!(!fetched.unwrap().enabled);
+    }
+
+    /// An update decided on the basis of the mode that was read applies only
+    /// while that mode is still stored.
+    #[tokio::test]
+    async fn test_domain_settings_update_honours_the_expected_mode() {
+        let backend = RaftOauth2ClientBackend::default();
+        let storage = MockStorage::default();
+        let update = |dpop, expected_dpop| OAuth2DomainSettingsUpdate {
+            dpop: Some(dpop),
+            expected_dpop: Some(expected_dpop),
+        };
+        let is_conflict = |res: Result<OAuth2DomainSettings, StoreError>| {
+            matches!(res, Err(StoreError::Conflict { .. }))
+        };
+
+        // A domain without a record is `disabled`.
+        assert!(is_conflict(
+            backend
+                .update_domain_settings_impl(
+                    &storage,
+                    "domain-1",
+                    update(DpopMode::Optional, DpopMode::Required),
+                )
+                .await
+        ));
+        backend
+            .update_domain_settings_impl(
+                &storage,
+                "domain-1",
+                update(DpopMode::Optional, DpopMode::Disabled),
+            )
+            .await
+            .unwrap();
+        // Another writer got there first: the stale decision is refused,
+        // also when it would change nothing.
+        for (dpop, expected) in [
+            (DpopMode::Required, DpopMode::Disabled),
+            (DpopMode::Optional, DpopMode::Required),
+        ] {
+            assert!(is_conflict(
+                backend
+                    .update_domain_settings_impl(&storage, "domain-1", update(dpop, expected))
+                    .await
+            ));
+        }
+        let raised = backend
+            .update_domain_settings_impl(
+                &storage,
+                "domain-1",
+                update(DpopMode::Required, DpopMode::Optional),
+            )
+            .await
+            .unwrap();
+        assert_eq!(raised.dpop, DpopMode::Required);
     }
 }

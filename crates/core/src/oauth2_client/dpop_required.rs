@@ -39,7 +39,8 @@ use thiserror::Error;
 /// How long a fetched `dpop_required` is trusted.
 pub const DPOP_REQUIRED_TTL: Duration = Duration::from_secs(60);
 
-/// Most issuers kept; the cache is cleared when it is reached.
+/// Most issuers kept; when it is reached the expired values are dropped, and
+/// the cache is cleared if that does not make room.
 const MAX_ISSUERS: usize = 1024;
 
 /// The flag could not be determined.
@@ -116,7 +117,12 @@ impl DpopRequiredCache {
         let required = dpop_required_from_discovery(&document).map_err(unavailable)?;
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
         if entries.len() >= MAX_ISSUERS {
-            entries.clear();
+            // Expired values go first: they are never served anyway. Only a
+            // cache that is still full of live values is emptied.
+            entries.retain(|_, (_, fetched)| fetched.elapsed() < self.ttl);
+            if entries.len() >= MAX_ISSUERS {
+                entries.clear();
+            }
         }
         entries.insert(issuer.to_string(), (required, Instant::now()));
         Ok(required)
@@ -242,6 +248,29 @@ mod tests {
             lookup(&cache, &calls, Ok(json!({"dpop_required": "no"}))).await,
             Err(DpopRequiredError::Unavailable { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn test_a_full_cache_drops_expired_values_before_live_ones() {
+        let cache = DpopRequiredCache::new(Duration::from_secs(3600));
+        {
+            let mut entries = cache.entries.lock().unwrap();
+            let long_ago = Instant::now() - Duration::from_secs(7200);
+            for i in 0..MAX_ISSUERS {
+                let fetched = if i == 0 { Instant::now() } else { long_ago };
+                entries.insert(format!("https://issuer-{i}"), (true, fetched));
+            }
+        }
+        let fresh = cache
+            .is_required("https://new", || async {
+                Ok::<_, String>(json!({"dpop_required": false}))
+            })
+            .await;
+        assert_eq!(fresh, Ok(false));
+        let entries = cache.entries.lock().unwrap();
+        // The one live value survived next to the new one.
+        assert_eq!(entries.len(), 2);
+        assert!(entries.contains_key("https://issuer-0"));
     }
 
     #[tokio::test]

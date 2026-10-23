@@ -158,6 +158,31 @@ pub(super) async fn handle_refresh_token_grant(
     // proof gate in front would answer a thief without a proof with a plain
     // bad request and hide the reuse.
     let already_spent = peeked.as_ref().is_some_and(|r| r.spent_at.is_some());
+    // A family issued unbound cannot take a key now: where DPoP is required
+    // the unbound token is the very thing to cut off, and whoever holds it
+    // could otherwise bind it to a key of their own with any valid proof.
+    // The answer is that of an unknown token, so it reveals nothing about
+    // the family. The client signs in again.
+    if peeked.is_some() && family_jkt.is_none() && !already_spent {
+        let mode = state
+            .provider
+            .get_oauth2_client_provider()
+            .effective_dpop_mode(
+                &ExecutionContext::internal(state),
+                domain_id,
+                client.dpop_bound_access_tokens,
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "DPoP mode lookup failed");
+                Oauth2TokenError::internal("token issuance failed")
+            })?;
+        if mode == openstack_keystone_config::DpopMode::Required {
+            return Err(Oauth2TokenError::invalid_grant(
+                "refresh_token is invalid, expired, or already used",
+            ));
+        }
+    }
     let min_mode = if family_jkt.is_some() {
         openstack_keystone_config::DpopMode::Required
     } else {
@@ -1054,6 +1079,20 @@ mod tests {
         family_jkt: Option<String>,
         expect: Expect,
     ) -> crate::keystone::ServiceState {
+        dpop_state_in_mode(
+            family_jkt,
+            expect,
+            openstack_keystone_config::DpopMode::Optional,
+        )
+        .await
+    }
+
+    /// As [`dpop_state`] with the effective mode of the client set to `mode`.
+    async fn dpop_state_in_mode(
+        family_jkt: Option<String>,
+        expect: Expect,
+        mode: openstack_keystone_config::DpopMode,
+    ) -> crate::keystone::ServiceState {
         let mut client = public_authz_code_client().await;
         client.grant_types = vec![
             provider_types::GrantType::AuthorizationCode,
@@ -1062,7 +1101,7 @@ mod tests {
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
             .expect_effective_dpop_mode()
-            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Optional));
+            .returning(move |_, _, _| Ok(mode));
         client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
@@ -1365,5 +1404,31 @@ mod tests {
         let response = api.as_service().oneshot(with_proof(None)).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(json_body(response).await["token_type"], "Bearer");
+    }
+
+    /// Where DPoP is required an unbound family cannot be bound by a refresh
+    /// with a proof of any key: the holder of a stolen unbound token would
+    /// otherwise take it over. Nothing is redeemed and the answer is that of
+    /// an unknown token.
+    #[tokio::test]
+    async fn test_unbound_family_is_not_bound_where_dpop_is_required() {
+        let state = dpop_state_in_mode(
+            None,
+            Expect {
+                redeems: 0,
+                revocations: 0,
+            },
+            openstack_keystone_config::DpopMode::Required,
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        // Refused before any nonce is asked for.
+        for proof in [Some(dpop_proof(TOKEN_URL, "jti-required", None)), None] {
+            let response = api.as_service().oneshot(with_proof(proof)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(json_body(response).await["error"], "invalid_grant");
+        }
     }
 }

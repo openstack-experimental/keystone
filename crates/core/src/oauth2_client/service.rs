@@ -14,7 +14,6 @@
 //! # OAuth2 client (relying party registration) provider (ADR 0026 §5)
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -482,17 +481,29 @@ pub struct Oauth2ClientService {
     internal_trust_domains: Vec<String>,
     /// Domain DPoP mode by domain id, with the time it was read.
     domain_dpop_modes: DashMap<String, (openstack_keystone_config::DpopMode, Instant)>,
-    /// Bumped on every settings write. A reader that started its backend
-    /// lookup before a write must not cache what it read: the value may be
-    /// the one the write just replaced.
-    domain_dpop_epoch: AtomicU64,
+    /// Per domain, bumped on every settings write to it. A reader that
+    /// started its backend lookup before a write must not cache what it
+    /// read: the value may be the one the write just replaced. Per domain, so
+    /// writes to one do not discard what readers of the others just cached;
+    /// holds only domains that were written to.
+    domain_dpop_epochs: DashMap<String, u64>,
 }
 
 impl Oauth2ClientService {
     /// Forget the cached DPoP mode of a domain after a settings write.
     fn invalidate_domain_dpop_mode(&self, domain_id: &str) {
-        self.domain_dpop_epoch.fetch_add(1, Ordering::SeqCst);
+        *self
+            .domain_dpop_epochs
+            .entry(domain_id.to_string())
+            .or_insert(0) += 1;
         self.domain_dpop_modes.remove(domain_id);
+    }
+
+    /// The write generation of the settings of a domain.
+    fn domain_dpop_epoch(&self, domain_id: &str) -> u64 {
+        self.domain_dpop_epochs
+            .get(domain_id)
+            .map_or(0, |epoch| *epoch)
     }
 
     /// Create a new `Oauth2ClientService`.
@@ -508,7 +519,7 @@ impl Oauth2ClientService {
             oauth2_config: config.oauth2.clone(),
             internal_trust_domains: internal_trust_domains(config),
             domain_dpop_modes: DashMap::new(),
-            domain_dpop_epoch: AtomicU64::new(0),
+            domain_dpop_epochs: DashMap::new(),
         })
     }
 }
@@ -673,7 +684,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
         let domain = match cached {
             Some(mode) => mode,
             None => {
-                let epoch = self.domain_dpop_epoch.load(Ordering::SeqCst);
+                let epoch = self.domain_dpop_epoch(domain_id);
                 let mode = self
                     .backend_driver
                     .get_domain_settings(ctx.state(), domain_id)
@@ -688,7 +699,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
                 // A write raced with the lookup: what was just cached may be
                 // stale. Insert-then-check pairs with the write's bump-then-
                 // remove, so one of the two always drops the entry.
-                if self.domain_dpop_epoch.load(Ordering::SeqCst) != epoch {
+                if self.domain_dpop_epoch(domain_id) != epoch {
                     self.domain_dpop_modes.remove(domain_id);
                 }
                 mode
@@ -1032,7 +1043,7 @@ mod tests {
             },
             internal_trust_domains: vec!["cloud.example".into()],
             domain_dpop_modes: DashMap::new(),
-            domain_dpop_epoch: AtomicU64::new(0),
+            domain_dpop_epochs: DashMap::new(),
         }
     }
 
@@ -1448,6 +1459,7 @@ mod tests {
                 "domain-1",
                 OAuth2DomainSettingsUpdate {
                     dpop: Some(Required),
+                    ..Default::default()
                 },
             )
             .await
@@ -1486,6 +1498,32 @@ mod tests {
         assert!(service.domain_dpop_modes.is_empty());
     }
 
+    /// A write to another domain does not cost this one its cache entry.
+    #[tokio::test]
+    async fn test_effective_dpop_mode_cache_survives_a_write_to_another_domain() {
+        use std::sync::OnceLock;
+
+        let service_cell: Arc<OnceLock<Arc<Oauth2ClientService>>> = Arc::new(OnceLock::new());
+        let mut mock = MockOauth2ClientBackend::new();
+        let cell = service_cell.clone();
+        mock.expect_get_domain_settings().returning(move |_, id| {
+            if let Some(service) = cell.get() {
+                service.invalidate_domain_dpop_mode("domain-2");
+            }
+            Ok(Some(OAuth2DomainSettings::default_for(id)))
+        });
+        let service = Arc::new(service_with(mock));
+        assert!(service_cell.set(service.clone()).is_ok());
+        let state = state_with_domains(&["domain-1", "domain-2"]).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        service
+            .effective_dpop_mode(&ctx, "domain-1", false)
+            .await
+            .unwrap();
+        assert!(service.domain_dpop_modes.contains_key("domain-1"));
+    }
+
     #[tokio::test]
     async fn test_update_and_delete_domain_settings_delegate_to_backend() {
         let mut mock = MockOauth2ClientBackend::new();
@@ -1512,6 +1550,7 @@ mod tests {
                 "domain-1",
                 OAuth2DomainSettingsUpdate {
                     dpop: Some(openstack_keystone_config::DpopMode::Optional),
+                    ..Default::default()
                 },
             )
             .await

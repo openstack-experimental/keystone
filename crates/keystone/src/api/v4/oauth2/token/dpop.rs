@@ -16,7 +16,6 @@
 use std::net::SocketAddr;
 
 use axum::http::HeaderMap;
-use governor::clock::Clock as _;
 use url::Url;
 
 use openstack_keystone_config::DpopMode;
@@ -24,15 +23,12 @@ use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_client::dpop::{
     DpopProofContext, DpopProofError, verify_dpop_proof,
 };
-use openstack_keystone_core::oauth2_client::dpop_replay::DpopReplayError;
 use openstack_keystone_core_types::oauth2_client::{Confirmation, OAuth2ClientResource};
 
 use super::Oauth2TokenError;
+use crate::api::v4::oauth2::dpop_http::{charge_key, proof_header, replay_retry_after};
 use crate::api::v4::oauth2::well_known::base_url;
 use crate::keystone::ServiceState;
-
-/// Name of the proof header.
-const DPOP_HEADER: &str = "dpop";
 
 /// Whether the caller has charged the per-IP limiter for this request.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -88,8 +84,9 @@ pub(super) async fn bind_token_request(
         return Ok(None);
     }
 
-    let mut proofs = headers.get_all(DPOP_HEADER).iter();
-    let Some(proof) = proofs.next() else {
+    let proof =
+        proof_header(headers).map_err(|e| Oauth2TokenError::invalid_dpop_proof(e.description()))?;
+    let Some(proof) = proof else {
         return match mode {
             DpopMode::Required => Err(Oauth2TokenError::invalid_dpop_proof(
                 "a DPoP proof is required",
@@ -97,14 +94,6 @@ pub(super) async fn bind_token_request(
             _ => Ok(None),
         };
     };
-    if proofs.next().is_some() {
-        return Err(Oauth2TokenError::invalid_dpop_proof(
-            "exactly one DPoP header is allowed",
-        ));
-    }
-    let proof = proof
-        .to_str()
-        .map_err(|_| Oauth2TokenError::invalid_dpop_proof("the DPoP header is not valid text"))?;
 
     let Some(nonces) = state.dpop.nonces.as_ref() else {
         tracing::error!(
@@ -155,36 +144,19 @@ pub(super) async fn bind_token_request(
     })?;
     // Per-key throttle on the verified thumbprint, a pool of its own apart
     // from the `client_id` keys.
-    if let Err(not_until) = state.dpop.throttle.check_key(&verified.jkt) {
-        let retry_after = not_until
-            .wait_time_from(state.dpop.throttle.clock().now())
-            .as_secs()
-            .max(1);
-        return Err(Oauth2TokenError::too_many_requests(retry_after));
-    }
+    charge_key(&state.dpop.throttle, &verified.jkt).map_err(Oauth2TokenError::too_many_requests)?;
     state
         .dpop
         .replay
         .check_and_insert(&verified, now)
-        .map_err(|e| replay_error(e, state.dpop.proof_lifetime_secs))?;
+        .map_err(
+            |e| match replay_retry_after(&e, state.dpop.proof_lifetime_secs) {
+                Some(retry_after) => Oauth2TokenError::too_many_requests(retry_after),
+                None => Oauth2TokenError::invalid_dpop_proof(e.to_string()),
+            },
+        )?;
 
     Ok(Some(Confirmation { jkt: verified.jkt }))
-}
-
-/// Map a replay cache refusal to the error response.
-///
-/// A replay is the client's fault. A full cache or an exhausted per-key
-/// share is not: it clears once the entries age out, which takes at most one
-/// proof lifetime, so the caller is told to retry after that instead of
-/// being sent a final-looking `invalid_dpop_proof`.
-fn replay_error(error: DpopReplayError, proof_lifetime_secs: u64) -> Oauth2TokenError {
-    match error {
-        DpopReplayError::Replayed => Oauth2TokenError::invalid_dpop_proof(error.to_string()),
-        DpopReplayError::CacheFull | DpopReplayError::KeyQuotaExceeded => {
-            tracing::warn!(%error, "DPoP replay cache refused a proof");
-            Oauth2TokenError::too_many_requests(proof_lifetime_secs.max(1))
-        }
-    }
 }
 
 /// The `token_type` of a token response: `DPoP` for a token bound to a key,
@@ -221,25 +193,10 @@ pub(super) fn reconcile_code_binding(
 
 #[cfg(test)]
 mod tests {
-    use axum::http::StatusCode;
-
     use super::*;
 
     fn confirmation(jkt: &str) -> Option<Confirmation> {
         Some(Confirmation { jkt: jkt.into() })
-    }
-
-    #[test]
-    fn test_replay_is_a_bad_proof_but_exhaustion_is_a_retry() {
-        let replayed = replay_error(DpopReplayError::Replayed, 60);
-        assert_eq!(replayed.status(), StatusCode::BAD_REQUEST);
-        for exhausted in [
-            DpopReplayError::CacheFull,
-            DpopReplayError::KeyQuotaExceeded,
-        ] {
-            let error = replay_error(exhausted, 60);
-            assert_eq!(error.status(), StatusCode::TOO_MANY_REQUESTS);
-        }
     }
 
     #[test]

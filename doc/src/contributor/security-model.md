@@ -341,7 +341,10 @@ used by every `system/{users,groups}/.../roles` handler.
 `htm`, `htu` and the token hash `ath`). Every path that cannot check a proof
 (SVID-bound delegated bearers, on-behalf-of hops, token exchange) passes
 `TokenPresentation::Bearer` and refuses a bound token; a proof next to an
-unbound token is refused too. Thumbprints are compared in constant time.
+unbound token is refused too. Those SVID-authenticated paths are the one
+exemption from the `required` mode: the SPIFFE ID is the constraint of the
+tokens they accept (service grants, on-behalf-of hops), which are never bound.
+Thumbprints are compared in constant time.
 Where a mode or a cached `dpop_required` flag decides, the check fails closed:
 the effective mode is the strictest of global, domain and client, a domain
 manager cannot lower it, and an expired cache value is never served.

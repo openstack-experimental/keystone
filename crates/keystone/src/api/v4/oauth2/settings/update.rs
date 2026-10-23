@@ -81,13 +81,23 @@ pub(super) async fn update(
         )
         .await?;
 
-    if resulting != DpopMode::Disabled {
+    // Only a change that switches DPoP on needs the server to be able to
+    // issue nonces: re-sending the current state must not fail on a node
+    // that lacks the salt.
+    if resulting != DpopMode::Disabled && resulting != current.dpop {
         crate::api::v4::oauth2::ensure_dpop_configured(&state)?;
     }
 
+    // The policy decided on `current`: the write is conditional on it, so a
+    // change made in between cannot be overwritten under a decision taken
+    // against a mode that is no longer stored (a domain manager could
+    // otherwise lower a mode that was raised meanwhile).
+    let mut update: openstack_keystone_core_types::oauth2_client::OAuth2DomainSettingsUpdate =
+        req.settings.into();
+    update.expected_dpop = Some(current.dpop.into());
     let updated = Oauth2DomainSettings::from(
         provider
-            .update_domain_settings(&exec, &domain_id, req.settings.into())
+            .update_domain_settings(&exec, &domain_id, update)
             .await?,
     );
 
@@ -171,7 +181,10 @@ mod tests {
             .returning(move |_, _| Ok(settings(before, 1)));
         mock.expect_update_domain_settings()
             .times(updates)
-            .withf(|_, domain_id, _| domain_id == "domain-1")
+            // The write is conditional on the mode the policy decided on.
+            .withf(move |_, domain_id, data| {
+                domain_id == "domain-1" && data.expected_dpop == Some(before)
+            })
             .returning(move |_, _, _| Ok(settings(after, 2)));
         Provider::mocked_builder().mock_oauth2_client(mock)
     }
@@ -301,6 +314,59 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// Re-sending the state a domain is in changes nothing, so it needs no
+    /// salt either.
+    #[tokio::test]
+    async fn test_update_to_the_current_mode_needs_no_cluster_salt() {
+        let state = get_mocked_state(
+            provider(core::DpopMode::Required, core::DpopMode::Required, 1),
+            true,
+            None,
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api
+            .as_service()
+            .oneshot(request(r#"{"settings": {"dpop": "required"}}"#, true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// The mode changed between the read the policy decided on and the
+    /// write: the backend refuses and the caller learns it.
+    #[tokio::test]
+    async fn test_update_against_a_changed_mode_is_a_conflict() {
+        let mut mock = MockOauth2ClientProvider::default();
+        mock.expect_get_domain_settings()
+            .returning(|_, _| Ok(settings(core::DpopMode::Optional, 1)));
+        mock.expect_update_domain_settings().returning(|_, _, _| {
+            Err(
+                openstack_keystone_core_types::oauth2_client::Oauth2ClientProviderError::Conflict(
+                    "changed concurrently".into(),
+                ),
+            )
+        });
+        let state = get_mocked_state_with_config(
+            Provider::mocked_builder().mock_oauth2_client(mock),
+            true,
+            None,
+            salted_config(),
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api
+            .as_service()
+            .oneshot(request(r#"{"settings": {"dpop": "optional"}}"#, true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]

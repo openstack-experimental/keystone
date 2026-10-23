@@ -34,6 +34,7 @@ mod device;
 mod device_authorization;
 mod device_federated;
 mod device_mfa;
+mod dpop_http;
 mod ensure_signing_key;
 mod federated;
 mod html;

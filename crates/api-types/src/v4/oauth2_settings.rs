@@ -43,9 +43,11 @@ pub struct Oauth2DomainSettings {
 }
 
 /// Update of the OAuth2 settings of a domain. A missing field keeps its
-/// current value.
+/// current value, so a misspelled field must be an error rather than a
+/// silently ignored change.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(deny_unknown_fields)]
 pub struct Oauth2DomainSettingsUpdate {
     /// New DPoP enforcement mode of the domain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -55,6 +57,7 @@ pub struct Oauth2DomainSettingsUpdate {
 /// Request body of `PUT /v4/oauth2/{domain_id}/settings`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(deny_unknown_fields)]
 pub struct Oauth2DomainSettingsUpdateRequest {
     /// Settings to change.
     pub settings: Oauth2DomainSettingsUpdate,
@@ -100,5 +103,19 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn test_update_rejects_unknown_fields() {
+        for body in [
+            r#"{"settings": {"dpob": "required"}}"#,
+            r#"{"settings": {"DPoP": "required"}}"#,
+            r#"{"settings": {}, "extra": 1}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<Oauth2DomainSettingsUpdateRequest>(body).is_err(),
+                "{body}"
+            );
+        }
     }
 }

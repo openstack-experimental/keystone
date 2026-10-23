@@ -434,6 +434,34 @@ pub fn verify_oidc_access_token(
     expected_issuers: &[String],
     revoked_jtis: &HashSet<String>,
 ) -> Result<OidcAccessTokenClaims, TokenVerificationError> {
+    let claims = verify_oidc_access_token_unscoped(
+        token,
+        jwks,
+        expected_algorithm,
+        expected_issuers,
+        revoked_jtis,
+    )?;
+    ensure_openid_scope(&claims)?;
+    Ok(claims)
+}
+
+/// [`verify_oidc_access_token`] without the `openid` scope check.
+///
+/// For a caller that must establish who may use the token before it says
+/// anything about the token's scope: an answer of "valid, but lacks the
+/// scope" tells the holder of a stolen DPoP-bound token, who has no key,
+/// that the token is live. The caller must run [`ensure_openid_scope`]
+/// itself.
+///
+/// # Errors
+/// See [`TokenVerificationError`] for each rejection reason.
+pub fn verify_oidc_access_token_unscoped(
+    token: &str,
+    jwks: &JwkSet,
+    expected_algorithm: SigningAlgorithm,
+    expected_issuers: &[String],
+    revoked_jtis: &HashSet<String>,
+) -> Result<OidcAccessTokenClaims, TokenVerificationError> {
     let (expected_alg, decoding_key) = resolve_decoding_key(token, jwks, expected_algorithm)?;
 
     let mut validation = Validation::new(expected_alg);
@@ -450,13 +478,22 @@ pub fn verify_oidc_access_token(
     if revoked_jtis.contains(&claims.jti) {
         return Err(TokenVerificationError::Revoked(claims.jti));
     }
-    if !claims.scope.split_whitespace().any(|s| s == "openid") {
-        return Err(TokenVerificationError::InsufficientScope(
-            "openid".to_string(),
-        ));
-    }
 
     Ok(claims)
+}
+
+/// Require the `openid` scope of an OIDC access token.
+///
+/// # Errors
+/// [`TokenVerificationError::InsufficientScope`] when it is missing.
+pub fn ensure_openid_scope(claims: &OidcAccessTokenClaims) -> Result<(), TokenVerificationError> {
+    if claims.scope.split_whitespace().any(|s| s == "openid") {
+        Ok(())
+    } else {
+        Err(TokenVerificationError::InsufficientScope(
+            "openid".to_string(),
+        ))
+    }
 }
 
 /// Verify an `id_token` presented as `id_token_hint` (OIDC RP-Initiated

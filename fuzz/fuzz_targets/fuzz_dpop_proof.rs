@@ -16,7 +16,7 @@
 
 use libfuzzer_sys::fuzz_target;
 use openstack_keystone_core::oauth2_client::dpop::{
-    DpopProofContext, access_token_hash, jwk_thumbprint, peek_proof_jkt, verify_dpop_proof,
+    DpopProofContext, access_token_hash, jwk_thumbprint, verify_dpop_proof,
 };
 use url::Url;
 
@@ -24,8 +24,7 @@ use url::Url;
 // endpoint and the resource side parse before the client is authenticated:
 // a compact JWS whose header carries a `jwk` that is turned into a decoding
 // key and an RFC 7638 thumbprint, with claims read before the signature is
-// checked. `peek_proof_jkt` runs even earlier, to key the pre-verification
-// rate limit. Neither may panic on any input. The input is split at the
+// checked. None of it may panic on any input. The input is split at the
 // first NUL byte into the proof and an access token, so the `ath` path is
 // reached as well.
 fuzz_target!(|data: &[u8]| {
@@ -37,8 +36,6 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let token = token.and_then(|t| std::str::from_utf8(t).ok());
-
-    let _ = peek_proof_jkt(proof);
 
     let Ok(uri) = Url::parse("https://ks.example/v4/oauth2/d1/token") else {
         return;

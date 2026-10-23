@@ -45,6 +45,11 @@ pub struct DpopRuntime {
     /// pool, so the keys of the attacker-chosen `client_id` limiter can never
     /// collide with it.
     pub throttle: DefaultKeyedRateLimiter<String>,
+    /// The same throttle for proofs presented at the resource endpoints. A
+    /// pool of its own with the same quota: reads with an access token are
+    /// far more frequent than token requests, and sharing a bucket would let
+    /// them starve issuance and refresh of the same key.
+    pub resource_throttle: DefaultKeyedRateLimiter<String>,
     /// Nonce source. `None` when `[mapping] cluster_salt` is not set, in which
     /// case no request can be served in a DPoP mode other than `disabled`.
     pub nonces: Option<DpopNonceGenerator>,
@@ -77,6 +82,7 @@ impl DpopRuntime {
         Self {
             proof_lifetime_secs: u64::from(oauth2.dpop_proof_lifetime_seconds),
             throttle: RateLimiter::keyed(quota),
+            resource_throttle: RateLimiter::keyed(quota),
             replay: DpopReplayCache::new(
                 u64::from(oauth2.dpop_proof_lifetime_seconds),
                 oauth2.dpop_replay_cache_max_entries_per_key as usize,
@@ -100,6 +106,28 @@ mod tests {
     #[test]
     fn test_no_salt_means_no_nonces() {
         assert!(DpopRuntime::default().nonces.is_none());
+    }
+
+    /// Reads with a token must not use up the quota of token requests.
+    #[test]
+    fn test_resource_and_token_throttles_are_separate_pools() {
+        let runtime = DpopRuntime::default();
+        let burst = Config::default().oauth2.token_rate_limit_burst_size;
+        for _ in 0..burst {
+            assert!(
+                runtime
+                    .resource_throttle
+                    .check_key(&"k1".to_string())
+                    .is_ok()
+            );
+        }
+        assert!(
+            runtime
+                .resource_throttle
+                .check_key(&"k1".to_string())
+                .is_err()
+        );
+        assert!(runtime.throttle.check_key(&"k1".to_string()).is_ok());
     }
 
     #[test]

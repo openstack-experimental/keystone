@@ -671,12 +671,19 @@ A domain `manager` can **raise** the mode of the own domain. Lowering it, or
 setting it below the global mode, needs `admin`, so a compromised domain
 manager cannot switch DPoP off. Every change emits an
 `oauth2/domain_settings_changed` audit event carrying the old and the new
-mode. The change applies to the next request.
+mode. A change takes effect at once on the node that handled it. The other
+nodes cache the mode of a domain for up to 5 seconds, so raising it is
+enforced everywhere within that time and lowering it is as late. If the
+stored mode changed while the request was being decided, the answer is
+`409 Conflict` and nothing is written. Unknown fields in the body are
+rejected.
 
 Switching a domain to `required` does not end existing sessions: a refresh
-token family that was issued unbound is refused at its next refresh without a
-proof, and the client signs in again with a key. A family that **is** bound
-needs a proof on every refresh whatever the mode is now.
+token family that was issued unbound is refused at its next refresh with
+`invalid_grant`, with or without a proof, and the client signs in again with a
+key. (A proof cannot bind such a family: whoever holds the unbound token could
+otherwise bind it to a key of their own.) A family that **is** bound needs a
+proof on every refresh whatever the mode is now.
 
 ### What a client sends
 
@@ -696,7 +703,13 @@ carries the hash of the token) in the `DPoP` header. Presenting it as
 
 * Keystone's own `/userinfo` applies the rule above and answers failures with
   `WWW-Authenticate: DPoP error="invalid_token"` or
-  `error="invalid_dpop_proof"`, listing the accepted algorithms in `algs`.
+  `error="invalid_dpop_proof"`, listing the accepted algorithms in `algs`;
+  that includes a request made with the `DPoP` scheme and an unusable token.
+  A missing `openid` scope (`403`) is reported only to a presenter that has
+  passed the binding check, so a holder of a bound token without its key
+  learns nothing about the token. Proofs are throttled per key in a pool of
+  their own, apart from `/token`, with the same quota
+  (`token_rate_limit_*`).
 * `/introspect` reports a bound token with `token_type: DPoP` and
   `cnf: {"jkt": ...}`; the introspecting service decides whether it saw a
   proof from that key.
@@ -727,7 +740,8 @@ carries the hash of the token) in the `DPoP` header. Presenting it as
   and size the cache for the expected token request rate. At `/userinfo` only
   the key the token is bound to may use the cache.
 * Service grants and on-behalf-of tokens are authenticated by the SPIFFE ID of
-  the acting service and are not DPoP-bound. They are refused if they carry
+  the acting service and are not DPoP-bound; `required` does not apply to
+  them, the SPIFFE ID is their constraint. They are refused if they carry
   a `cnf` claim, and so is a DPoP-bound `subject_token` at the token exchange
   endpoint: a bound token cannot be traded for an unbound one.
 * Fernet tokens and Horizon cookie sessions are not covered.

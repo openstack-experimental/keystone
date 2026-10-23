@@ -50,6 +50,7 @@ impl From<api::Oauth2DomainSettingsUpdate> for core::OAuth2DomainSettingsUpdate 
     fn from(value: api::Oauth2DomainSettingsUpdate) -> Self {
         Self {
             dpop: value.dpop.map(Into::into),
+            expected_dpop: None,
         }
     }
 }

@@ -43,7 +43,7 @@ use openstack_keystone_config::DpopMode;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_client::{
     TemplateScope, TokenPresentation, TokenVerificationError, enforce_token_binding,
-    verify_oidc_access_token,
+    ensure_openid_scope, verify_oidc_access_token_unscoped,
 };
 use openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError;
 
@@ -65,6 +65,9 @@ use super::token::Oauth2TokenError;
 enum UserinfoError {
     /// Token valid but lacks the `openid` scope.
     InsufficientScope,
+    /// As [`Self::InsufficientScope`] for a token presented with the `DPoP`
+    /// scheme, challenged with it (RFC 9449 §7.1).
+    InsufficientScopeDpop,
     Internal,
     /// Token missing/malformed/expired/revoked/foreign, or its user or
     /// client is gone. Deliberately a single indistinguishable answer.
@@ -84,14 +87,16 @@ enum UserinfoError {
 
 impl IntoResponse for UserinfoError {
     fn into_response(self) -> Response {
-        let (status, www_authenticate, description) = match self {
+        // Status, challenge, RFC 6750 / 9449 error code and description.
+        let (status, www_authenticate, error, description) = match self {
             Self::InvalidDpopProof => (
                 StatusCode::UNAUTHORIZED,
                 format!(
                     "DPoP error=\"invalid_dpop_proof\", algs=\"{}\"",
                     challenge_algs()
                 ),
-                Some("the DPoP proof is invalid"),
+                "invalid_dpop_proof",
+                "the DPoP proof is invalid",
             ),
             Self::InvalidTokenDpop => (
                 StatusCode::UNAUTHORIZED,
@@ -99,12 +104,23 @@ impl IntoResponse for UserinfoError {
                     "DPoP error=\"invalid_token\", algs=\"{}\"",
                     challenge_algs()
                 ),
-                Some("the access token is invalid"),
+                "invalid_token",
+                "the access token is invalid",
             ),
             Self::InsufficientScope => (
                 StatusCode::FORBIDDEN,
                 "Bearer error=\"insufficient_scope\", scope=\"openid\"".to_string(),
-                Some("the access token does not include the openid scope"),
+                "insufficient_scope",
+                "the access token does not include the openid scope",
+            ),
+            Self::InsufficientScopeDpop => (
+                StatusCode::FORBIDDEN,
+                format!(
+                    "DPoP error=\"insufficient_scope\", scope=\"openid\", algs=\"{}\"",
+                    challenge_algs()
+                ),
+                "insufficient_scope",
+                "the access token does not include the openid scope",
             ),
             Self::Internal => {
                 return Oauth2TokenError::internal("userinfo request failed").into_response();
@@ -112,31 +128,26 @@ impl IntoResponse for UserinfoError {
             Self::InvalidToken => (
                 StatusCode::UNAUTHORIZED,
                 "Bearer error=\"invalid_token\"".to_string(),
-                Some("the access token is invalid"),
+                "invalid_token",
+                "the access token is invalid",
             ),
-            Self::MissingToken => (StatusCode::UNAUTHORIZED, "Bearer".to_string(), None),
+            Self::MissingToken => {
+                let mut response = StatusCode::UNAUTHORIZED.into_response();
+                response
+                    .headers_mut()
+                    .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+                return no_store(response);
+            }
             Self::TooManyRequests(retry_after) => {
                 return Oauth2TokenError::too_many_requests(retry_after).into_response();
             }
             Self::Unavailable(err) => return err.into_response(),
         };
-        let mut response = match description {
-            Some(description) => (
-                status,
-                Json(json!({
-                    "error": if status == StatusCode::FORBIDDEN {
-                        "insufficient_scope"
-                    } else if www_authenticate.contains("invalid_dpop_proof") {
-                        "invalid_dpop_proof"
-                    } else {
-                        "invalid_token"
-                    },
-                    "error_description": description,
-                })),
-            )
-                .into_response(),
-            None => status.into_response(),
-        };
+        let mut response = (
+            status,
+            Json(json!({"error": error, "error_description": description})),
+        )
+            .into_response();
         if let Ok(value) = HeaderValue::from_str(&www_authenticate) {
             response
                 .headers_mut()
@@ -147,6 +158,18 @@ impl IntoResponse for UserinfoError {
 }
 
 impl UserinfoError {
+    /// The error as it is challenged for a request that used `scheme`: a
+    /// failure of a request made with the `DPoP` scheme is answered with a
+    /// `DPoP` challenge, so a client does not fall back to `Bearer`
+    /// (RFC 9449 §7.1).
+    fn for_scheme(self, scheme: Option<Scheme>) -> Self {
+        match (scheme, self) {
+            (Some(Scheme::Dpop), Self::InvalidToken) => Self::InvalidTokenDpop,
+            (Some(Scheme::Dpop), Self::InsufficientScope) => Self::InsufficientScopeDpop,
+            (_, err) => err,
+        }
+    }
+
     /// The CADF `(outcome, outcome_reason)` of this rejection, so every
     /// failed bearer presentation is audited, not only the successes.
     ///
@@ -155,7 +178,7 @@ impl UserinfoError {
     /// Isolation").
     fn audit_outcome(&self) -> (Outcome, OutcomeReason) {
         let reason = match self {
-            Self::InsufficientScope => "InsufficientScope",
+            Self::InsufficientScope | Self::InsufficientScopeDpop => "InsufficientScope",
             Self::Internal => "Internal",
             Self::InvalidToken => "InvalidToken",
             Self::InvalidDpopProof => "InvalidDpopProof",
@@ -259,6 +282,7 @@ async fn userinfo_impl(
     match userinfo_inner(state, domain_id, method, headers, peer_addr, correlation_id).await {
         Ok(claims) => no_store((StatusCode::OK, Json(claims)).into_response()),
         Err(err) => {
+            let err = err.for_scheme(presented_credential(headers).map(|(scheme, _)| scheme));
             // Every rejected bearer presentation leaves a record, not just
             // the accepted ones: without this, a burst of forged, revoked or
             // foreign tokens would be invisible in the audit trail. The
@@ -334,19 +358,19 @@ async fn userinfo_inner(
     );
     let base = base_url(state, headers).await;
     let issuer = format!("{base}/v4/oauth2/{domain_id}");
-    let claims = verify_oidc_access_token(
+    // The `openid` scope is checked only once the presenter has proven to be
+    // entitled to the token (below): an answer about the scope of a bound
+    // token must not reach a holder without its key.
+    let claims = verify_oidc_access_token_unscoped(
         token,
         &jwks,
         signing_algorithm,
         std::slice::from_ref(&issuer),
         &revoked_jtis,
     )
-    .map_err(|e| match e {
-        TokenVerificationError::InsufficientScope(_) => UserinfoError::InsufficientScope,
-        e => {
-            tracing::debug!(error = %e, "oauth2 userinfo: token rejected");
-            UserinfoError::InvalidToken
-        }
+    .map_err(|e| {
+        tracing::debug!(error = %e, "oauth2 userinfo: token rejected");
+        UserinfoError::InvalidToken
     })?;
 
     // `aud` is the relying party: it must still be a registered, enabled
@@ -367,11 +391,8 @@ async fn userinfo_inner(
     // A bound token is usable only with a proof from its key (ADR 0043 §4).
     // The proof is checked after the token and its client are known to be
     // valid, so an invalid token never costs a signature check.
-    let presentation_jkt = match (scheme, claims.cnf.is_some()) {
-        (Scheme::Dpop, true) => {
-            let Some(bound) = claims.cnf.as_ref() else {
-                return Err(UserinfoError::InvalidToken);
-            };
+    let presentation_jkt = match (scheme, claims.cnf.as_ref()) {
+        (Scheme::Dpop, Some(bound)) => {
             let uri = url::Url::parse(&format!("{issuer}/userinfo")).map_err(|e| {
                 tracing::warn!(error = %e, "userinfo URL is not valid");
                 UserinfoError::Internal
@@ -417,6 +438,10 @@ async fn userinfo_inner(
             }
         },
     )?;
+    ensure_openid_scope(&claims).map_err(|e| {
+        tracing::debug!(error = %e, "oauth2 userinfo: token scope rejected");
+        UserinfoError::InsufficientScope
+    })?;
 
     let user = state
         .provider
@@ -1106,11 +1131,40 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_bound_token_costs_no_proof_check() {
-        // The signature of a forged token is rejected first: the answer is
-        // the plain invalid_token even for the DPoP scheme.
+        // The signature of a forged token is rejected first. A request made
+        // with the DPoP scheme is still answered with a DPoP challenge, so a
+        // client does not fall back to Bearer (RFC 9449 §7.1).
         let (_, provider) =
             dpop_provider(bound_spec(), openstack_keystone_config::DpopMode::Optional).await;
         let response = call_dpop(provider, Method::GET, "DPoP not.a.jwt", &[]).await;
-        assert_rejected(response, "Bearer error=\"invalid_token\"", "invalid_token").await;
+        assert_rejected(response, DPOP_INVALID_TOKEN, "invalid_token").await;
+    }
+
+    /// Whether a bound token lacks a scope is not told to a presenter that
+    /// has no proof from its key: the answer is the same 401 as for any
+    /// other unusable presentation.
+    #[tokio::test]
+    async fn test_scope_of_a_bound_token_is_not_disclosed_without_the_key() {
+        let spec = || TokenSpec {
+            scope: "profile",
+            ..bound_spec()
+        };
+        let (token, provider) =
+            dpop_provider(spec(), openstack_keystone_config::DpopMode::Optional).await;
+        let response = call_dpop(provider, Method::GET, &format!("Bearer {token}"), &[]).await;
+        assert_rejected(response, DPOP_INVALID_TOKEN, "invalid_token").await;
+
+        // With the proof the holder is entitled to know, and the challenge
+        // names the DPoP scheme.
+        let (token, provider) =
+            dpop_provider(spec(), openstack_keystone_config::DpopMode::Optional).await;
+        let proof = dpop_proof_for("GET", USERINFO_URL, "jti-1", None, Some(&token));
+        let response = call_dpop(provider, Method::GET, &format!("DPoP {token}"), &[&proof]).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            www_authenticate(&response),
+            "DPoP error=\"insufficient_scope\", scope=\"openid\", algs=\"ES256 RS256\""
+        );
+        assert_eq!(json_body(response).await["error"], "insufficient_scope");
     }
 }

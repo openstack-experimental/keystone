@@ -29,7 +29,10 @@ use crate::common::{get_state, get_state_with_config};
 use crate::create_domain;
 
 fn set(dpop: DpopMode) -> OAuth2DomainSettingsUpdate {
-    OAuth2DomainSettingsUpdate { dpop: Some(dpop) }
+    OAuth2DomainSettingsUpdate {
+        dpop: Some(dpop),
+        ..Default::default()
+    }
 }
 
 #[tokio::test]

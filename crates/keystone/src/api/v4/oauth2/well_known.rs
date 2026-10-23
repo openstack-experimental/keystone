@@ -34,6 +34,7 @@ use utoipa::ToSchema;
 use openstack_keystone_config::DpopMode;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_client::dpop::SUPPORTED_ALGORITHMS;
+use openstack_keystone_core::oauth2_client::dpop_required::DPOP_REQUIRED_TTL;
 
 use crate::api::common::PeerAddr;
 use crate::api::error::KeystoneApiError;
@@ -314,12 +315,11 @@ pub(super) async fn well_known(
         ..OpenIdConfiguration::default()
     };
 
-    // The verifier re-reads `dpop_required` at least every 60 seconds, which
-    // is shorter than this lifetime (ADR 0043 §4).
-    // No longer than `DPOP_REQUIRED_TTL`: a verifier trusts `dpop_required` for
-    // that long, so a shared cache holding the document longer would stretch
-    // the window in which a switch to `required` is not seen.
-    Ok(([(header::CACHE_CONTROL, "public, max-age=60")], Json(doc)).into_response())
+    // Cacheable for as long as a verifier trusts `dpop_required` (ADR 0043
+    // §4). A verifier behind a shared cache can see a change after both
+    // lifetimes, at most twice that long.
+    let cache_control = format!("public, max-age={}", DPOP_REQUIRED_TTL.as_secs());
+    Ok(([(header::CACHE_CONTROL, cache_control)], Json(doc)).into_response())
 }
 
 #[cfg(test)]
@@ -635,8 +635,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_discovery_is_cacheable_for_less_than_the_stale_limit() {
+    async fn test_discovery_is_cacheable_for_the_verifier_ttl() {
         let response = discovery_with(openstack_keystone_config::DpopMode::Required).await;
-        assert_eq!(response.headers()["cache-control"], "public, max-age=60");
+        assert_eq!(
+            response.headers()["cache-control"],
+            format!(
+                "public, max-age={}",
+                openstack_keystone_core::oauth2_client::dpop_required::DPOP_REQUIRED_TTL.as_secs()
+            )
+        );
     }
 }

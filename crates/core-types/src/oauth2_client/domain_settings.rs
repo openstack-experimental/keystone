@@ -49,6 +49,14 @@ impl OAuth2DomainSettings {
 pub struct OAuth2DomainSettingsUpdate {
     /// New DPoP enforcement mode of the domain.
     pub dpop: Option<DpopMode>,
+    /// Precondition: apply the update only while the stored mode is this
+    /// one (a domain without a record is `disabled`), otherwise the backend
+    /// answers with a conflict. A caller that decided on the basis of the
+    /// mode it read, such as the authorization of a change, sets it so that
+    /// a concurrent change cannot slip in between the decision and the
+    /// write.
+    #[serde(default)]
+    pub expected_dpop: Option<DpopMode>,
 }
 
 impl OAuth2DomainSettings {
@@ -88,6 +96,7 @@ mod tests {
         let same = base.clone().with_update(
             OAuth2DomainSettingsUpdate {
                 dpop: Some(DpopMode::Disabled),
+                ..Default::default()
             },
             15,
         );
@@ -95,6 +104,7 @@ mod tests {
         let raised = base.with_update(
             OAuth2DomainSettingsUpdate {
                 dpop: Some(DpopMode::Required),
+                ..Default::default()
             },
             20,
         );
