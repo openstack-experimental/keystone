@@ -34,6 +34,8 @@ use super::common::*;
 use super::{Oauth2TokenError, TokenForm, TokenResponse};
 use crate::api::v4::oauth2::well_known::base_url;
 
+const JWT_SUBJECT_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:jwt";
+
 /// RFC 8693 Token Exchange grant (ADR 0026 §12 "v2 shape", implemented as
 /// the follow-up amendment the ADR itself defers this grant's concrete
 /// shape to). Trades an existing Keystone-native delegated credential
@@ -61,6 +63,17 @@ pub(super) async fn handle_token_exchange_grant(
             "missing required parameter: subject_token",
         ));
     };
+
+    let Some(subject_token_type) = form.subject_token_type.as_deref() else {
+        return Err(Oauth2TokenError::invalid_request(
+            "missing required parameter: subject_token_type",
+        ));
+    };
+    if subject_token_type != JWT_SUBJECT_TOKEN_TYPE {
+        return Err(Oauth2TokenError::invalid_request(format!(
+            "subject_token_type `{subject_token_type}` is not supported"
+        )));
+    }
 
     // Step 1 (ADR 0026 §7.A): pre-hash rate limit, inherited by every
     // `/token` sub-path, before any lookup or subject_token validation.
@@ -512,7 +525,7 @@ mod tests {
         let response = api
             .as_service()
             .oneshot(request(
-                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token",
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt",
             ))
             .await
             .unwrap();
@@ -581,7 +594,7 @@ mod tests {
             .with_state(state);
         api.as_service()
             .oneshot(request(&format!(
-                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token{extra}"
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt{extra}"
             )))
             .await
             .unwrap()
@@ -666,7 +679,7 @@ mod tests {
         let response = api
             .as_service()
             .oneshot(request(
-                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token",
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt",
             ))
             .await
             .unwrap();
@@ -694,6 +707,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_token_exchange_missing_subject_token_type_is_invalid_request() {
+        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request(
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token",
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid_request");
+        assert_eq!(
+            body["error_description"],
+            "missing required parameter: subject_token_type"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_unsupported_subject_token_type_is_invalid_request() {
+        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request(
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token",
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid_request");
+        assert_eq!(
+            body["error_description"],
+            "subject_token_type `urn:ietf:params:oauth:token-type:access_token` is not supported"
+        );
+    }
+
+    #[tokio::test]
     async fn test_token_exchange_client_without_grant_is_unauthorized() {
         // `confidential_client()` only holds `ClientCredentials`, not
         // `TokenExchange`.
@@ -715,7 +776,7 @@ mod tests {
         let response = api
             .as_service()
             .oneshot(request(
-                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=x",
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=x&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt",
             ))
             .await
             .unwrap();
@@ -770,7 +831,7 @@ mod tests {
         let response = api
             .as_service()
             .oneshot(request(
-                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=a-password-authenticated-token",
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=a-password-authenticated-token&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt",
             ))
             .await
             .unwrap();

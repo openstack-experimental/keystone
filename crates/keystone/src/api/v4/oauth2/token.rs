@@ -96,12 +96,8 @@ pub(super) struct TokenForm {
     /// token (Fernet or JWS) being exchanged.
     #[serde(default)]
     subject_token: Option<String>,
-    /// RFC 8693 Token Exchange grant only. Accepted but not branched on:
-    /// this repository's `TokenApi::validate_to_context` already decodes
-    /// either wire format transparently, so there is nothing for the value
-    /// to select between yet.
+    /// RFC 8693 Token Exchange grant only. v1 accepts JWT subject tokens.
     #[serde(default)]
-    #[allow(dead_code)]
     subject_token_type: Option<String>,
     /// RFC 8693 Token Exchange grant only. Accepted but not branched on:
     /// v1 always returns `urn:ietf:params:oauth:token-type:access_token`,
