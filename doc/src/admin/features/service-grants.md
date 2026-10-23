@@ -220,6 +220,9 @@ the grantor's own domain, roles) are those of any project-scoped access token. D
 token: the scope-drift tripwire (`project_id` equals `delegated_project_id`) is enforced by
 `verify_openstack_access_token` and must be kept by policy. `act` identifies
 the acting service in audit records and is also returned by introspection.
+Introspection reports the token inactive as soon as its grant is revoked,
+disabled or expired; a service that validates tokens offline only notices at
+the token's `exp`, so introspect when that delay matters.
 
 Keystone accepts such a token on its own internal interface only together with
 the SVID of the acting service: send `Authorization: Bearer <token>` over the
@@ -357,11 +360,13 @@ with the internal context and appear in the grant's `disabled_reason`.
   `private_key_jwt` on the public interface is phase 3.
 - EC2 credentials under a grant (phase 4) are not implemented. Trusts remain
   available.
-- An exchange accepts a Keystone token or the token of an earlier exchange. A
-  JWT access token issued by the OAuth2 provider cannot start a chain yet.
-- Renewal does not re-read an application credential: deleting one ends the
-  chain only if the deletion revokes its tokens.
-- A revoked hop token is refused by Keystone at the next exchange, but a
-  service validating it offline accepts it until it expires.
+- An exchange accepts a Keystone token, the token of an earlier exchange, or a
+  plain access JWT issued to a user by the OAuth2 provider. A JWT of an
+  application credential, trust or EC2 credential cannot start a chain.
+- Renewal re-reads an application credential, so deleting or expiring one ends
+  the chain at the next exchange or request.
+- A revoked hop token is refused by Keystone at the next exchange or request,
+  and reported inactive by introspection, but a service validating it offline
+  accepts it until it expires.
 - A `429` for a grant quota carries no `Retry-After` header: unlike a rate
   limit, waiting does not free quota, only revoking or expiring grants does.

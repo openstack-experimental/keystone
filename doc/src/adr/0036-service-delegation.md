@@ -1233,8 +1233,13 @@ How phase 2 implements §6, and where it refines the text above.
   validated with `TokenApi::validate_to_context`, which also checks
   revocation) and the hop token of an earlier exchange by the same actor
   (`urn:ietf:params:oauth:token-type:access_token`, verified against the
-  issuing domain's JWKS and `revoked_jtis`). A user-issued JWT access token as
-  the first hop needs the validation profile of §6.4 and is left to it.
+  issuing domain's JWKS and `revoked_jtis`). A plain access JWT of the same domain's issuer, issued
+  to a user (no `act`, not `client_credentials`), starts a chain too: it is
+  verified like a hop token, its `jti` is the chain's root and its `iat` the
+  authentication time. Its claims do not name the credential behind a
+  delegated subject, so an application credential, trust or EC2 JWT is not
+  exchangeable. Revoking the JWT's `jti` ends the chain on every later hop.
+  The JWT alone is still not a Keystone credential (§8.1).
 - **Client authentication.** An on-behalf-of exchange is authenticated with
   `tls_client_auth` on the internal interface, like redemption: the request
   names the `client_id`, the SVID must match its `spiffe_ids`, and its
@@ -1270,9 +1275,16 @@ How phase 2 implements §6, and where it refines the text above.
 - **Ceilings.** `max_role_ids` bounds grants only: the user's own token is
   the consent for an exchange, so the roles are the user's (or the
   credential's), not the client's.
-- **Known gap.** Re-exchange does not re-read the application credential of
-  an application-credential chain; the credential's deletion ends the chain
-  through the root revocation only if the deletion revokes its tokens.
+- **Application credential.** Every hop and every bound request re-reads the
+  credential of an application-credential chain, so deleting or expiring it
+  ends the chain even when its tokens were not revoked.
+- **Introspection.** The introspection endpoint reports a service grant token
+  inactive once its grant is gone, disabled or expired, and an on-behalf-of
+  token inactive once its chain would be refused at the next exchange (revoked
+  root, lost role, deleted credential, operation lifetime). A resource server
+  that verifies tokens offline cannot see this and accepts such a token until
+  its `exp`; the hop lifetime bounds that exposure, and a server that needs
+  it at once introspects.
 
 ## Alternatives considered
 
