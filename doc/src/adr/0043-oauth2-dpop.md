@@ -263,6 +263,27 @@ DPoP: P(htm=GET, htu=https://nova.example/v2.1/servers, ath=b64url(SHA-256(acces
 - An X.509 CA for end users and RFC 8705 for them. If ever needed it would be a
   dedicated issuer with its own keys; the OAuth2 signing keys are not reused.
 
+## Implementation notes
+
+The implementation differs from the text above in these points:
+
+- The proof at `/token` is verified after client authentication, not before.
+  An unauthenticated caller therefore never reaches the proof or nonce logic.
+- A `subject_token` carrying `cnf` at the token exchange endpoint is refused
+  instead of being accepted with an `ath` proof (section 4). A bound token
+  cannot be traded for an unbound one.
+- Introspection reports a bound token with `token_type: DPoP` and `cnf.jkt`
+  and does not issue a challenge; the introspecting service decides.
+- Service grant tokens are never bound and are not affected by the `required`
+  mode.
+- The downstream `dpop_required` cache takes the discovery fetch from the
+  caller, so the core crate stays free of network I/O. A stale value is not
+  served; a failed refresh rejects the request.
+- Updating the domain mode is read-modify-write without compare-and-set. A
+  manager raising the mode from a stale read can race an administrator
+  lowering it and win. The window is the provider round trip.
+- Resource servers do not use nonces; the replay cache is per node.
+
 ## Consequences
 
 - A leaked access or refresh token is useless without the client key, closing
