@@ -149,9 +149,77 @@ pub async fn exchange_on_behalf_of(
     state: &ServiceState,
     request: &OnBehalfOfRequest<'_>,
 ) -> Result<ExchangedOnBehalfOf, OnBehalfOfError> {
-    let internal = ExecutionContext::internal(state);
     let client = authenticate_client(state, request).await?;
-    // `authenticate_client` returned a client with this policy.
+    exchange_for_client(
+        state,
+        &ChainRequest {
+            domain_id: request.domain_id,
+            issuer: request.issuer,
+            signing_algorithm: request.signing_algorithm,
+            subject: request.subject,
+        },
+        client,
+        request.svid.to_string(),
+    )
+    .await
+}
+
+/// What [`exchange_for_client`] needs of a request once its client is
+/// authenticated.
+struct ChainRequest<'a> {
+    domain_id: &'a str,
+    issuer: &'a str,
+    signing_algorithm: SigningAlgorithm,
+    subject: OnBehalfOfSubject<'a>,
+}
+
+/// Whether the chain behind `hop_token`, a token this endpoint minted, is
+/// still live: the same checks as the next exchange makes (revoked root
+/// token, user, roles, application credential, operation lifetime), except
+/// that nobody is authenticated. For introspection (ADR 0036 §6.3), so a
+/// resource server asking is told the chain ended.
+pub async fn is_chain_live(
+    state: &ServiceState,
+    domain_id: &str,
+    issuer: &str,
+    signing_algorithm: SigningAlgorithm,
+    actor_client_id: &str,
+    hop_token: &str,
+) -> bool {
+    let Ok(Some(client)) = state
+        .provider
+        .get_oauth2_client_provider()
+        .get_by_client_id(&ExecutionContext::internal(state), actor_client_id)
+        .await
+    else {
+        return false;
+    };
+    if client.on_behalf_of_policy().is_none() {
+        return false;
+    }
+    exchange_for_client(
+        state,
+        &ChainRequest {
+            domain_id,
+            issuer,
+            signing_algorithm,
+            subject: OnBehalfOfSubject::Hop(hop_token),
+        },
+        client,
+        String::new(),
+    )
+    .await
+    .is_ok()
+}
+
+async fn exchange_for_client(
+    state: &ServiceState,
+    request: &ChainRequest<'_>,
+    client: OAuth2ClientResource,
+    actor_spiffe_id: String,
+) -> Result<ExchangedOnBehalfOf, OnBehalfOfError> {
+    let internal = ExecutionContext::internal(state);
+    // The caller returned a client with this policy.
     let max_operation_lifetime = client
         .on_behalf_of_policy()
         .and_then(|policy| policy.max_operation_lifetime)
@@ -208,7 +276,7 @@ pub async fn exchange_on_behalf_of(
         .context(AuthenticationContext::OnBehalfOf {
             actor: ActorInfo {
                 client_id: client.client_id.clone(),
-                spiffe_id: request.svid.to_string(),
+                spiffe_id: actor_spiffe_id,
             },
             delegated_project_id: subject.delegated_project_id,
             delegated_role_ids: subject.delegated_role_ids,
@@ -383,7 +451,7 @@ async fn keystone_subject(state: &ServiceState, token: &str) -> Result<Subject, 
 /// client (§6.3).
 async fn hop_subject(
     state: &ServiceState,
-    request: &OnBehalfOfRequest<'_>,
+    request: &ChainRequest<'_>,
     client: &OAuth2ClientResource,
     token: &str,
 ) -> Result<Subject, OnBehalfOfError> {
@@ -416,24 +484,51 @@ async fn hop_subject(
     })?;
 
     // The chain belongs to one client: a hop token of another actor is a
-    // re-delegation.
-    let DelegationContext::OnBehalfOf {
-        actor_client_id,
-        auth_time,
-        root_jti,
-        project_id,
-        delegated_role_ids,
-        application_credential_id,
-    } = claims.delegation_context
-    else {
-        return Err(OnBehalfOfError::UnsupportedSubject(
-            "not an on-behalf-of token".into(),
-        ));
-    };
-    if actor_client_id != client.client_id {
-        return Err(OnBehalfOfError::UnsupportedSubject(
-            "on-behalf-of token of another actor".into(),
-        ));
+    // re-delegation. A plain user JWT of this issuer starts a chain instead.
+    let (auth_time, root_jti, project_id, delegated_role_ids, application_credential_id) =
+        match claims.delegation_context {
+            DelegationContext::OnBehalfOf {
+                actor_client_id,
+                auth_time,
+                root_jti,
+                project_id,
+                delegated_role_ids,
+                application_credential_id,
+            } => {
+                if actor_client_id != client.client_id {
+                    return Err(OnBehalfOfError::UnsupportedSubject(
+                        "on-behalf-of token of another actor".into(),
+                    ));
+                }
+                (
+                    auth_time,
+                    root_jti,
+                    project_id,
+                    delegated_role_ids,
+                    application_credential_id,
+                )
+            }
+            // A plain JWT of a user (ADR 0036 §6.4): no actor, and not the
+            // token of a service's own client credentials. Its claims do not
+            // name the credential of a delegated subject, so only a plain
+            // chain can start from it. The JWT is the chain's root, and
+            // `iat` is the earliest authentication time it proves.
+            DelegationContext::Plain
+                if claims.act.is_none()
+                    && !claims.amr.iter().any(|m| m == "client_credentials") =>
+            {
+                (claims.iat, claims.jti.clone(), None, None, None)
+            }
+            _ => {
+                return Err(OnBehalfOfError::UnsupportedSubject(
+                    "not an exchangeable access token".into(),
+                ));
+            }
+        };
+    // Revoking the user's JWT ends every chain started from it, not only the
+    // hop being presented.
+    if revoked_jtis.contains(&root_jti) {
+        return Err(OnBehalfOfError::InvalidSubject);
     }
     let auth_time = Utc
         .timestamp_opt(auth_time, 0)

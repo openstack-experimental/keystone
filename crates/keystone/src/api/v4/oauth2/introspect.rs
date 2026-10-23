@@ -54,9 +54,12 @@ use serde_json::{Map, Value, json};
 
 use cadf::{Initiator, sanitize::sanitize_audit_id};
 use cadf::{Outcome, OutcomeReason};
+use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core::oauth2_client::on_behalf_of::is_chain_live;
 use openstack_keystone_core::oauth2_client::{
     IntrospectedAccessToken, verify_introspectable_access_token,
 };
+use openstack_keystone_core_types::oauth2_client::{DelegationContext, OpenStackAccessTokenClaims};
 use openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError;
 use openstack_keystone_key_repository::asymmetric::SigningAlgorithm;
 
@@ -285,6 +288,45 @@ impl IntrospectContext<'_> {
         })))
     }
 
+    /// Whether the service grant or on-behalf-of chain a token was issued
+    /// under still exists. Fails closed: a lookup error reports inactive.
+    async fn delegation_is_live(
+        &self,
+        claims: &OpenStackAccessTokenClaims,
+        token: &str,
+        issuer: &str,
+    ) -> bool {
+        match &claims.delegation_context {
+            DelegationContext::ServiceGrant { grant_id, .. } => self
+                .state
+                .provider
+                .get_service_grant_provider()
+                .get_service_grant(
+                    &ExecutionContext::internal(self.state),
+                    self.domain_id,
+                    grant_id,
+                )
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|grant| grant.is_redeemable(chrono::Utc::now())),
+            DelegationContext::OnBehalfOf {
+                actor_client_id, ..
+            } => {
+                is_chain_live(
+                    self.state,
+                    self.domain_id,
+                    issuer,
+                    self.signing_algorithm,
+                    actor_client_id,
+                    token,
+                )
+                .await
+            }
+            _ => true,
+        }
+    }
+
     /// `Some(response)` if `token` is a currently valid access token of
     /// this domain, `None` for anything else.
     async fn introspect_access_token(
@@ -316,12 +358,21 @@ impl IntrospectContext<'_> {
             token,
             &jwks,
             self.signing_algorithm,
-            &[issuer],
+            std::slice::from_ref(&issuer),
             &revoked_jtis,
         ) {
             Ok(v) => v,
             Err(_) => return Ok(None),
         };
+
+        // A delegated token outlives its delegation only on the verifiers
+        // that check it offline: a resource server asking here is told when
+        // the chain or grant behind it has ended (ADR 0036 §7.2).
+        if let IntrospectedAccessToken::OpenStack(c) = &verified
+            && !self.delegation_is_live(c, token, &issuer).await
+        {
+            return Ok(None);
+        }
 
         let mut out = Map::new();
         out.insert("active".into(), json!(true));
