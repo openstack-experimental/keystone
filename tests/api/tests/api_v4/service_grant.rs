@@ -29,9 +29,12 @@ use openstack_keystone_api_types::scope::{DomainBuilder, Scope, ScopeProjectBuil
 use test_api::common::{TestClient, get_password_auth, http_client};
 use test_api::oauth2::post_token_form;
 use test_api::oauth2_browser::*;
-use test_api::svid_client::post_form;
+use test_api::svid_client::{post_form, request};
 
 const GRANT_TYPE: &str = "urn:openstack:params:oauth:grant-type:service-grant";
+const EXCHANGE_TYPE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
+const KEYSTONE_TOKEN: &str = "urn:openstack:params:oauth:token-type:keystone";
+const ACCESS_TOKEN: &str = "urn:ietf:params:oauth:token-type:access_token";
 
 struct Fixture {
     domain_id: String,
@@ -139,7 +142,12 @@ async fn fixture_with_svid(svid: Option<&str>) -> Result<Fixture> {
                 || format!("spiffe://example.org/service/{provider_id}/host/*"),
                 String::from,
             )],
-            "delegation": {"service_grants": true, "max_role_ids": [role_id]},
+            "delegation": {
+                "service_grants": true,
+                "max_role_ids": [role_id],
+                "on_behalf_of": true,
+                "max_operation_lifetime": 3600,
+            },
         }),
     )
     .await?;
@@ -677,5 +685,137 @@ async fn test_other_svid_can_not_redeem_grant() -> Result<()> {
         .await?;
     let shown: Value = rsp.json().await?;
     assert_eq!(shown["service_grant"]["enabled"], true, "{shown}");
+    Ok(())
+}
+
+/// Exchange `subject_token` of `subject_token_type` for an on-behalf-of
+/// token over mTLS as `svid`; the status and body.
+async fn exchange(
+    f: &Fixture,
+    svid: &str,
+    subject_token: &str,
+    subject_token_type: &str,
+) -> Result<(StatusCode, Value)> {
+    post_form(
+        svid,
+        &format!("/v4/oauth2/{}/token", f.domain_id),
+        &[
+            ("grant_type", EXCHANGE_TYPE),
+            ("client_id", &f.client_id),
+            ("subject_token", subject_token),
+            ("subject_token_type", subject_token_type),
+        ],
+    )
+    .await
+}
+
+/// `GET /v4/service-grants/{id}` on the internal interface as `svid`
+/// carrying `token` as a bearer. A request Keystone does not authenticate
+/// answers `401`; one it does answers with a policy or lookup status.
+async fn get_with_bearer(svid: &str, token: &str) -> Result<StatusCode> {
+    let bearer = format!("Bearer {token}");
+    let (status, _) = request(
+        svid,
+        "GET",
+        &format!("/v4/service-grants/{}", Uuid::new_v4()),
+        &[("authorization", &bearer)],
+        None,
+    )
+    .await?;
+    Ok(status)
+}
+
+fn access_token_of(body: &Value) -> Result<&str> {
+    body["access_token"]
+        .as_str()
+        .ok_or_else(|| eyre!("no access_token in {body}"))
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_on_behalf_of_exchange_and_reexchange_over_mtls() -> Result<()> {
+    let f = fixture_with_svid(Some(REDEEM_SVID)).await?;
+    let user = f.user().await?;
+    let user_token = user
+        .token
+        .as_ref()
+        .map(secrecy::ExposeSecret::expose_secret)
+        .ok_or_else(|| eyre!("user is not authenticated"))?;
+
+    let (status, body) = exchange(&f, REDEEM_SVID, user_token, KEYSTONE_TOKEN).await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let hop = access_token_of(&body)?.to_string();
+    let payload = hop
+        .split('.')
+        .nth(1)
+        .ok_or_else(|| eyre!("access token is not a JWT"))?;
+    let claims: Value =
+        serde_json::from_slice(&data_encoding::BASE64URL_NOPAD.decode(payload.as_bytes())?)?;
+    assert_eq!(claims["sub"], f.user_id.as_str(), "{claims}");
+    assert_eq!(claims["act"]["sub"], REDEEM_SVID, "{claims}");
+    assert_eq!(claims["delegation_context"]["auth_method"], "on_behalf_of");
+
+    // The service renews the token, and only the service: another SVID can
+    // not exchange it, and the client is not authenticated by the token.
+    let (status, body) = exchange(&f, REDEEM_SVID, &hop, ACCESS_TOKEN).await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = exchange(&f, FOREIGN_SVID, &hop, ACCESS_TOKEN).await?;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert!(body["access_token"].is_null(), "{body}");
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_delegated_bearer_is_accepted_only_with_the_actors_svid() -> Result<()> {
+    let f = fixture_with_svid(Some(REDEEM_SVID)).await?;
+    let user = f.user().await?;
+    let user_token = user
+        .token
+        .as_ref()
+        .map(secrecy::ExposeSecret::expose_secret)
+        .ok_or_else(|| eyre!("user is not authenticated"))?;
+    let (status, body) = exchange(&f, REDEEM_SVID, user_token, KEYSTONE_TOKEN).await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let hop = access_token_of(&body)?.to_string();
+
+    // The actor's SVID plus its token: Keystone authenticates the request
+    // (any answer but `401`).
+    let status = get_with_bearer(REDEEM_SVID, &hop).await?;
+    assert_ne!(status, StatusCode::UNAUTHORIZED);
+
+    // Another service's SVID is no proof for the token: `401`, and no
+    // fallback to that SVID's own identity.
+    let status = get_with_bearer(FOREIGN_SVID, &hop).await?;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // A service grant token is bound the same way.
+    let id = f.create_grant(&user).await?;
+    let (status, body) = post_form(
+        REDEEM_SVID,
+        &format!("/v4/oauth2/{}/token", f.domain_id),
+        &[
+            ("grant_type", GRANT_TYPE),
+            ("grant_id", &id),
+            ("client_id", &f.client_id),
+        ],
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let grant_token = access_token_of(&body)?.to_string();
+    let status = get_with_bearer(REDEEM_SVID, &grant_token).await?;
+    assert_ne!(status, StatusCode::UNAUTHORIZED);
+    let status = get_with_bearer(FOREIGN_SVID, &grant_token).await?;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Revoking the grant stops the token at once.
+    let rsp = user
+        .client
+        .delete(user.base_url.join(&format!("v4/service-grants/{id}"))?)
+        .send()
+        .await?;
+    assert!(rsp.status().is_success(), "{}", rsp.status());
+    let status = get_with_bearer(REDEEM_SVID, &grant_token).await?;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     Ok(())
 }

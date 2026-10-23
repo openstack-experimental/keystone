@@ -57,6 +57,20 @@ pub async fn post_form(
     path: &str,
     body: &[(&str, &str)],
 ) -> Result<(StatusCode, Value)> {
+    request(svid_id, "POST", path, &[], Some(body)).await
+}
+
+/// `method path` to the internal interface with extra `headers` and an
+/// optional form `body`, presenting the X.509-SVID `svid_id` in the mTLS
+/// handshake. Returns the status and the JSON body (`Null` when it is not
+/// JSON).
+pub async fn request(
+    svid_id: &str,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: Option<&[(&str, &str)]>,
+) -> Result<(StatusCode, Value)> {
     let source = X509SourceBuilder::new()
         .endpoint(AGENT_SOCKET)
         .picker(IdPicker(svid_id.to_string()))
@@ -85,13 +99,21 @@ pub async fn post_form(
         let _ = connection.await;
     });
 
-    let form = serde_urlencoded::to_string(body)?;
-    let request = hyper::Request::builder()
-        .method("POST")
+    let mut builder = hyper::Request::builder()
+        .method(method)
         .uri(path)
-        .header("host", INTERNAL_ADDR)
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body(http_body_util::Full::new(bytes::Bytes::from(form)))?;
+        .header("host", INTERNAL_ADDR);
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    let request = match body {
+        Some(body) => builder
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(http_body_util::Full::new(bytes::Bytes::from(
+                serde_urlencoded::to_string(body)?,
+            )))?,
+        None => builder.body(http_body_util::Full::new(bytes::Bytes::new()))?,
+    };
     let rsp = send.send_request(request).await?;
     let status = rsp.status();
     let bytes = http_body_util::BodyExt::collect(rsp.into_body())
