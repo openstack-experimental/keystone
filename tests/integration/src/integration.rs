@@ -30,6 +30,7 @@ mod k8s_auth;
 mod limit;
 mod mapping;
 mod oauth2_device_grant;
+mod oauth2_domain_settings;
 mod oauth2_emergency_rotation;
 mod oauth2_key_janitor;
 mod oauth2_session;
