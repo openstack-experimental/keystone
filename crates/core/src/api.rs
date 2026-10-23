@@ -401,12 +401,20 @@ pub mod tests {
     pub async fn get_capturing_state(
         provider_builder: ProviderBuilder,
     ) -> (ServiceState, CapturingPolicy) {
+        get_capturing_state_with_config(provider_builder, Config::default()).await
+    }
+
+    /// Like [`get_capturing_state`], but with a caller-supplied [`Config`].
+    pub async fn get_capturing_state_with_config(
+        provider_builder: ProviderBuilder,
+        config: Config,
+    ) -> (ServiceState, CapturingPolicy) {
         let provider = provider_builder.build().unwrap();
         let policy = CapturingPolicy::default();
 
         let state = Arc::new(
             Service::new(
-                ConfigManager::not_watched(Config::default()),
+                ConfigManager::not_watched(config),
                 DatabaseConnection::default(),
                 provider,
                 Arc::new(policy.clone()),

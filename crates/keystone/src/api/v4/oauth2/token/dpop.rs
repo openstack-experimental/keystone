@@ -22,7 +22,7 @@ use url::Url;
 use openstack_keystone_config::DpopMode;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_client::dpop::{
-    DpopProofContext, DpopProofError, peek_proof_jkt, verify_dpop_proof,
+    DpopProofContext, DpopProofError, verify_dpop_proof,
 };
 use openstack_keystone_core::oauth2_client::dpop_replay::DpopReplayError;
 use openstack_keystone_core_types::oauth2_client::{Confirmation, OAuth2ClientResource};
@@ -33,6 +33,17 @@ use crate::keystone::ServiceState;
 
 /// Name of the proof header.
 const DPOP_HEADER: &str = "dpop";
+
+/// Whether the caller has charged the per-IP limiter for this request.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum SourceLimit {
+    /// Not yet charged: [`bind_token_request`] does it before it verifies a
+    /// proof.
+    Pending,
+    /// Already charged by the grant handler: charging again would count the
+    /// request twice.
+    Charged,
+}
 
 /// Validate the `DPoP` proof of a token request and return the thumbprint of
 /// the key the issued token must be bound to.
@@ -50,9 +61,9 @@ const DPOP_HEADER: &str = "dpop";
 /// as a refresh token of a bound family: such a request needs a proof even
 /// when DPoP has since been switched off.
 ///
-/// A proof is checked for exactly-one-header, the pre-verification rate
-/// limit (source and unverified key thumbprint), the server nonce, the
-/// signature and bindings, and replay, in that order.
+/// A proof is checked for exactly-one-header, the pre-verification source
+/// rate limit, the server nonce, the signature and bindings, the per-key
+/// throttle on the verified thumbprint, and replay, in that order.
 pub(super) async fn bind_token_request(
     state: &ServiceState,
     domain_id: &str,
@@ -60,6 +71,7 @@ pub(super) async fn bind_token_request(
     peer_addr: Option<SocketAddr>,
     client: &OAuth2ClientResource,
     min_mode: DpopMode,
+    source_limit: SourceLimit,
 ) -> Result<Option<Confirmation>, Oauth2TokenError> {
     let exec = ExecutionContext::internal(state);
     let mode = state
@@ -103,28 +115,20 @@ pub(super) async fn bind_token_request(
         ));
     };
 
-    // Pre-verification rate limit (ADR 0022): the thumbprint is attacker
-    // chosen until the signature is checked, so it is only a throttle key.
-    // It has a pool of its own, apart from the `client_id` keys. The source
-    // goes through the shared per-IP limiter, which knows the trusted
-    // proxies and so does not lump every client behind a load balancer into
-    // one bucket.
-    let unverified_jkt =
-        peek_proof_jkt(proof).map_err(|e| Oauth2TokenError::invalid_dpop_proof(e.to_string()))?;
-    if let Err(retry_after) = state
-        .rate_limiters
-        .check_ip(headers, peer_addr.map(|a| a.ip()))
+    // Pre-verification rate limit (ADR 0022): the source goes through the
+    // shared per-IP limiter, which knows the trusted proxies and so does not
+    // lump every client behind a load balancer into one bucket. The key
+    // thumbprint is not used here: until the signature is checked it is
+    // attacker chosen, and a flood naming a victim's key would drain the
+    // victim's bucket.
+    if source_limit == SourceLimit::Pending
+        && let Err(retry_after) = state
+            .rate_limiters
+            .check_ip(headers, peer_addr.map(|a| a.ip()))
     {
         return Err(Oauth2TokenError::too_many_requests(
             retry_after.as_secs().max(1),
         ));
-    }
-    if let Err(not_until) = state.dpop.throttle.check_key(&unverified_jkt) {
-        let retry_after = not_until
-            .wait_time_from(state.dpop.throttle.clock().now())
-            .as_secs()
-            .max(1);
-        return Err(Oauth2TokenError::too_many_requests(retry_after));
     }
 
     let uri = Url::parse(&format!(
@@ -149,6 +153,15 @@ pub(super) async fn bind_token_request(
         DpopProofError::NonceRequired => Oauth2TokenError::use_dpop_nonce(nonces.issue(now)),
         e => Oauth2TokenError::invalid_dpop_proof(e.to_string()),
     })?;
+    // Per-key throttle on the verified thumbprint, a pool of its own apart
+    // from the `client_id` keys.
+    if let Err(not_until) = state.dpop.throttle.check_key(&verified.jkt) {
+        let retry_after = not_until
+            .wait_time_from(state.dpop.throttle.clock().now())
+            .as_secs()
+            .max(1);
+        return Err(Oauth2TokenError::too_many_requests(retry_after));
+    }
     state
         .dpop
         .replay
@@ -168,6 +181,7 @@ fn replay_error(error: DpopReplayError, proof_lifetime_secs: u64) -> Oauth2Token
     match error {
         DpopReplayError::Replayed => Oauth2TokenError::invalid_dpop_proof(error.to_string()),
         DpopReplayError::CacheFull | DpopReplayError::KeyQuotaExceeded => {
+            tracing::warn!(%error, "DPoP replay cache refused a proof");
             Oauth2TokenError::too_many_requests(proof_lifetime_secs.max(1))
         }
     }

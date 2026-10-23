@@ -14,6 +14,7 @@
 //! # OAuth2 client (relying party registration) provider (ADR 0026 §5)
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -282,22 +283,6 @@ fn validate_display(
     Ok(())
 }
 
-/// Reject `dpop_bound_access_tokens = true` until the token endpoints bind
-/// issued tokens to the proof key (ADR 0043 §3). The flag is stored and
-/// returned already, but accepting `true` now would promise a
-/// sender-constrained client that still receives plain bearer tokens.
-/// Remove once enforcement lands.
-fn validate_dpop_bound_access_tokens(requested: bool) -> Result<(), Oauth2ClientProviderError> {
-    if requested {
-        return Err(Oauth2ClientProviderError::Validation(
-            "dpop_bound_access_tokens=true is not supported yet: DPoP binding of issued \
-             tokens is not enforced"
-                .to_string(),
-        ));
-    }
-    Ok(())
-}
-
 /// Validate the PKCE requirement (ADR 0026 §5): mandatory for public
 /// clients.
 fn validate_require_pkce(
@@ -497,9 +482,19 @@ pub struct Oauth2ClientService {
     internal_trust_domains: Vec<String>,
     /// Domain DPoP mode by domain id, with the time it was read.
     domain_dpop_modes: DashMap<String, (openstack_keystone_config::DpopMode, Instant)>,
+    /// Bumped on every settings write. A reader that started its backend
+    /// lookup before a write must not cache what it read: the value may be
+    /// the one the write just replaced.
+    domain_dpop_epoch: AtomicU64,
 }
 
 impl Oauth2ClientService {
+    /// Forget the cached DPoP mode of a domain after a settings write.
+    fn invalidate_domain_dpop_mode(&self, domain_id: &str) {
+        self.domain_dpop_epoch.fetch_add(1, Ordering::SeqCst);
+        self.domain_dpop_modes.remove(domain_id);
+    }
+
     /// Create a new `Oauth2ClientService`.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
@@ -513,6 +508,7 @@ impl Oauth2ClientService {
             oauth2_config: config.oauth2.clone(),
             internal_trust_domains: internal_trust_domains(config),
             domain_dpop_modes: DashMap::new(),
+            domain_dpop_epoch: AtomicU64::new(0),
         })
     }
 }
@@ -533,7 +529,6 @@ impl Oauth2ClientApi for Oauth2ClientService {
             &self.internal_trust_domains,
             true,
         )?;
-        validate_dpop_bound_access_tokens(data.dpop_bound_access_tokens)?;
         ensure_roles_exist(ctx, data.delegation.as_ref(), &[]).await?;
         // A `tls_client_auth` client authenticates with its SVID: it never
         // gets a secret and is exempt from the PKCE rule.
@@ -643,7 +638,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
             operation: op,
             on_audit_error: |_: AuditDispatchError| Oauth2ClientProviderError::AuditUnavailable,
         };
-        self.domain_dpop_modes.remove(domain_id);
+        self.invalidate_domain_dpop_mode(domain_id);
         result
     }
     #[tracing::instrument(name = "provider.oauth2_client.get", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
@@ -678,6 +673,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
         let domain = match cached {
             Some(mode) => mode,
             None => {
+                let epoch = self.domain_dpop_epoch.load(Ordering::SeqCst);
                 let mode = self
                     .backend_driver
                     .get_domain_settings(ctx.state(), domain_id)
@@ -689,6 +685,12 @@ impl Oauth2ClientApi for Oauth2ClientService {
                 }
                 self.domain_dpop_modes
                     .insert(domain_id.to_string(), (mode, Instant::now()));
+                // A write raced with the lookup: what was just cached may be
+                // stale. Insert-then-check pairs with the write's bump-then-
+                // remove, so one of the two always drops the entry.
+                if self.domain_dpop_epoch.load(Ordering::SeqCst) != epoch {
+                    self.domain_dpop_modes.remove(domain_id);
+                }
                 mode
             }
         };
@@ -804,7 +806,6 @@ impl Oauth2ClientApi for Oauth2ClientService {
                 "cannot update a revoked (soft-deleted) OAuth2 client".to_string(),
             ));
         }
-        validate_dpop_bound_access_tokens(data.dpop_bound_access_tokens.unwrap_or(false))?;
         let confidential = current.client_secret_hash.is_some();
         let mtls = current.token_endpoint_auth_method == TLS_CLIENT_AUTH;
         if data.remove_delegation && data.delegation.is_some() {
@@ -955,7 +956,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
         };
         // Whether or not the write went through, the next request reads the
         // stored value again.
-        self.domain_dpop_modes.remove(domain_id);
+        self.invalidate_domain_dpop_mode(domain_id);
         result
     }
 }
@@ -1031,6 +1032,7 @@ mod tests {
             },
             internal_trust_domains: vec!["cloud.example".into()],
             domain_dpop_modes: DashMap::new(),
+            domain_dpop_epoch: AtomicU64::new(0),
         }
     }
 
@@ -1061,15 +1063,6 @@ mod tests {
             None,
             Some(crate::provider::Provider::mocked_builder().mock_role(roles)),
         )
-    }
-
-    #[test]
-    fn test_dpop_bound_access_tokens_true_is_rejected_until_enforced() {
-        assert!(validate_dpop_bound_access_tokens(false).is_ok());
-        assert!(matches!(
-            validate_dpop_bound_access_tokens(true),
-            Err(Oauth2ClientProviderError::Validation(_))
-        ));
     }
 
     #[tokio::test]
@@ -1463,6 +1456,34 @@ mod tests {
             .effective_dpop_mode(&ctx, "domain-1", false)
             .await
             .unwrap();
+    }
+
+    /// A settings write that lands while a lookup is in flight must not be
+    /// undone by the lookup caching the value it read before the write.
+    #[tokio::test]
+    async fn test_effective_dpop_mode_does_not_cache_a_value_read_across_a_write() {
+        use std::sync::OnceLock;
+
+        let service_cell: Arc<OnceLock<Arc<Oauth2ClientService>>> = Arc::new(OnceLock::new());
+        let mut mock = MockOauth2ClientBackend::new();
+        let cell = service_cell.clone();
+        mock.expect_get_domain_settings().returning(move |_, id| {
+            // The write completes between the read and the cache insert.
+            if let Some(service) = cell.get() {
+                service.invalidate_domain_dpop_mode(id);
+            }
+            Ok(Some(OAuth2DomainSettings::default_for(id)))
+        });
+        let service = Arc::new(service_with(mock));
+        assert!(service_cell.set(service.clone()).is_ok());
+        let state = state_with_domains(&["domain-1"]).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        service
+            .effective_dpop_mode(&ctx, "domain-1", false)
+            .await
+            .unwrap();
+        assert!(service.domain_dpop_modes.is_empty());
     }
 
     #[tokio::test]

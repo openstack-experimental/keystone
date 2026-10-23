@@ -166,8 +166,16 @@ pub(super) async fn handle_refresh_token_grant(
     let confirmation = if already_spent {
         None
     } else {
-        super::dpop::bind_token_request(state, domain_id, headers, peer_addr, &client, min_mode)
-            .await?
+        super::dpop::bind_token_request(
+            state,
+            domain_id,
+            headers,
+            peer_addr,
+            &client,
+            min_mode,
+            super::dpop::SourceLimit::Charged,
+        )
+        .await?
     };
     // A *valid* proof from another key means the refresh token is in the
     // wrong hands: revoke the family like a detected reuse.
@@ -189,7 +197,13 @@ pub(super) async fn handle_refresh_token_grant(
     let redemption = state
         .provider
         .get_oauth2_session_provider()
-        .redeem_refresh_token(state, &presented_refresh_token, &client_id, domain_id)
+        .redeem_refresh_token(
+            state,
+            &presented_refresh_token,
+            &client_id,
+            domain_id,
+            confirmation.as_ref().map(|c| c.jkt.clone()),
+        )
         .await
         .map_err(|e| {
             tracing::warn!(error = %e, "oauth2 refresh token redemption failed");
@@ -459,7 +473,7 @@ mod tests {
             .returning(|_, _| Ok(Some(sample_refresh_record(None))));
         session_mock
             .expect_redeem_refresh_token()
-            .returning(|_, _, _, _| {
+            .returning(|_, _, _, _, _| {
                 Ok(RefreshTokenRedemption::ReuseDetected {
                     family_id: "family-1".to_string(),
                     reason: openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason::ReuseDetected,
@@ -521,7 +535,7 @@ mod tests {
             .returning(|_, _| Ok(Some(sample_refresh_record(None))));
         session_mock
             .expect_redeem_refresh_token()
-            .returning(|_, _, _, _| {
+            .returning(|_, _, _, _, _| {
                 Ok(RefreshTokenRedemption::Rotated {
                     record: Box::new(sample_refresh_record(None)),
                     bearer: "new-bearer-token".to_string(),
@@ -706,7 +720,7 @@ mod tests {
         session_mock
             .expect_redeem_refresh_token()
             .times(1)
-            .returning(|_, _, _, _| {
+            .returning(|_, _, _, _, _| {
                 Ok(RefreshTokenRedemption::Rotated {
                     record: Box::new(sample_refresh_record(None)),
                     bearer: "new-bearer-token".to_string(),
@@ -778,7 +792,7 @@ mod tests {
         session_mock
             .expect_redeem_refresh_token()
             .times(1)
-            .returning(|_, _, _, _| {
+            .returning(|_, _, _, _, _| {
                 Ok(RefreshTokenRedemption::Rotated {
                     record: Box::new(sample_refresh_record(None)),
                     bearer: "new-bearer-token".to_string(),
@@ -896,7 +910,7 @@ mod tests {
         session_mock
             .expect_redeem_refresh_token()
             .times(1)
-            .returning(|_, _, _, _| {
+            .returning(|_, _, _, _, _| {
                 Ok(RefreshTokenRedemption::Rotated {
                     record: Box::new(sample_refresh_record(None)),
                     bearer: "new-bearer-token".to_string(),
@@ -975,7 +989,7 @@ mod tests {
             .returning(|_, _| Ok(Some(sample_refresh_record(None))));
         session_mock
             .expect_redeem_refresh_token()
-            .returning(|_, _, _, _| {
+            .returning(|_, _, _, _, _| {
                 Ok(RefreshTokenRedemption::Rotated {
                     record: Box::new(sample_refresh_record(None)),
                     bearer: "new-bearer-token".to_string(),
@@ -1065,7 +1079,7 @@ mod tests {
         session_mock
             .expect_redeem_refresh_token()
             .times(expect.redeems)
-            .returning(move |_, _, _, _| {
+            .returning(move |_, _, _, _, _| {
                 let mut record = sample_refresh_record(None);
                 record.dpop_jkt = family_jkt.clone();
                 Ok(RefreshTokenRedemption::Rotated {
@@ -1229,7 +1243,7 @@ mod tests {
         session_mock
             .expect_redeem_refresh_token()
             .times(1)
-            .returning(|_, _, _, _| {
+            .returning(|_, _, _, _, _| {
                 Ok(RefreshTokenRedemption::ReuseDetected {
                     family_id: "family-1".to_string(),
                     reason: openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason::ReuseDetected,

@@ -680,6 +680,7 @@ mod oauth2_session {
                 presented_bearer: &str,
                 client_id: &str,
                 domain_id: &str,
+                bind_dpop_jkt: Option<String>,
             ) -> Result<RefreshTokenRedemption, Oauth2SessionProviderError>;
 
             async fn peek_refresh_token(

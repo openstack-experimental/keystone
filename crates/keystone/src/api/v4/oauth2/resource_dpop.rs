@@ -24,9 +24,10 @@ use governor::clock::Clock as _;
 use url::Url;
 
 use openstack_keystone_core::oauth2_client::dpop::{
-    DpopProofContext, DpopProofError, SUPPORTED_ALGORITHMS, peek_proof_jkt, verify_dpop_proof,
+    DpopProofContext, DpopProofError, SUPPORTED_ALGORITHMS, verify_dpop_proof,
 };
 use openstack_keystone_core::oauth2_client::dpop_replay::DpopReplayError;
+use openstack_keystone_core_types::oauth2_client::Confirmation;
 
 use crate::keystone::ServiceState;
 
@@ -76,15 +77,16 @@ pub(super) enum ProofRefusal {
 /// thumbprint of the proof key.
 ///
 /// `uri` is the external URL of the endpoint (`htu`), `method` its HTTP
-/// method (`htm`). The caller has rate limited the source already; this adds
-/// the throttle on the not yet verified key thumbprint (ADR 0022), so a flood
-/// of fresh keys is shed before any signature is checked.
+/// method (`htm`). The caller has rate limited the source already, which
+/// bounds the signature checks; this adds the per-key throttle (ADR 0022) on
+/// the verified key thumbprint. `bound_jkt` is the `cnf` of the token.
 pub(super) fn verify_resource_proof(
     state: &ServiceState,
     headers: &HeaderMap,
     method: &str,
     uri: &Url,
     token: &str,
+    bound_jkt: &Confirmation,
 ) -> Result<String, ProofRefusal> {
     let mut proofs = headers.get_all(DPOP_HEADER).iter();
     let proof = proofs
@@ -99,15 +101,6 @@ pub(super) fn verify_resource_proof(
         .to_str()
         .map_err(|_| ProofRefusal::Invalid("the DPoP header is not valid text".into()))?;
 
-    let unverified_jkt = peek_proof_jkt(proof).map_err(|e| ProofRefusal::Invalid(e.to_string()))?;
-    if let Err(not_until) = state.dpop.throttle.check_key(&unverified_jkt) {
-        let retry_after = not_until
-            .wait_time_from(state.dpop.throttle.clock().now())
-            .as_secs()
-            .max(1);
-        return Err(ProofRefusal::RateLimited(retry_after));
-    }
-
     let now = chrono::Utc::now().timestamp();
     let verified = verify_dpop_proof(
         proof,
@@ -121,6 +114,24 @@ pub(super) fn verify_resource_proof(
         },
     )
     .map_err(|e: DpopProofError| ProofRefusal::Invalid(e.to_string()))?;
+    // Only the key the token is bound to may use the replay cache: a proof
+    // from any other key is refused before it takes an entry, so a holder of
+    // a valid token cannot fill the cache with fresh keys.
+    if !bound_jkt.matches(&verified.jkt) {
+        return Err(ProofRefusal::Invalid(
+            "the DPoP proof key does not match the token".into(),
+        ));
+    }
+    // Throttled on the verified thumbprint: an unverified one is attacker
+    // chosen, so a flood of forged proofs naming a victim's key could drain
+    // the victim's bucket.
+    if let Err(not_until) = state.dpop.throttle.check_key(&verified.jkt) {
+        let retry_after = not_until
+            .wait_time_from(state.dpop.throttle.clock().now())
+            .as_secs()
+            .max(1);
+        return Err(ProofRefusal::RateLimited(retry_after));
+    }
     state
         .dpop
         .replay
@@ -129,6 +140,7 @@ pub(super) fn verify_resource_proof(
             DpopReplayError::Replayed => ProofRefusal::Invalid(e.to_string()),
             // Clears once the entries age out, at most one proof lifetime.
             DpopReplayError::CacheFull | DpopReplayError::KeyQuotaExceeded => {
+                tracing::warn!(error = %e, "DPoP replay cache refused a proof");
                 ProofRefusal::RateLimited(state.dpop.proof_lifetime_secs.max(1))
             }
         })?;

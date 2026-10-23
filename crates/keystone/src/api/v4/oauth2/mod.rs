@@ -57,6 +57,7 @@ mod upstream_logout;
 mod userinfo;
 mod well_known;
 
+use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 
 /// OpenApi specification for the OAuth2/OIDC provider public API.
@@ -67,6 +68,22 @@ use crate::keystone::ServiceState;
     )
 )]
 pub struct ApiDoc;
+
+/// Refuse to switch DPoP on while the server cannot issue nonces.
+///
+/// DPoP needs `[mapping] cluster_salt` (ADR 0043 §2). Without it every
+/// `/token` request of a DPoP-enabled domain or client fails, so a domain
+/// setting or client flag that turns it on is rejected up front instead of
+/// locking the domain out of token issuance.
+pub(crate) fn ensure_dpop_configured(state: &ServiceState) -> Result<(), KeystoneApiError> {
+    if state.dpop.nonces.is_none() {
+        return Err(KeystoneApiError::BadRequest(
+            "DPoP cannot be enabled: [mapping] cluster_salt is not configured on this server"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()

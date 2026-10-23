@@ -97,6 +97,7 @@ pub(super) async fn handle_authorization_code_grant(
         peer_addr,
         &client,
         openstack_keystone_config::DpopMode::Disabled,
+        super::dpop::SourceLimit::Pending,
     )
     .await?;
 

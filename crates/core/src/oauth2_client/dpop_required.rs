@@ -16,7 +16,7 @@
 //! discovery document says `dpop_required: true`. Without this a token issued
 //! before the switch would still be accepted as `Bearer` until its `exp`.
 //!
-//! The flag is cached per issuer for [`DPOP_REQUIRED_TTL`], shorter than the
+//! The flag is cached per issuer for [`DPOP_REQUIRED_TTL`], no longer than the
 //! `Cache-Control` of the discovery document. The lookup fails closed: once
 //! the cached value is older than the TTL and the document cannot be
 //! fetched, the answer is an error and the caller rejects the request, so

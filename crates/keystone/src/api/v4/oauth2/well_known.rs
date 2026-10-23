@@ -316,7 +316,10 @@ pub(super) async fn well_known(
 
     // The verifier re-reads `dpop_required` at least every 60 seconds, which
     // is shorter than this lifetime (ADR 0043 §4).
-    Ok(([(header::CACHE_CONTROL, "public, max-age=300")], Json(doc)).into_response())
+    // No longer than `DPOP_REQUIRED_TTL`: a verifier trusts `dpop_required` for
+    // that long, so a shared cache holding the document longer would stretch
+    // the window in which a switch to `required` is not seen.
+    Ok(([(header::CACHE_CONTROL, "public, max-age=60")], Json(doc)).into_response())
 }
 
 #[cfg(test)]
@@ -634,6 +637,6 @@ mod tests {
     #[tokio::test]
     async fn test_discovery_is_cacheable_for_less_than_the_stale_limit() {
         let response = discovery_with(openstack_keystone_config::DpopMode::Required).await;
-        assert_eq!(response.headers()["cache-control"], "public, max-age=300");
+        assert_eq!(response.headers()["cache-control"], "public, max-age=60");
     }
 }

@@ -820,6 +820,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
         presented_bearer: &str,
         client_id: &str,
         domain_id: &str,
+        bind_dpop_jkt: Option<String>,
     ) -> Result<RefreshTokenRedemption, Oauth2SessionProviderError> {
         let token_id = hash_bearer(presented_bearer);
         let Some(record) = self
@@ -902,7 +903,10 @@ impl Oauth2SessionApi for Oauth2SessionService {
                             expires_at,
                             family_expires_at,
                             // A rotated token stays bound to the family key.
-                            dpop_jkt: record.dpop_jkt.clone(),
+                            // An unbound family adopts the key of the proof
+                            // that rotated it, so the access token and the
+                            // refresh chain end up bound to the same key.
+                            dpop_jkt: record.dpop_jkt.clone().or(bind_dpop_jkt),
                         },
                     )
                     .await?;
@@ -1837,10 +1841,72 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1", None)
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Rotated { .. }));
+    }
+
+    /// Rotation with a proof: an unbound family adopts the proof key, a
+    /// bound family keeps its own.
+    #[tokio::test]
+    async fn test_redeem_refresh_token_binding_on_rotation() {
+        for (family_jkt, proof_jkt, expected) in [
+            (None, None, None),
+            (None, Some("proof-key"), Some("proof-key")),
+            (Some("family-key"), Some("family-key"), Some("family-key")),
+            (Some("family-key"), None, Some("family-key")),
+        ] {
+            let mut mock = MockOauth2SessionBackend::new();
+            mock.expect_get_refresh_token().returning(move |_, _| {
+                let mut record = sample_refresh_token(None);
+                record.dpop_jkt = family_jkt.map(str::to_string);
+                Ok(Some(record))
+            });
+            mock.expect_mark_refresh_token_spent()
+                .returning(|_, _, _| Ok(()));
+            mock.expect_create_refresh_token().returning(|_, data| {
+                Ok(RefreshToken {
+                    upstream: None,
+                    token_id: data.token_id,
+                    family_id: data.family_id,
+                    parent_token_id: data.parent_token_id,
+                    domain_id: data.domain_id,
+                    client_id: data.client_id,
+                    user_id: data.user_id,
+                    scope: data.scope,
+                    issued_at: data.issued_at,
+                    spent_at: None,
+                    expires_at: data.expires_at,
+                    family_expires_at: data.family_expires_at,
+                    revoked_at: None,
+                    revocation_reason: None,
+                    amr: vec![],
+                    dpop_jkt: data.dpop_jkt,
+                })
+            });
+            let service = service_with(mock);
+            let state = get_mocked_state(None, None).await;
+
+            let result = service
+                .redeem_refresh_token(
+                    &state,
+                    "presented-bearer",
+                    "client-1",
+                    "domain-1",
+                    proof_jkt.map(str::to_string),
+                )
+                .await
+                .unwrap();
+            let RefreshTokenRedemption::Rotated { record, .. } = result else {
+                panic!("expected a rotation");
+            };
+            assert_eq!(
+                record.dpop_jkt.as_deref(),
+                expected,
+                "family {family_jkt:?}, proof {proof_jkt:?}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1857,7 +1923,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1", None)
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
@@ -1902,7 +1968,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1", None)
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Rotated { .. }));
@@ -1950,7 +2016,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1", None)
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Rotated { .. }));
@@ -2068,7 +2134,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1", None)
             .await
             .unwrap();
         assert!(matches!(
@@ -2091,7 +2157,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1", None)
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
@@ -2137,7 +2203,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1", None)
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
@@ -2161,7 +2227,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1", None)
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
@@ -2180,7 +2246,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1", None)
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
@@ -2211,7 +2277,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "unknown-bearer", "client-1", "domain-1")
+            .redeem_refresh_token(&state, "unknown-bearer", "client-1", "domain-1", None)
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
@@ -2229,7 +2295,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer", "other-client", "domain-1")
+            .redeem_refresh_token(&state, "presented-bearer", "other-client", "domain-1", None)
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
@@ -2244,7 +2310,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer", "client-1", "other-domain")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "other-domain", None)
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
@@ -2261,7 +2327,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer", "other-client", "domain-1")
+            .redeem_refresh_token(&state, "presented-bearer", "other-client", "domain-1", None)
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));

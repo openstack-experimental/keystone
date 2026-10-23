@@ -187,7 +187,7 @@ async fn test_authorization_code_flow_and_refresh_reuse_collapses_family() -> Re
 
     // Normal rotation: presenting the live leaf rotates it forward.
     let redemption = session_provider
-        .redeem_refresh_token(&state, &bearer_0, "client-1", &domain.id)
+        .redeem_refresh_token(&state, &bearer_0, "client-1", &domain.id, None)
         .await?;
     let bearer_1 = match redemption {
         RefreshTokenRedemption::Rotated { bearer, record } => {
@@ -203,7 +203,7 @@ async fn test_authorization_code_flow_and_refresh_reuse_collapses_family() -> Re
     // is minutes) must be treated as a breach, revoking the whole family --
     // including the just-issued `bearer_1` leaf.
     let reuse = session_provider
-        .redeem_refresh_token(&state, &bearer_0, "client-1", &domain.id)
+        .redeem_refresh_token(&state, &bearer_0, "client-1", &domain.id, None)
         .await?;
     match reuse {
         RefreshTokenRedemption::ReuseDetected {
@@ -216,7 +216,7 @@ async fn test_authorization_code_flow_and_refresh_reuse_collapses_family() -> Re
     // The family is dead: the live leaf minted by the legitimate rotation
     // no longer redeems either.
     let after_collapse = session_provider
-        .redeem_refresh_token(&state, &bearer_1, "client-1", &domain.id)
+        .redeem_refresh_token(&state, &bearer_1, "client-1", &domain.id, None)
         .await?;
     assert!(matches!(after_collapse, RefreshTokenRedemption::Invalid));
 
@@ -224,7 +224,7 @@ async fn test_authorization_code_flow_and_refresh_reuse_collapses_family() -> Re
     // `Invalid` -- not re-trigger the breach cascade (`ReuseDetected`) and
     // a second critical audit event.
     let replay = session_provider
-        .redeem_refresh_token(&state, &bearer_0, "client-1", &domain.id)
+        .redeem_refresh_token(&state, &bearer_0, "client-1", &domain.id, None)
         .await?;
     assert!(matches!(replay, RefreshTokenRedemption::Invalid));
 
@@ -270,13 +270,13 @@ async fn test_foreign_presentation_does_not_spend_refresh_token() -> Result<()> 
 
     // Foreign client, correct domain.
     let foreign_client = session_provider
-        .redeem_refresh_token(&state, &bearer, "client-2", &domain.id)
+        .redeem_refresh_token(&state, &bearer, "client-2", &domain.id, None)
         .await?;
     assert!(matches!(foreign_client, RefreshTokenRedemption::Invalid));
 
     // Correct client, foreign domain.
     let foreign_domain = session_provider
-        .redeem_refresh_token(&state, &bearer, "client-1", "other-domain")
+        .redeem_refresh_token(&state, &bearer, "client-1", "other-domain", None)
         .await?;
     assert!(matches!(foreign_domain, RefreshTokenRedemption::Invalid));
 
@@ -290,7 +290,7 @@ async fn test_foreign_presentation_does_not_spend_refresh_token() -> Result<()> 
 
     // The legitimate owner still rotates normally (not `ReuseDetected`).
     let owner = session_provider
-        .redeem_refresh_token(&state, &bearer, "client-1", &domain.id)
+        .redeem_refresh_token(&state, &bearer, "client-1", &domain.id, None)
         .await?;
     assert!(
         matches!(owner, RefreshTokenRedemption::Rotated { .. }),
@@ -353,7 +353,7 @@ async fn test_client_delete_revokes_refresh_families() -> Result<()> {
 
     // The refresh token no longer redeems.
     let redemption = session_provider
-        .redeem_refresh_token(&state, &bearer, &client.client_id, &domain.id)
+        .redeem_refresh_token(&state, &bearer, &client.client_id, &domain.id, None)
         .await?;
     assert!(matches!(redemption, RefreshTokenRedemption::Invalid));
 
@@ -546,7 +546,7 @@ async fn test_user_disable_revokes_refresh_families() -> Result<()> {
         assert_eq!(member.revocation_reason.as_deref(), Some("user_disabled"));
     }
     let redemption = session_provider
-        .redeem_refresh_token(&state, &bearer, "client-1", &domain.id)
+        .redeem_refresh_token(&state, &bearer, "client-1", &domain.id, None)
         .await?;
     assert!(matches!(redemption, RefreshTokenRedemption::Invalid));
     // Purged after the family was revoked by the same hook run.
@@ -611,7 +611,7 @@ async fn test_domain_disable_revokes_refresh_families() -> Result<()> {
         assert_eq!(member.revocation_reason.as_deref(), Some("domain_disabled"));
     }
     let redemption = session_provider
-        .redeem_refresh_token(&state, &bearer, "client-1", &domain.id)
+        .redeem_refresh_token(&state, &bearer, "client-1", &domain.id, None)
         .await?;
     assert!(matches!(redemption, RefreshTokenRedemption::Invalid));
     assert!(

@@ -68,6 +68,10 @@ pub(super) async fn create(
         )
         .await?;
 
+    if req.oauth2_client.dpop_bound_access_tokens {
+        crate::api::v4::oauth2::ensure_dpop_configured(&state)?;
+    }
+
     let confidential = req.oauth2_client.confidential;
     let mut data: openstack_keystone_core_types::oauth2_client::OAuth2ClientResourceCreate =
         req.into();
@@ -105,7 +109,7 @@ mod tests {
     use openstack_keystone_core_types::oauth2_client as provider_types;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, get_mocked_state_with_config, test_fixture_scoped};
     use crate::oauth2_client::MockOauth2ClientProvider;
     use crate::provider::Provider;
 
@@ -211,6 +215,52 @@ mod tests {
         let res: OAuth2ClientCreateResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(res.oauth2_client.provider_id, "provider-1");
         assert_eq!(res.client_secret.as_deref(), Some("kosc_secret"));
+    }
+
+    /// A DPoP-bound client needs the cluster salt for the nonces; without it
+    /// the client could never get a token, so creating it is refused.
+    #[tokio::test]
+    async fn test_create_dpop_bound_client_needs_cluster_salt() {
+        let mut req = sample_create(true);
+        req.oauth2_client.dpop_bound_access_tokens = true;
+        for (salted, expected) in [
+            (false, StatusCode::BAD_REQUEST),
+            (true, StatusCode::CREATED),
+        ] {
+            let mut mock = MockOauth2ClientProvider::default();
+            mock.expect_create().returning(|_, _, confidential| {
+                Ok((sample_resource(confidential), Some("kosc_secret".into())))
+            });
+            let mut config = openstack_keystone_config::Config::default();
+            config.oauth2.allow_host_header_issuer = true;
+            if salted {
+                config.mapping.cluster_salt = Some("dpop-test-salt".to_string().into());
+            }
+            let state = get_mocked_state_with_config(
+                Provider::mocked_builder().mock_oauth2_client(mock),
+                true,
+                None,
+                config,
+            )
+            .await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+            let response = api
+                .as_service()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/domain_id/clients")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .extension(test_fixture_scoped())
+                        .body(Body::from(serde_json::to_string(&req).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "salted: {salted}");
+        }
     }
 
     #[tokio::test]

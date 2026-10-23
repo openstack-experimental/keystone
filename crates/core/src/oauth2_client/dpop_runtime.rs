@@ -41,9 +41,9 @@ pub struct DpopRuntime {
     /// at startup): the `iat` window of the verifier and the lifetime of the
     /// replay entries.
     pub proof_lifetime_secs: u64,
-    /// Pre-verification throttle keyed on the unverified thumbprint of the
-    /// proof key. Its own pool, so the keys of the attacker-chosen
-    /// `client_id` limiter can never collide with it.
+    /// Throttle keyed on the verified thumbprint of the proof key. Its own
+    /// pool, so the keys of the attacker-chosen `client_id` limiter can never
+    /// collide with it.
     pub throttle: DefaultKeyedRateLimiter<String>,
     /// Nonce source. `None` when `[mapping] cluster_salt` is not set, in which
     /// case no request can be served in a DPoP mode other than `disabled`.

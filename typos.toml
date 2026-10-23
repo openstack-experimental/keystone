@@ -64,3 +64,4 @@ extend-ignore-re = ["mVZMHBDE8noYs75ShmzBMlZOZrBG4LYTIpaElpI_HAA"]
 
 [type.md]
 extend-ignore-identifiers-re = ["HashiCorp", "SIEM", "mis"]
+extend-ignore-words-re = ["typ"]

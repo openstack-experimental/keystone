@@ -717,6 +717,15 @@ carries the hash of the token) in the `DPoP` header. Presenting it as
   against another node inside its lifetime (`dpop_proof_lifetime_seconds`);
   the method and URL binding and the short lifetime bound the damage, and the
   nonce at `/token` closes it there.
+* The replay cache is bounded (`dpop_replay_cache_max_entries`, per key
+  `dpop_replay_cache_max_entries_per_key`) and never evicts a live entry,
+  because evicting would let the proof be replayed. A client that gets past
+  client authentication can still fill it with proofs from freshly generated
+  keys; the per-IP limiter bounds the rate, and while the cache is full
+  requests get `429` with `Retry-After` until entries age out (at most one
+  proof lifetime). Watch for the `DPoP replay cache refused a proof` warning
+  and size the cache for the expected token request rate. At `/userinfo` only
+  the key the token is bound to may use the cache.
 * Service grants and on-behalf-of tokens are authenticated by the SPIFFE ID of
   the acting service and are not DPoP-bound. They are refused if they carry
   a `cnf` claim, and so is a DPoP-bound `subject_token` at the token exchange

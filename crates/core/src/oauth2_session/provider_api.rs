@@ -490,12 +490,18 @@ pub trait Oauth2SessionApi: Send + Sync {
     /// different client or domain yields [`RefreshTokenRedemption::Invalid`]
     /// before any write, so a foreign presenter can neither spend the token
     /// nor feed reuse detection.
+    ///
+    /// `bind_dpop_jkt` is the thumbprint of the proof key presented with the
+    /// request. A family that is not bound yet adopts it on rotation, so the
+    /// access token bound to that key and the new refresh token agree; a
+    /// bound family keeps its own key.
     async fn redeem_refresh_token(
         &self,
         state: &ServiceState,
         presented_bearer: &str,
         client_id: &str,
         domain_id: &str,
+        bind_dpop_jkt: Option<String>,
     ) -> Result<RefreshTokenRedemption, Oauth2SessionProviderError>;
 
     /// Read-only lookup of the record behind a presented `refresh_token`

@@ -369,13 +369,16 @@ async fn userinfo_inner(
     // valid, so an invalid token never costs a signature check.
     let presentation_jkt = match (scheme, claims.cnf.is_some()) {
         (Scheme::Dpop, true) => {
+            let Some(bound) = claims.cnf.as_ref() else {
+                return Err(UserinfoError::InvalidToken);
+            };
             let uri = url::Url::parse(&format!("{issuer}/userinfo")).map_err(|e| {
                 tracing::warn!(error = %e, "userinfo URL is not valid");
                 UserinfoError::Internal
             })?;
             Some(
-                verify_resource_proof(state, headers, method.as_str(), &uri, token).map_err(
-                    |refusal| match refusal {
+                verify_resource_proof(state, headers, method.as_str(), &uri, token, bound)
+                    .map_err(|refusal| match refusal {
                         ProofRefusal::Invalid(reason) => {
                             tracing::debug!(%reason, "oauth2 userinfo: DPoP proof rejected");
                             UserinfoError::InvalidDpopProof
@@ -383,8 +386,7 @@ async fn userinfo_inner(
                         ProofRefusal::RateLimited(retry_after) => {
                             UserinfoError::TooManyRequests(retry_after)
                         }
-                    },
-                )?,
+                    })?,
             )
         }
         _ => None,

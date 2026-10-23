@@ -22,7 +22,7 @@ use axum::{
     response::IntoResponse,
 };
 use openstack_keystone_api_types::v4::oauth2_settings::{
-    Oauth2DomainSettings, Oauth2DomainSettingsResponse, Oauth2DomainSettingsUpdateRequest,
+    DpopMode, Oauth2DomainSettings, Oauth2DomainSettingsResponse, Oauth2DomainSettingsUpdateRequest,
 };
 
 use crate::api::auth::Auth;
@@ -81,6 +81,10 @@ pub(super) async fn update(
         )
         .await?;
 
+    if resulting != DpopMode::Disabled {
+        crate::api::v4::oauth2::ensure_dpop_configured(&state)?;
+    }
+
     let updated = Oauth2DomainSettings::from(
         provider
             .update_domain_settings(&exec, &domain_id, req.settings.into())
@@ -122,10 +126,12 @@ mod tests {
 
     use super::super::super::openapi_router;
     use crate::api::tests::{
-        get_capturing_state, get_mocked_state, policy_contract, test_fixture_scoped,
+        get_capturing_state_with_config, get_mocked_state, get_mocked_state_with_config,
+        policy_contract, test_fixture_scoped,
     };
     use crate::oauth2_client::MockOauth2ClientProvider;
     use crate::provider::{Provider, ProviderBuilder};
+    use openstack_keystone_config::Config;
 
     fn request(body: &str, authenticated: bool) -> Request<Body> {
         let builder = Request::builder()
@@ -149,6 +155,14 @@ mod tests {
         }
     }
 
+    /// A config with the cluster salt DPoP needs.
+    fn salted_config() -> Config {
+        let mut config = Config::default();
+        config.oauth2.allow_host_header_issuer = true;
+        config.mapping.cluster_salt = Some("dpop-test-salt".to_string().into());
+        config
+    }
+
     /// A provider whose domain is at `before` and ends up at `after`;
     /// `updates` is how many writes are expected.
     fn provider(before: core::DpopMode, after: core::DpopMode, updates: usize) -> ProviderBuilder {
@@ -164,10 +178,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_sets_the_mode() {
-        let state = get_mocked_state(
+        let state = get_mocked_state_with_config(
             provider(core::DpopMode::Disabled, core::DpopMode::Required, 1),
             true,
             None,
+            salted_config(),
         )
         .await;
         let mut api = openapi_router()
@@ -187,11 +202,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_policy_input_contract() {
-        let (state, policy) = get_capturing_state(provider(
-            core::DpopMode::Optional,
-            core::DpopMode::Required,
-            1,
-        ))
+        let (state, policy) = get_capturing_state_with_config(
+            provider(core::DpopMode::Optional, core::DpopMode::Required, 1),
+            salted_config(),
+        )
         .await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -223,11 +237,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_without_a_mode_keeps_the_stored_one_for_the_policy() {
-        let (state, policy) = get_capturing_state(provider(
-            core::DpopMode::Optional,
-            core::DpopMode::Optional,
-            1,
-        ))
+        let (state, policy) = get_capturing_state_with_config(
+            provider(core::DpopMode::Optional, core::DpopMode::Optional, 1),
+            salted_config(),
+        )
         .await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -242,6 +255,52 @@ mod tests {
             policy.calls()[0].target["oauth2_settings"]["dpop"],
             "optional"
         );
+    }
+
+    /// Without `[mapping] cluster_salt` no nonce can be issued, so turning
+    /// DPoP on would lock the domain out of `/token`: refused, nothing
+    /// written. Turning it off needs no salt.
+    #[tokio::test]
+    async fn test_update_to_dpop_without_cluster_salt_is_refused() {
+        for mode in ["optional", "required"] {
+            let state = get_mocked_state(
+                provider(core::DpopMode::Disabled, core::DpopMode::Disabled, 0),
+                true,
+                None,
+            )
+            .await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+            let response = api
+                .as_service()
+                .oneshot(request(
+                    &format!(r#"{{"settings": {{"dpop": "{mode}"}}}}"#),
+                    true,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{mode}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_update_to_disabled_needs_no_cluster_salt() {
+        let state = get_mocked_state(
+            provider(core::DpopMode::Required, core::DpopMode::Disabled, 1),
+            true,
+            None,
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api
+            .as_service()
+            .oneshot(request(r#"{"settings": {"dpop": "disabled"}}"#, true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]

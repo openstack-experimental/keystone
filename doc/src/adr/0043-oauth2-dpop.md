@@ -121,8 +121,11 @@ to two slots. Resource servers do not use nonces in this version.
 
 Proof verification costs a signature check before the client is
 authenticated, so it runs behind the pre-hash rate limit of ADR 0022: the
-limit is applied to the source and to the unverified `jkt` before the
-signature is checked, and invalid proofs count against it.
+limit is applied to the source before the signature is checked, and invalid
+proofs count against it. A per-key throttle applies to the `jkt` only after the
+signature is verified: an unverified `jkt` is attacker chosen (the thumbprint
+of a key is public in `cnf.jkt`), so throttling on it would let a flood of
+forged proofs exhaust a victim's bucket.
 
 ### 3. Token endpoint
 
@@ -174,9 +177,9 @@ signature is checked, and invalid proofs count against it.
   requesting client uses DPoP, and is otherwise issued unbound only if the
   effective mode (section 1) is not `required`.
 - The `dpop_required` lookup fails closed: if the discovery document cannot be
-  fetched and the cached copy is older than its TTL (60 s, shorter than the
-  discovery `Cache-Control`), the request is rejected, so interfering with the
-  fetch cannot downgrade enforcement.
+  fetched and the cached copy is older than its TTL (60 s, no longer than the
+  discovery `Cache-Control`, so a shared cache cannot stretch it), the request
+  is rejected, so interfering with the fetch cannot downgrade enforcement.
 
 ### 5. Client protocol
 

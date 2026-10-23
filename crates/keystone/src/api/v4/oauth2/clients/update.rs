@@ -85,6 +85,10 @@ pub(super) async fn update(
         )
         .await?;
 
+    if req.oauth2_client.dpop_bound_access_tokens == Some(true) {
+        crate::api::v4::oauth2::ensure_dpop_configured(&state)?;
+    }
+
     let disabling = req.oauth2_client.enabled == Some(false);
     let (res, revoked_families) = state
         .provider
