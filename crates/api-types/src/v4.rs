@@ -20,6 +20,7 @@ pub mod oauth2_client;
 pub mod oauth2_consent;
 pub mod oauth2_key;
 pub mod oauth2_revocation;
+pub mod oauth2_settings;
 pub mod scim_realm;
 pub mod service_grant;
 pub mod token_restriction;
@@ -30,6 +31,8 @@ pub mod vendordata;
 mod api_key_conv;
 #[cfg(feature = "conv")]
 mod oauth2_client_conv;
+#[cfg(feature = "conv")]
+mod oauth2_settings_conv;
 #[cfg(feature = "conv")]
 mod scim_realm_conv;
 #[cfg(feature = "conv")]
