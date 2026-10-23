@@ -32,8 +32,8 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use openstack_keystone_core_types::oauth2_client::{
-    Audience, DelegationContext, IdTokenClaims, OPENSTACK_APIS_AUDIENCE, OidcAccessTokenClaims,
-    OpenStackAccessTokenClaims, OpenStackScope, openstack_service_audience,
+    Audience, Confirmation, DelegationContext, IdTokenClaims, OPENSTACK_APIS_AUDIENCE,
+    OidcAccessTokenClaims, OpenStackAccessTokenClaims, OpenStackScope, openstack_service_audience,
 };
 use openstack_keystone_key_repository::asymmetric::{SigningAlgorithm, jwt_algorithm};
 
@@ -116,6 +116,82 @@ pub enum TokenVerificationError {
     /// endpoint it was presented to (e.g. `openid` for `/userinfo`).
     #[error("token scope does not include `{0}`")]
     InsufficientScope(String),
+
+    /// The token is bound to a DPoP key (`cnf`) but was presented without a
+    /// valid proof, e.g. as a `Bearer` credential (ADR 0043 §4).
+    #[error("a DPoP-bound token must be presented with a DPoP proof")]
+    BoundTokenWithoutProof,
+
+    /// A DPoP proof accompanies a token that carries no `cnf` (ADR 0043 §4).
+    #[error("a DPoP proof was presented with a token that is not DPoP-bound")]
+    ProofWithoutBoundToken,
+
+    /// The proof key is not the key the token is bound to.
+    #[error("the DPoP proof key does not match the token binding")]
+    ProofKeyMismatch,
+
+    /// The effective DPoP mode is `required` but the token is not bound.
+    #[error("an unbound token is not accepted: DPoP is required")]
+    UnboundTokenRejected,
+}
+
+/// How an access token reached a resource server: the `Authorization` scheme
+/// and, for `DPoP`, the thumbprint of the key of the already verified proof.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TokenPresentation<'a> {
+    /// `Authorization: Bearer <token>`.
+    Bearer,
+    /// `Authorization: DPoP <token>`. `proof_jkt` is the thumbprint of the
+    /// key of the verified `DPoP` proof, or `None` while no proof has been
+    /// verified.
+    Dpop {
+        /// Thumbprint of the verified proof key.
+        proof_jkt: Option<&'a str>,
+    },
+}
+
+/// Enforce the sender-constraint of an access token against the way it was
+/// presented (ADR 0043 §4), after the token itself has been verified.
+///
+/// * a bound token (`cnf`) is accepted only as `DPoP` with a proof made with
+///   the bound key, never as `Bearer`;
+/// * a `DPoP` presentation of a token without `cnf` is rejected;
+/// * an unbound token is rejected as well when `require_bound` is set (the
+///   effective mode is `required`).
+///
+/// A caller that cannot verify a proof passes [`TokenPresentation::Bearer`],
+/// which makes every bound token fail closed.
+///
+/// # Errors
+/// See [`TokenVerificationError`]: `BoundTokenWithoutProof`,
+/// `ProofWithoutBoundToken`, `ProofKeyMismatch`, `UnboundTokenRejected`.
+pub fn enforce_token_binding(
+    cnf: Option<&Confirmation>,
+    presentation: TokenPresentation<'_>,
+    require_bound: bool,
+) -> Result<(), TokenVerificationError> {
+    match (cnf, presentation) {
+        (
+            Some(cnf),
+            TokenPresentation::Dpop {
+                proof_jkt: Some(jkt),
+            },
+        ) => {
+            if cnf.matches(jkt) {
+                Ok(())
+            } else {
+                Err(TokenVerificationError::ProofKeyMismatch)
+            }
+        }
+        (Some(_), _) => Err(TokenVerificationError::BoundTokenWithoutProof),
+        (None, TokenPresentation::Dpop { .. }) => {
+            Err(TokenVerificationError::ProofWithoutBoundToken)
+        }
+        (None, TokenPresentation::Bearer) if require_bound => {
+            Err(TokenVerificationError::UnboundTokenRejected)
+        }
+        (None, TokenPresentation::Bearer) => Ok(()),
+    }
 }
 
 fn auth_method_str(ctx: &DelegationContext) -> &'static str {
@@ -579,6 +655,68 @@ pub fn verify_introspectable_access_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cnf(jkt: &str) -> Confirmation {
+        Confirmation { jkt: jkt.into() }
+    }
+
+    #[test]
+    fn test_binding_bound_token_needs_its_key() {
+        let bound = cnf("key-1");
+        let dpop = |jkt| TokenPresentation::Dpop {
+            proof_jkt: Some(jkt),
+        };
+        assert!(enforce_token_binding(Some(&bound), dpop("key-1"), true).is_ok());
+        assert!(matches!(
+            enforce_token_binding(Some(&bound), dpop("key-2"), false),
+            Err(TokenVerificationError::ProofKeyMismatch)
+        ));
+        assert!(matches!(
+            enforce_token_binding(Some(&bound), TokenPresentation::Bearer, false),
+            Err(TokenVerificationError::BoundTokenWithoutProof)
+        ));
+        assert!(matches!(
+            enforce_token_binding(
+                Some(&bound),
+                TokenPresentation::Dpop { proof_jkt: None },
+                false
+            ),
+            Err(TokenVerificationError::BoundTokenWithoutProof)
+        ));
+    }
+
+    #[test]
+    fn test_binding_empty_key_never_matches() {
+        assert!(matches!(
+            enforce_token_binding(
+                Some(&cnf("")),
+                TokenPresentation::Dpop {
+                    proof_jkt: Some("")
+                },
+                false
+            ),
+            Err(TokenVerificationError::ProofKeyMismatch)
+        ));
+    }
+
+    #[test]
+    fn test_binding_unbound_token() {
+        assert!(enforce_token_binding(None, TokenPresentation::Bearer, false).is_ok());
+        assert!(matches!(
+            enforce_token_binding(None, TokenPresentation::Bearer, true),
+            Err(TokenVerificationError::UnboundTokenRejected)
+        ));
+        assert!(matches!(
+            enforce_token_binding(
+                None,
+                TokenPresentation::Dpop {
+                    proof_jkt: Some("key-1")
+                },
+                false
+            ),
+            Err(TokenVerificationError::ProofWithoutBoundToken)
+        ));
+    }
     use jsonwebtoken::{EncodingKey, Header, encode};
     use openstack_keystone_core_types::oauth2_client::{
         IdTokenClaims, OpenStackContext, OpenStackScope,
