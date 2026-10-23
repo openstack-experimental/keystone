@@ -31,6 +31,7 @@ mod logout;
 mod revoke;
 mod token_client_credentials;
 mod token_device_grant;
+mod token_dpop;
 mod token_exchange;
 mod token_refresh;
 mod ui_branding;
