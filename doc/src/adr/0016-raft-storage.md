@@ -106,6 +106,72 @@ openraft::declare_raft_types!(
 );
 ```
 
+## Alternatives Considered
+
+The decision is scoped to what Keystone owns. Consensus is delegated to OpenRaft
+and persistence to Fjall; the code in `crates/storage` is the layer around them
+(cryptographic barrier, mTLS transport, cluster operations such as join,
+quarantine, restore and DEK rotation). The alternatives below were evaluated
+against that scope.
+
+### External consensus store (etcd, Consul, ZooKeeper)
+
+Rejected. Adopting etcd would replace only the thin glue to OpenRaft while
+leaving the expensive parts in Keystone.
+
+- **No cryptographic barrier.** The requirement is that data is encrypted before
+  it reaches the log or the disk. etcd has no application-layer encryption; its
+  WAL, snapshots and keys are plaintext unless the operator encrypts them
+  outside the store. Keystone would still need to encrypt every value, bind AD
+  to key and Raft index, and manage the DEK/KEK hierarchy, so the security
+  surface does not shrink while the guarantees get weaker (key names and
+  revision metadata become visible).
+- **Second trust and transport model.** etcd brings its own mTLS and auth. It
+  would sit next to the SPIFFE/PKI identity used by Keystone and need
+  reconciling.
+- **Operational cost.** A second stateful cluster with its own backup, upgrade,
+  compaction/defragmentation and quota (default 8 GiB) management contradicts
+  the self-contained single binary goal.
+- **Data model mismatch.** The raft-backed drivers (sessions, mappings, SCIM,
+  API keys) rely on prefix and range scans and multi-key atomic commands applied
+  in a state machine. etcd offers a flat KV with bounded transactions and
+  leases, which moves invariants out of the state machine into client retry
+  logic. High-churn data such as sessions is a poor fit for its MVCC B-tree,
+  which keeps a revision per write.
+- **Testability.** In-process multi-node clusters are used for join, restore,
+  quarantine and rotation tests. An external store turns these into
+  container-based tests.
+
+Consul and ZooKeeper share these objections and fit the data model less well.
+
+### Distributed SQL / KV databases (FoundationDB, CockroachDB, TiKV)
+
+Rejected. They address horizontal scale that identity data does not need, are
+substantially heavier to operate, and provide no application-layer encryption
+barrier either.
+
+### Relational database only (PostgreSQL, MySQL)
+
+Not rejected, but not sufficient on its own. It remains available through the
+`*-sql` drivers and operators may select it. It does not meet the requirement
+that secrets are encrypted under an application-managed key hierarchy and that
+the storage layer never observes plaintext, and it adds an external network
+dependency. Raft storage is therefore an additional option and must not become
+the only one.
+
+### Different consensus or storage library
+
+OpenRaft with Fjall is already the minimal embedded combination. Swapping the
+LSM store or the Raft library would not change the surrounding layer and has no
+benefit that justifies the migration.
+
+### Revisit criteria
+
+Reconsider this decision if the cluster operations code in `crates/storage`
+begins to dominate maintenance cost, or if OpenRaft stops being maintained. In
+both cases the remedy is first to simplify the operations surface rather than to
+move to an external store.
+
 ## Consequences
 
 ### Positive
@@ -128,6 +194,10 @@ openraft::declare_raft_types!(
 
 - Stale Reads: If not configured correctly, followers might serve stale identity
   data unless the ReadIndex protocol is strictly followed.
+
+- Maintenance Ownership: Snapshot, membership and restore handling around
+  OpenRaft is maintained by this project rather than by an established external
+  store, and the cryptographic design needs independent review.
 
 ## Compliance
 
