@@ -334,6 +334,23 @@ unauthorized caller enumerate ids. **Where:**
 `crates/keystone/src/api/v3/role_assignment/system/mod.rs` (`policy_target`),
 used by every `system/{users,groups}/.../roles` handler.
 
+### I11 — A sender-constrained token is never a bearer credential
+
+**What:** an access token whose `cnf.jkt` is set is accepted only through
+`enforce_token_binding` together with a proof from that very key (matching
+`htm`, `htu` and the token hash `ath`). Every path that cannot check a proof
+(SVID-bound delegated bearers, on-behalf-of hops, token exchange) passes
+`TokenPresentation::Bearer` and refuses a bound token; a proof next to an
+unbound token is refused too. Thumbprints are compared in constant time.
+Where a mode or a cached `dpop_required` flag decides, the check fails closed:
+the effective mode is the strictest of global, domain and client, a domain
+manager cannot lower it, and an expired cache value is never served.
+**Why:** a bound token that is also accepted as a plain bearer, or a lowered
+mode, turns the binding into decoration. **Where:**
+`crates/core/src/oauth2_client/verify.rs` (`enforce_token_binding`),
+`crates/keystone/src/api/v4/oauth2/resource_dpop.rs`,
+`policy/oauth2/settings/`.
+
 ## 5. Delegated-auth specifics
 
 Trust, application-credential, and EC2 are authentication _methods_, each with
@@ -502,6 +519,9 @@ carries it, ticked by the reviewer, not just this prose reference.
       (I9)?
 - [ ] Handler looks up a path object before policy? Does a **missing** object
       still go through policy before the 404 (I10)?
+- [ ] New path that accepts an OAuth2 access token? Does it call
+      `enforce_token_binding` with the presentation it can really verify, so a
+      DPoP-bound token is refused where no proof can be checked (I11)?
 - [ ] New state-changing provider method? Is it wrapped in `audited_op!` /
       `audited_if_ctx!` (fail-closed `attempt` record, static failure reason),
       or listed with a reason in the `audit_coverage` allow-list?
