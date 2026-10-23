@@ -15,7 +15,9 @@
 //! (OIDC Core §5.3, ADR 0026).
 //!
 //! Authenticated by the OIDC access token (`OidcAccessTokenClaims`) as an
-//! RFC 6750 `Authorization: Bearer` credential. The token is verified
+//! RFC 6750 `Authorization: Bearer` credential, or, for a token bound to a
+//! key (`cnf`), as an RFC 9449 `Authorization: DPoP` credential with a
+//! `DPoP` proof (ADR 0043 §4). The token is verified
 //! offline against the domain's signing keys and JTI revocation list, its
 //! `aud` is resolved to a registered, enabled client of this domain and the
 //! subject user must still exist and be enabled.
@@ -31,15 +33,17 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde_json::{Map, Value, json};
 
 use cadf::{Outcome, OutcomeReason};
+use openstack_keystone_config::DpopMode;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_client::{
-    TemplateScope, TokenVerificationError, verify_oidc_access_token,
+    TemplateScope, TokenPresentation, TokenVerificationError, enforce_token_binding,
+    verify_oidc_access_token,
 };
 use openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError;
 
@@ -51,6 +55,9 @@ use crate::audit::{
 use crate::keystone::ServiceState;
 
 use super::html::no_store;
+use super::resource_dpop::{
+    ProofRefusal, Scheme, challenge_algs, presented_credential, verify_resource_proof,
+};
 use super::token::Oauth2TokenError;
 
 /// RFC 6750 §3 error response of the UserInfo endpoint.
@@ -62,6 +69,13 @@ enum UserinfoError {
     /// Token missing/malformed/expired/revoked/foreign, or its user or
     /// client is gone. Deliberately a single indistinguishable answer.
     InvalidToken,
+    /// A `DPoP` proof is missing, invalid or from another key than the one
+    /// the token is bound to (RFC 9449 §7.1).
+    InvalidDpopProof,
+    /// The token is valid but not presentable the way it was: a bound token
+    /// as `Bearer`, a proof with an unbound token, or an unbound token while
+    /// DPoP is required. Challenged with the `DPoP` scheme.
+    InvalidTokenDpop,
     /// No credentials presented: bare `WWW-Authenticate: Bearer`.
     MissingToken,
     TooManyRequests(u64),
@@ -71,6 +85,22 @@ enum UserinfoError {
 impl IntoResponse for UserinfoError {
     fn into_response(self) -> Response {
         let (status, www_authenticate, description) = match self {
+            Self::InvalidDpopProof => (
+                StatusCode::UNAUTHORIZED,
+                format!(
+                    "DPoP error=\"invalid_dpop_proof\", algs=\"{}\"",
+                    challenge_algs()
+                ),
+                Some("the DPoP proof is invalid"),
+            ),
+            Self::InvalidTokenDpop => (
+                StatusCode::UNAUTHORIZED,
+                format!(
+                    "DPoP error=\"invalid_token\", algs=\"{}\"",
+                    challenge_algs()
+                ),
+                Some("the access token is invalid"),
+            ),
             Self::InsufficientScope => (
                 StatusCode::FORBIDDEN,
                 "Bearer error=\"insufficient_scope\", scope=\"openid\"".to_string(),
@@ -96,6 +126,8 @@ impl IntoResponse for UserinfoError {
                 Json(json!({
                     "error": if status == StatusCode::FORBIDDEN {
                         "insufficient_scope"
+                    } else if www_authenticate.contains("invalid_dpop_proof") {
+                        "invalid_dpop_proof"
                     } else {
                         "invalid_token"
                     },
@@ -126,22 +158,14 @@ impl UserinfoError {
             Self::InsufficientScope => "InsufficientScope",
             Self::Internal => "Internal",
             Self::InvalidToken => "InvalidToken",
+            Self::InvalidDpopProof => "InvalidDpopProof",
+            Self::InvalidTokenDpop => "InvalidTokenDpop",
             Self::MissingToken => "MissingToken",
             Self::TooManyRequests(_) => "TooManyRequests",
             Self::Unavailable(_) => "Unavailable",
         };
         (Outcome::Failure, OutcomeReason::literal(reason))
     }
-}
-
-/// Extract the RFC 6750 §2.1 bearer token from the `Authorization` header.
-fn bearer_token(headers: &HeaderMap) -> Option<&str> {
-    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let (scheme, token) = value.split_once(' ')?;
-    if !scheme.eq_ignore_ascii_case("Bearer") {
-        return None;
-    }
-    Some(token.trim()).filter(|t| !t.is_empty())
 }
 
 /// OIDC UserInfo endpoint (`GET`).
@@ -173,7 +197,15 @@ pub(super) async fn userinfo_get(
     PeerAddr(peer_addr): PeerAddr,
     correlation_id: CorrelationId,
 ) -> Response {
-    userinfo_impl(&state, &domain_id, &headers, peer_addr, &correlation_id.0).await
+    userinfo_impl(
+        &state,
+        &domain_id,
+        &Method::GET,
+        &headers,
+        peer_addr,
+        &correlation_id.0,
+    )
+    .await
 }
 
 /// OIDC UserInfo endpoint (`POST`, OIDC Core §5.3.1).
@@ -205,17 +237,26 @@ pub(super) async fn userinfo_post(
     PeerAddr(peer_addr): PeerAddr,
     correlation_id: CorrelationId,
 ) -> Response {
-    userinfo_impl(&state, &domain_id, &headers, peer_addr, &correlation_id.0).await
+    userinfo_impl(
+        &state,
+        &domain_id,
+        &Method::POST,
+        &headers,
+        peer_addr,
+        &correlation_id.0,
+    )
+    .await
 }
 
 async fn userinfo_impl(
     state: &ServiceState,
     domain_id: &str,
+    method: &Method,
     headers: &HeaderMap,
     peer_addr: Option<std::net::SocketAddr>,
     correlation_id: &str,
 ) -> Response {
-    match userinfo_inner(state, domain_id, headers, peer_addr, correlation_id).await {
+    match userinfo_inner(state, domain_id, method, headers, peer_addr, correlation_id).await {
         Ok(claims) => no_store((StatusCode::OK, Json(claims)).into_response()),
         Err(err) => {
             // Every rejected bearer presentation leaves a record, not just
@@ -245,6 +286,7 @@ async fn userinfo_impl(
 async fn userinfo_inner(
     state: &ServiceState,
     domain_id: &str,
+    method: &Method,
     headers: &HeaderMap,
     peer_addr: Option<std::net::SocketAddr>,
     correlation_id: &str,
@@ -261,7 +303,7 @@ async fn userinfo_inner(
         .await
         .map_err(UserinfoError::Unavailable)?;
 
-    let token = bearer_token(headers).ok_or(UserinfoError::MissingToken)?;
+    let (scheme, token) = presented_credential(headers).ok_or(UserinfoError::MissingToken)?;
 
     let key_provider = state.provider.get_oauth2_key_provider();
     let jwks = match key_provider.jwks(state, domain_id).await {
@@ -290,16 +332,22 @@ async fn userinfo_inner(
             .oauth2
             .signing_algorithm,
     );
-    let issuer = format!("{}/v4/oauth2/{domain_id}", base_url(state, headers).await);
-    let claims =
-        verify_oidc_access_token(token, &jwks, signing_algorithm, &[issuer], &revoked_jtis)
-            .map_err(|e| match e {
-                TokenVerificationError::InsufficientScope(_) => UserinfoError::InsufficientScope,
-                e => {
-                    tracing::debug!(error = %e, "oauth2 userinfo: token rejected");
-                    UserinfoError::InvalidToken
-                }
-            })?;
+    let base = base_url(state, headers).await;
+    let issuer = format!("{base}/v4/oauth2/{domain_id}");
+    let claims = verify_oidc_access_token(
+        token,
+        &jwks,
+        signing_algorithm,
+        std::slice::from_ref(&issuer),
+        &revoked_jtis,
+    )
+    .map_err(|e| match e {
+        TokenVerificationError::InsufficientScope(_) => UserinfoError::InsufficientScope,
+        e => {
+            tracing::debug!(error = %e, "oauth2 userinfo: token rejected");
+            UserinfoError::InvalidToken
+        }
+    })?;
 
     // `aud` is the relying party: it must still be a registered, enabled
     // client of this domain.
@@ -315,6 +363,58 @@ async fn userinfo_inner(
         })?
         .filter(|c| c.domain_id == domain_id && c.enabled && c.deleted_at.is_none())
         .ok_or(UserinfoError::InvalidToken)?;
+
+    // A bound token is usable only with a proof from its key (ADR 0043 §4).
+    // The proof is checked after the token and its client are known to be
+    // valid, so an invalid token never costs a signature check.
+    let presentation_jkt = match (scheme, claims.cnf.is_some()) {
+        (Scheme::Dpop, true) => {
+            let uri = url::Url::parse(&format!("{issuer}/userinfo")).map_err(|e| {
+                tracing::warn!(error = %e, "userinfo URL is not valid");
+                UserinfoError::Internal
+            })?;
+            Some(
+                verify_resource_proof(state, headers, method.as_str(), &uri, token).map_err(
+                    |refusal| match refusal {
+                        ProofRefusal::Invalid(reason) => {
+                            tracing::debug!(%reason, "oauth2 userinfo: DPoP proof rejected");
+                            UserinfoError::InvalidDpopProof
+                        }
+                        ProofRefusal::RateLimited(retry_after) => {
+                            UserinfoError::TooManyRequests(retry_after)
+                        }
+                    },
+                )?,
+            )
+        }
+        _ => None,
+    };
+    let presentation = match scheme {
+        Scheme::Bearer => TokenPresentation::Bearer,
+        Scheme::Dpop => TokenPresentation::Dpop {
+            proof_jkt: presentation_jkt.as_deref(),
+        },
+    };
+    let require_bound = claims.cnf.is_none()
+        && state
+            .provider
+            .get_oauth2_client_provider()
+            .effective_dpop_mode(&exec, domain_id, client.dpop_bound_access_tokens)
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "oauth2 userinfo: DPoP mode lookup failed");
+                UserinfoError::Internal
+            })?
+            == DpopMode::Required;
+    enforce_token_binding(claims.cnf.as_ref(), presentation, require_bound).map_err(
+        |e| match e {
+            TokenVerificationError::ProofKeyMismatch => UserinfoError::InvalidDpopProof,
+            e => {
+                tracing::debug!(error = %e, "oauth2 userinfo: token binding rejected");
+                UserinfoError::InvalidTokenDpop
+            }
+        },
+    )?;
 
     let user = state
         .provider
@@ -375,7 +475,8 @@ mod tests {
     use crate::api::tests::get_mocked_state;
     use crate::api::v4::oauth2::openapi_router;
     use crate::api::v4::oauth2::token::test_fixtures::{
-        json_body, public_authz_code_client, refresh_identity_mock, refresh_user,
+        dpop_proof_for, dpop_test_jkt, json_body, public_authz_code_client, refresh_identity_mock,
+        refresh_user,
     };
     use crate::oauth2_client::MockOauth2ClientProvider;
     use crate::oauth2_key::MockOauth2KeyProvider;
@@ -390,6 +491,8 @@ mod tests {
         exp_offset: i64,
         token_use: &'static str,
         sub: &'static str,
+        /// `cnf.jkt` the token is bound to.
+        cnf_jkt: Option<String>,
     }
 
     impl Default for TokenSpec {
@@ -399,6 +502,7 @@ mod tests {
                 exp_offset: 900,
                 token_use: "access",
                 sub: "user-1",
+                cnf_jkt: None,
             }
         }
     }
@@ -410,16 +514,16 @@ mod tests {
         let material = generate_keypair(SigningAlgorithm::Es256).unwrap();
         let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
         header.kid = Some(material.kid.clone());
-        let token = jsonwebtoken::encode(
-            &header,
-            &json!({
-                "iss": ISSUER, "sub": spec.sub, "aud": "client-1",
-                "exp": now + spec.exp_offset, "iat": now, "nbf": now,
-                "jti": "jti-1", "scope": spec.scope, "token_use": spec.token_use,
-            }),
-            &to_encoding_key(&material).unwrap(),
-        )
-        .unwrap();
+        let mut claims = json!({
+            "iss": ISSUER, "sub": spec.sub, "aud": "client-1",
+            "exp": now + spec.exp_offset, "iat": now, "nbf": now,
+            "jti": "jti-1", "scope": spec.scope, "token_use": spec.token_use,
+        });
+        if let Some(jkt) = &spec.cnf_jkt {
+            claims["cnf"] = json!({ "jkt": jkt });
+        }
+        let token =
+            jsonwebtoken::encode(&header, &claims, &to_encoding_key(&material).unwrap()).unwrap();
         let jwks = openstack_keystone_core::oauth2_key::jwks::active_keys_to_jwk_set(&ActiveKeys {
             primary: material,
             previous: None,
@@ -437,6 +541,8 @@ mod tests {
         let mut mock = MockOauth2ClientProvider::default();
         mock.expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
+        mock.expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
         mock
     }
 
@@ -552,6 +658,9 @@ mod tests {
         client_mock
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
         let (token, key_mock) = signed_token(TokenSpec::default(), HashSet::new());
         let provider = Provider::mocked_builder()
             .mock_oauth2_client(client_mock)
@@ -788,5 +897,218 @@ mod tests {
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["reason"]["reasonCode"], "UserInfo");
         assert!(receivers.perimeter.try_recv().is_err());
+    }
+
+    const USERINFO_URL: &str = "http://localhost/v4/oauth2/domain-1/userinfo";
+
+    /// A provider whose client mock reports `mode` as the effective mode.
+    async fn dpop_provider(
+        spec: TokenSpec,
+        mode: openstack_keystone_config::DpopMode,
+    ) -> (String, ProviderBuilder) {
+        let client = public_authz_code_client().await;
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+        client_mock
+            .expect_effective_dpop_mode()
+            .returning(move |_, _, _| Ok(mode));
+        let (token, key_mock) = signed_token(spec, HashSet::new());
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_identity(user_mock(true))
+            .mock_oauth2_key(key_mock);
+        (token, provider)
+    }
+
+    fn bound_spec() -> TokenSpec {
+        TokenSpec {
+            cnf_jkt: Some(dpop_test_jkt()),
+            ..TokenSpec::default()
+        }
+    }
+
+    /// Call with the given `Authorization` value and optional proofs.
+    async fn call_dpop(
+        provider: ProviderBuilder,
+        method: Method,
+        authorization: &str,
+        proofs: &[&str],
+    ) -> axum::response::Response {
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let mut builder = Request::builder()
+            .uri("/domain-1/userinfo")
+            .method(method)
+            .header(header::AUTHORIZATION, authorization);
+        for proof in proofs {
+            builder = builder.header("DPoP", *proof);
+        }
+        api.as_service()
+            .oneshot(builder.body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+    }
+
+    async fn assert_rejected(response: axum::response::Response, challenge: &str, error: &str) {
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(www_authenticate(&response), challenge);
+        assert_eq!(json_body(response).await["error"], error);
+    }
+
+    const DPOP_INVALID_TOKEN: &str = "DPoP error=\"invalid_token\", algs=\"ES256 RS256\"";
+    const DPOP_INVALID_PROOF: &str = "DPoP error=\"invalid_dpop_proof\", algs=\"ES256 RS256\"";
+
+    #[tokio::test]
+    async fn test_bound_token_with_proof_is_accepted() {
+        for method in [Method::GET, Method::POST] {
+            let (token, provider) =
+                dpop_provider(bound_spec(), openstack_keystone_config::DpopMode::Optional).await;
+            let proof = dpop_proof_for(method.as_str(), USERINFO_URL, "jti-1", None, Some(&token));
+            let response = call_dpop(provider, method, &format!("DPoP {token}"), &[&proof]).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(json_body(response).await["sub"], "user-1");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_bound_token_as_bearer_is_rejected() {
+        let (token, provider) =
+            dpop_provider(bound_spec(), openstack_keystone_config::DpopMode::Optional).await;
+        let proof = dpop_proof_for("GET", USERINFO_URL, "jti-1", None, Some(&token));
+        // A proof next to the Bearer scheme does not help.
+        let response =
+            call_dpop(provider, Method::GET, &format!("Bearer {token}"), &[&proof]).await;
+        assert_rejected(response, DPOP_INVALID_TOKEN, "invalid_token").await;
+    }
+
+    #[tokio::test]
+    async fn test_bound_token_without_proof_is_rejected() {
+        let (token, provider) =
+            dpop_provider(bound_spec(), openstack_keystone_config::DpopMode::Optional).await;
+        let response = call_dpop(provider, Method::GET, &format!("DPoP {token}"), &[]).await;
+        assert_rejected(response, DPOP_INVALID_PROOF, "invalid_dpop_proof").await;
+    }
+
+    #[tokio::test]
+    async fn test_two_proof_headers_are_rejected() {
+        let (token, provider) =
+            dpop_provider(bound_spec(), openstack_keystone_config::DpopMode::Optional).await;
+        let first = dpop_proof_for("GET", USERINFO_URL, "jti-1", None, Some(&token));
+        let second = dpop_proof_for("GET", USERINFO_URL, "jti-2", None, Some(&token));
+        let response = call_dpop(
+            provider,
+            Method::GET,
+            &format!("DPoP {token}"),
+            &[&first, &second],
+        )
+        .await;
+        assert_rejected(response, DPOP_INVALID_PROOF, "invalid_dpop_proof").await;
+    }
+
+    #[tokio::test]
+    async fn test_proof_from_another_key_is_rejected() {
+        let spec = TokenSpec {
+            cnf_jkt: Some("some-other-thumbprint".to_string()),
+            ..TokenSpec::default()
+        };
+        let (token, provider) =
+            dpop_provider(spec, openstack_keystone_config::DpopMode::Optional).await;
+        let proof = dpop_proof_for("GET", USERINFO_URL, "jti-1", None, Some(&token));
+        let response = call_dpop(provider, Method::GET, &format!("DPoP {token}"), &[&proof]).await;
+        assert_rejected(response, DPOP_INVALID_PROOF, "invalid_dpop_proof").await;
+    }
+
+    #[tokio::test]
+    async fn test_proof_for_another_token_method_or_url_is_rejected() {
+        let cases = [
+            ("GET", USERINFO_URL, Some("another-access-token")),
+            ("POST", USERINFO_URL, None),
+            ("GET", "http://localhost/v4/oauth2/domain-2/userinfo", None),
+        ];
+        for (htm, htu, other_token) in cases {
+            let (token, provider) =
+                dpop_provider(bound_spec(), openstack_keystone_config::DpopMode::Optional).await;
+            let proof =
+                dpop_proof_for(htm, htu, "jti-1", None, Some(other_token.unwrap_or(&token)));
+            let response =
+                call_dpop(provider, Method::GET, &format!("DPoP {token}"), &[&proof]).await;
+            assert_rejected(response, DPOP_INVALID_PROOF, "invalid_dpop_proof").await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_proof_without_ath_is_rejected() {
+        let (token, provider) =
+            dpop_provider(bound_spec(), openstack_keystone_config::DpopMode::Optional).await;
+        let proof = dpop_proof_for("GET", USERINFO_URL, "jti-1", None, None);
+        let response = call_dpop(provider, Method::GET, &format!("DPoP {token}"), &[&proof]).await;
+        assert_rejected(response, DPOP_INVALID_PROOF, "invalid_dpop_proof").await;
+    }
+
+    #[tokio::test]
+    async fn test_replayed_proof_is_rejected() {
+        let (token, provider) =
+            dpop_provider(bound_spec(), openstack_keystone_config::DpopMode::Optional).await;
+        let proof = dpop_proof_for("GET", USERINFO_URL, "jti-1", None, Some(&token));
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let send = || {
+            Request::builder()
+                .uri("/domain-1/userinfo")
+                .method(Method::GET)
+                .header(header::AUTHORIZATION, format!("DPoP {token}"))
+                .header("DPoP", &proof)
+                .body(Body::empty())
+                .unwrap()
+        };
+        let first = api.as_service().oneshot(send()).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let second = api.as_service().oneshot(send()).await.unwrap();
+        assert_rejected(second, DPOP_INVALID_PROOF, "invalid_dpop_proof").await;
+    }
+
+    #[tokio::test]
+    async fn test_dpop_scheme_with_unbound_token_is_rejected() {
+        let (token, provider) = dpop_provider(
+            TokenSpec::default(),
+            openstack_keystone_config::DpopMode::Optional,
+        )
+        .await;
+        let proof = dpop_proof_for("GET", USERINFO_URL, "jti-1", None, Some(&token));
+        let response = call_dpop(provider, Method::GET, &format!("DPoP {token}"), &[&proof]).await;
+        assert_rejected(response, DPOP_INVALID_TOKEN, "invalid_token").await;
+    }
+
+    #[tokio::test]
+    async fn test_unbound_token_follows_the_effective_mode() {
+        use openstack_keystone_config::DpopMode;
+        for (mode, status) in [
+            (DpopMode::Disabled, StatusCode::OK),
+            (DpopMode::Optional, StatusCode::OK),
+            (DpopMode::Required, StatusCode::UNAUTHORIZED),
+        ] {
+            let (token, provider) = dpop_provider(TokenSpec::default(), mode).await;
+            let response = call_dpop(provider, Method::GET, &format!("Bearer {token}"), &[]).await;
+            assert_eq!(response.status(), status, "{mode:?}");
+            if status == StatusCode::UNAUTHORIZED {
+                assert_eq!(www_authenticate(&response), DPOP_INVALID_TOKEN);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_invalid_bound_token_costs_no_proof_check() {
+        // The signature of a forged token is rejected first: the answer is
+        // the plain invalid_token even for the DPoP scheme.
+        let (_, provider) =
+            dpop_provider(bound_spec(), openstack_keystone_config::DpopMode::Optional).await;
+        let response = call_dpop(provider, Method::GET, "DPoP not.a.jwt", &[]).await;
+        assert_rejected(response, "Bearer error=\"invalid_token\"", "invalid_token").await;
     }
 }

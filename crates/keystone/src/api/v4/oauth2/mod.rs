@@ -45,6 +45,7 @@ mod logout;
 mod mfa;
 pub mod passkey;
 mod renderer;
+mod resource_dpop;
 mod revocations;
 mod revoke;
 mod rotate_signing_key;
