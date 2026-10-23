@@ -39,7 +39,9 @@ use crate::keystone::ServiceState;
 use crate::oauth2_client::on_behalf_of::{
     OnBehalfOfRequest, OnBehalfOfSubject, exchange_on_behalf_of,
 };
-use crate::oauth2_client::verify::verify_openstack_access_token;
+use crate::oauth2_client::verify::{
+    TokenPresentation, enforce_token_binding, verify_openstack_access_token,
+};
 use crate::service_grant::redeem::redeem_loaded_service_grant;
 
 /// The OpenStack service type of Keystone, accepted in a narrowed `aud`.
@@ -118,6 +120,12 @@ pub async fn authenticate_bound_bearer(
         &revoked_jtis,
     )
     .map_err(|e| BoundBearerError::InvalidToken(e.to_string()))?;
+
+    // This path authenticates by the SVID and cannot check a DPoP proof, so a
+    // token bound to a key is refused instead of being used as a bearer
+    // credential (ADR 0043 §4).
+    enforce_token_binding(claims.cnf.as_ref(), TokenPresentation::Bearer, false)
+        .map_err(|e| BoundBearerError::InvalidToken(e.to_string()))?;
 
     // The token must name an actor, and the SVID must authenticate exactly
     // that client (checked again, against the client's `spiffe_ids`, by the
