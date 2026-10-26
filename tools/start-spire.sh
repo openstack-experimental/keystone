@@ -108,7 +108,7 @@ spire-server entry create \
 # Distinct SVIDs for the live service grant tests: a client's spiffe_ids may not
 # overlap another client's, so every test that redeems with a real SVID owns
 # one. The test picks its SVID by ID from the ones the agent hands out.
-for name in redeem foreign; do
+for name in redeem foreign obo bearer; do
     spire-server entry create \
         -socketPath "$SERVER_SOCKET" \
         -parentID "spiffe://$TRUST_DOMAIN/agent" \

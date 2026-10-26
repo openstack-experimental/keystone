@@ -83,6 +83,11 @@ async fn fixture() -> Result<Fixture> {
 /// SVID of the harness SPIRE entry the redeeming test owns, and one that no
 /// client is ever registered for (`tools/start-spire.sh`).
 const REDEEM_SVID: &str = "spiffe://example.org/service/it-redeem/host/h1";
+// Every test that registers a client owns its SVID (`tools/start-spire.sh`):
+// a client's `spiffe_ids` may not overlap another's, so tests sharing one race
+// to a `409` when they run in parallel.
+const OBO_SVID: &str = "spiffe://example.org/service/it-obo/host/h1";
+const BEARER_SVID: &str = "spiffe://example.org/service/it-bearer/host/h1";
 const FOREIGN_SVID: &str = "spiffe://example.org/service/it-foreign/host/h1";
 
 /// Like [`fixture`], with the client's `spiffe_ids` set to the exact `svid`
@@ -734,7 +739,7 @@ fn access_token_of(body: &Value) -> Result<&str> {
 #[tokio::test]
 #[traced_test]
 async fn test_on_behalf_of_exchange_and_reexchange_over_mtls() -> Result<()> {
-    let f = fixture_with_svid(Some(REDEEM_SVID)).await?;
+    let f = fixture_with_svid(Some(OBO_SVID)).await?;
     let user = f.user().await?;
     let user_token = user
         .token
@@ -742,7 +747,7 @@ async fn test_on_behalf_of_exchange_and_reexchange_over_mtls() -> Result<()> {
         .map(secrecy::ExposeSecret::expose_secret)
         .ok_or_else(|| eyre!("user is not authenticated"))?;
 
-    let (status, body) = exchange(&f, REDEEM_SVID, user_token, KEYSTONE_TOKEN).await?;
+    let (status, body) = exchange(&f, OBO_SVID, user_token, KEYSTONE_TOKEN).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     let hop = access_token_of(&body)?.to_string();
     let payload = hop
@@ -752,12 +757,12 @@ async fn test_on_behalf_of_exchange_and_reexchange_over_mtls() -> Result<()> {
     let claims: Value =
         serde_json::from_slice(&data_encoding::BASE64URL_NOPAD.decode(payload.as_bytes())?)?;
     assert_eq!(claims["sub"], f.user_id.as_str(), "{claims}");
-    assert_eq!(claims["act"]["sub"], REDEEM_SVID, "{claims}");
+    assert_eq!(claims["act"]["sub"], OBO_SVID, "{claims}");
     assert_eq!(claims["delegation_context"]["auth_method"], "on_behalf_of");
 
     // The service renews the token, and only the service: another SVID can
     // not exchange it, and the client is not authenticated by the token.
-    let (status, body) = exchange(&f, REDEEM_SVID, &hop, ACCESS_TOKEN).await?;
+    let (status, body) = exchange(&f, OBO_SVID, &hop, ACCESS_TOKEN).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     let (status, body) = exchange(&f, FOREIGN_SVID, &hop, ACCESS_TOKEN).await?;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
@@ -768,20 +773,20 @@ async fn test_on_behalf_of_exchange_and_reexchange_over_mtls() -> Result<()> {
 #[tokio::test]
 #[traced_test]
 async fn test_delegated_bearer_is_accepted_only_with_the_actors_svid() -> Result<()> {
-    let f = fixture_with_svid(Some(REDEEM_SVID)).await?;
+    let f = fixture_with_svid(Some(BEARER_SVID)).await?;
     let user = f.user().await?;
     let user_token = user
         .token
         .as_ref()
         .map(secrecy::ExposeSecret::expose_secret)
         .ok_or_else(|| eyre!("user is not authenticated"))?;
-    let (status, body) = exchange(&f, REDEEM_SVID, user_token, KEYSTONE_TOKEN).await?;
+    let (status, body) = exchange(&f, BEARER_SVID, user_token, KEYSTONE_TOKEN).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     let hop = access_token_of(&body)?.to_string();
 
     // The actor's SVID plus its token: Keystone authenticates the request
     // (any answer but `401`).
-    let status = get_with_bearer(REDEEM_SVID, &hop).await?;
+    let status = get_with_bearer(BEARER_SVID, &hop).await?;
     assert_ne!(status, StatusCode::UNAUTHORIZED);
 
     // Another service's SVID is no proof for the token: `401`, and no
@@ -792,7 +797,7 @@ async fn test_delegated_bearer_is_accepted_only_with_the_actors_svid() -> Result
     // A service grant token is bound the same way.
     let id = f.create_grant(&user).await?;
     let (status, body) = post_form(
-        REDEEM_SVID,
+        BEARER_SVID,
         &format!("/v4/oauth2/{}/token", f.domain_id),
         &[
             ("grant_type", GRANT_TYPE),
@@ -803,7 +808,7 @@ async fn test_delegated_bearer_is_accepted_only_with_the_actors_svid() -> Result
     .await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     let grant_token = access_token_of(&body)?.to_string();
-    let status = get_with_bearer(REDEEM_SVID, &grant_token).await?;
+    let status = get_with_bearer(BEARER_SVID, &grant_token).await?;
     assert_ne!(status, StatusCode::UNAUTHORIZED);
     let status = get_with_bearer(FOREIGN_SVID, &grant_token).await?;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -815,7 +820,7 @@ async fn test_delegated_bearer_is_accepted_only_with_the_actors_svid() -> Result
         .send()
         .await?;
     assert!(rsp.status().is_success(), "{}", rsp.status());
-    let status = get_with_bearer(REDEEM_SVID, &grant_token).await?;
+    let status = get_with_bearer(BEARER_SVID, &grant_token).await?;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     Ok(())
 }

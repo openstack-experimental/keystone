@@ -115,6 +115,10 @@ methods = password,token,openid,application_credential,x509,mapped,hacked_appcre
 use_stderr = false
 debug = true
 log_dir = ${STATE_DIR}
+# Pinned, as on a real deployment: the bound-bearer path (ADR 0036 §8.1)
+# authenticates a delegated token only against an issuer built from it, never
+# from the Host header. Tokens minted on the internal listener carry it too.
+public_endpoint = http://localhost:8080
 
 # Dev/test only: derive the OAuth2 issuer from the Host header instead of
 # pinning [DEFAULT] public_endpoint (OAuth2 OP endpoints 503 without one).
