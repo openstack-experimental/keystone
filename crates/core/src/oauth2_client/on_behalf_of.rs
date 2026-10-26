@@ -20,7 +20,7 @@
 //! or losing the roles ends the chain at the next hop, and no chain outlives
 //! the client's `max_operation_lifetime`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use thiserror::Error;
@@ -136,6 +136,9 @@ struct Subject {
     methods: BTreeSet<String>,
     auth_time: DateTime<Utc>,
     root_jti: String,
+    /// Expiry of a JWT root, which ends the chain (see
+    /// [`AuthenticationContext::OnBehalfOf`]).
+    root_exp: Option<i64>,
     audience: Option<Audience>,
 }
 
@@ -154,12 +157,14 @@ pub async fn exchange_on_behalf_of(
         state,
         &ChainRequest {
             domain_id: request.domain_id,
-            issuer: request.issuer,
-            signing_algorithm: request.signing_algorithm,
-            subject: request.subject,
+            subject: ChainSubject::Presented {
+                subject: request.subject,
+                issuer: request.issuer,
+                signing_algorithm: request.signing_algorithm,
+            },
         },
         client,
-        request.svid.to_string(),
+        Some(request.svid),
     )
     .await
 }
@@ -168,55 +173,77 @@ pub async fn exchange_on_behalf_of(
 /// authenticated.
 struct ChainRequest<'a> {
     domain_id: &'a str,
-    issuer: &'a str,
-    signing_algorithm: SigningAlgorithm,
-    subject: OnBehalfOfSubject<'a>,
+    subject: ChainSubject<'a>,
 }
 
-/// Whether the chain behind `hop_token`, a token this endpoint minted, is
-/// still live: the same checks as the next exchange makes (revoked root
-/// token, user, roles, application credential, operation lifetime), except
-/// that nobody is authenticated. For introspection (ADR 0036 §6.3), so a
-/// resource server asking is told the chain ended.
+/// Where the subject of a chain comes from.
+enum ChainSubject<'a> {
+    /// A token handed over by the caller, still to be verified.
+    Presented {
+        subject: OnBehalfOfSubject<'a>,
+        issuer: &'a str,
+        signing_algorithm: SigningAlgorithm,
+    },
+    /// A hop token the caller already verified, with the revocation list it
+    /// was verified against.
+    Verified {
+        claims: &'a OpenStackAccessTokenClaims,
+        revoked_jtis: &'a HashSet<String>,
+    },
+}
+
+/// Whether the chain behind `claims`, the verified claims of a hop token
+/// this endpoint minted, is still live: the same checks as the next exchange
+/// makes (revoked root token, user, roles, application credential,
+/// operation lifetime), except that nobody is authenticated and the token is
+/// not verified again. For introspection (ADR 0036 §6.3), so a resource
+/// server asking is told the chain ended.
+///
+/// `Ok(false)` is a chain that ended; storage failures are errors, so they
+/// are never mistaken for an ended chain.
+///
+/// # Errors
+/// [`OnBehalfOfError::Provider`] when a lookup fails.
 pub async fn is_chain_live(
     state: &ServiceState,
     domain_id: &str,
-    issuer: &str,
-    signing_algorithm: SigningAlgorithm,
-    actor_client_id: &str,
-    hop_token: &str,
-) -> bool {
-    let Ok(Some(client)) = state
+    claims: &OpenStackAccessTokenClaims,
+    revoked_jtis: &HashSet<String>,
+) -> Result<bool, OnBehalfOfError> {
+    let Some(client) = state
         .provider
         .get_oauth2_client_provider()
-        .get_by_client_id(&ExecutionContext::internal(state), actor_client_id)
+        .get_by_client_id(&ExecutionContext::internal(state), &claims.client_id)
         .await
+        .map_err(OnBehalfOfError::provider)?
     else {
-        return false;
+        return Ok(false);
     };
-    if client.on_behalf_of_policy().is_none() {
-        return false;
-    }
-    exchange_for_client(
+    match exchange_for_client(
         state,
         &ChainRequest {
             domain_id,
-            issuer,
-            signing_algorithm,
-            subject: OnBehalfOfSubject::Hop(hop_token),
+            subject: ChainSubject::Verified {
+                claims,
+                revoked_jtis,
+            },
         },
         client,
-        String::new(),
+        None,
     )
     .await
-    .is_ok()
+    {
+        Ok(_) => Ok(true),
+        Err(e @ OnBehalfOfError::Provider(_)) => Err(e),
+        Err(_) => Ok(false),
+    }
 }
 
 async fn exchange_for_client(
     state: &ServiceState,
     request: &ChainRequest<'_>,
     client: OAuth2ClientResource,
-    actor_spiffe_id: String,
+    svid: Option<&SpiffeId>,
 ) -> Result<ExchangedOnBehalfOf, OnBehalfOfError> {
     let internal = ExecutionContext::internal(state);
     // The caller returned a client with this policy.
@@ -226,17 +253,58 @@ async fn exchange_for_client(
         .ok_or(OnBehalfOfError::InvalidClient)?;
 
     let subject = match request.subject {
-        OnBehalfOfSubject::Keystone(token) => keystone_subject(state, token).await?,
-        OnBehalfOfSubject::Hop(token) => hop_subject(state, request, &client, token).await?,
+        ChainSubject::Presented {
+            subject: OnBehalfOfSubject::Keystone(token),
+            ..
+        } => keystone_subject(state, token).await?,
+        ChainSubject::Presented {
+            subject: OnBehalfOfSubject::Hop(token),
+            issuer,
+            signing_algorithm,
+        } => {
+            let keys = state.provider.get_oauth2_key_provider();
+            let jwks = keys
+                .jwks(state, request.domain_id)
+                .await
+                .map_err(|_| OnBehalfOfError::InvalidSubject)?;
+            let revoked_jtis = keys
+                .revoked_jtis(state, request.domain_id)
+                .await
+                .map_err(OnBehalfOfError::provider)?;
+            let claims = verify_openstack_subject_token(
+                token,
+                &jwks,
+                signing_algorithm,
+                &[issuer.to_string()],
+                &revoked_jtis,
+            )
+            .map_err(|e| {
+                warn!(error = %e, "on-behalf-of hop token rejected");
+                OnBehalfOfError::InvalidSubject
+            })?;
+            hop_subject(state, &client, claims, &revoked_jtis).await?
+        }
+        ChainSubject::Verified {
+            claims,
+            revoked_jtis,
+        } => hop_subject(state, &client, claims.clone(), revoked_jtis).await?,
     };
 
     // §6.3: no chain outlives the client's operation lifetime.
     let lifetime = Duration::try_seconds(i64::try_from(max_operation_lifetime).unwrap_or(i64::MAX))
         .unwrap_or(Duration::MAX);
-    let valid_until = subject
+    let mut valid_until = subject
         .auth_time
         .checked_add_signed(lifetime)
         .unwrap_or(DateTime::<Utc>::MAX_UTC);
+    // A JWT root bounds the chain too: its revocation entry lives only until
+    // its own expiry.
+    if let Some(root_end) = subject
+        .root_exp
+        .and_then(|exp| DateTime::<Utc>::from_timestamp(exp, 0))
+    {
+        valid_until = valid_until.min(root_end);
+    }
     if Utc::now() >= valid_until {
         return Err(OnBehalfOfError::OperationExpired);
     }
@@ -276,7 +344,9 @@ async fn exchange_for_client(
         .context(AuthenticationContext::OnBehalfOf {
             actor: ActorInfo {
                 client_id: client.client_id.clone(),
-                spiffe_id: actor_spiffe_id,
+                // Introspection authenticates nobody: the context is built
+                // only to run the chain's checks and is dropped.
+                spiffe_id: svid.map(ToString::to_string).unwrap_or_default(),
             },
             delegated_project_id: subject.delegated_project_id,
             delegated_role_ids: subject.delegated_role_ids,
@@ -284,6 +354,7 @@ async fn exchange_for_client(
             subject_methods: subject.methods,
             auth_time: subject.auth_time,
             root_jti: subject.root_jti,
+            root_exp: subject.root_exp,
         })
         .principal(
             PrincipalInfoBuilder::default()
@@ -443,39 +514,19 @@ async fn keystone_subject(state: &ServiceState, token: &str) -> Result<Subject, 
         methods: sc.authentication_context().methods().into_iter().collect(),
         auth_time,
         root_jti,
+        root_exp: None,
         audience: None,
     })
 }
 
-/// Continue a chain from a hop token this endpoint minted for the same
-/// client (§6.3).
+/// Continue a chain from the verified claims of a hop token this endpoint
+/// minted for the same client (§6.3).
 async fn hop_subject(
     state: &ServiceState,
-    request: &ChainRequest<'_>,
     client: &OAuth2ClientResource,
-    token: &str,
+    claims: OpenStackAccessTokenClaims,
+    revoked_jtis: &HashSet<String>,
 ) -> Result<Subject, OnBehalfOfError> {
-    let keys = state.provider.get_oauth2_key_provider();
-    let jwks = keys
-        .jwks(state, request.domain_id)
-        .await
-        .map_err(|_| OnBehalfOfError::InvalidSubject)?;
-    let revoked_jtis = keys
-        .revoked_jtis(state, request.domain_id)
-        .await
-        .map_err(OnBehalfOfError::provider)?;
-    let claims = verify_openstack_subject_token(
-        token,
-        &jwks,
-        request.signing_algorithm,
-        &[request.issuer.to_string()],
-        &revoked_jtis,
-    )
-    .map_err(|e| {
-        warn!(error = %e, "on-behalf-of hop token rejected");
-        OnBehalfOfError::InvalidSubject
-    })?;
-
     // A hop token is presented without a DPoP proof; a bound one is refused
     // rather than used as a bearer credential (ADR 0043 §4).
     enforce_token_binding(claims.cnf.as_ref(), TokenPresentation::Bearer, false).map_err(|e| {
@@ -485,12 +536,13 @@ async fn hop_subject(
 
     // The chain belongs to one client: a hop token of another actor is a
     // re-delegation. A plain user JWT of this issuer starts a chain instead.
-    let (auth_time, root_jti, project_id, delegated_role_ids, application_credential_id) =
+    let (auth_time, root_jti, root_exp, project_id, delegated_role_ids, application_credential_id) =
         match claims.delegation_context {
             DelegationContext::OnBehalfOf {
                 actor_client_id,
                 auth_time,
                 root_jti,
+                root_exp,
                 project_id,
                 delegated_role_ids,
                 application_credential_id,
@@ -503,6 +555,7 @@ async fn hop_subject(
                 (
                     auth_time,
                     root_jti,
+                    root_exp,
                     project_id,
                     delegated_role_ids,
                     application_credential_id,
@@ -512,12 +565,23 @@ async fn hop_subject(
             // token of a service's own client credentials. Its claims do not
             // name the credential of a delegated subject, so only a plain
             // chain can start from it. The JWT is the chain's root, and
-            // `iat` is the earliest authentication time it proves.
+            // `iat` is the earliest authentication time it proves. It must
+            // have been issued to the exchanging client, and the chain ends
+            // at its `exp`: a JWT's revocation entry is swept then, so a
+            // longer chain could outlive its own revocation.
             DelegationContext::Plain
                 if claims.act.is_none()
-                    && !claims.amr.iter().any(|m| m == "client_credentials") =>
+                    && !claims.amr.iter().any(|m| m == "client_credentials")
+                    && claims.client_id == client.client_id =>
             {
-                (claims.iat, claims.jti.clone(), None, None, None)
+                (
+                    claims.iat,
+                    claims.jti.clone(),
+                    Some(claims.exp),
+                    None,
+                    None,
+                    None,
+                )
             }
             _ => {
                 return Err(OnBehalfOfError::UnsupportedSubject(
@@ -604,6 +668,7 @@ async fn hop_subject(
             .collect(),
         auth_time,
         root_jti,
+        root_exp,
     })
 }
 
@@ -633,6 +698,7 @@ pub fn build_on_behalf_of_claims(
         application_credential_id,
         auth_time,
         root_jti,
+        root_exp,
         ..
     } = sc.authentication_context()
     else {
@@ -684,6 +750,7 @@ pub fn build_on_behalf_of_claims(
             actor_client_id: actor.client_id.clone(),
             auth_time: auth_time.timestamp(),
             root_jti: root_jti.clone(),
+            root_exp: *root_exp,
             project_id: delegated_project_id.clone(),
             delegated_role_ids: delegated_role_ids.clone(),
             application_credential_id: application_credential_id.clone(),
@@ -1048,6 +1115,7 @@ mod tests {
                 actor_client_id: "glance".into(),
                 auth_time: claims_auth_time(&claims),
                 root_jti: "audit-1".into(),
+                root_exp: None,
                 project_id: Some("p1".into()),
                 delegated_role_ids: Some(vec!["member".into()]),
                 application_credential_id: Some("ac1".into()),

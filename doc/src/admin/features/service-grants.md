@@ -220,9 +220,11 @@ the grantor's own domain, roles) are those of any project-scoped access token. D
 token: the scope-drift tripwire (`project_id` equals `delegated_project_id`) is enforced by
 `verify_openstack_access_token` and must be kept by policy. `act` identifies
 the acting service in audit records and is also returned by introspection.
-Introspection reports the token inactive as soon as its grant is revoked,
-disabled or expired; a service that validates tokens offline only notices at
-the token's `exp`, so introspect when that delay matters.
+Introspection reports the token inactive as soon as its grant is deleted,
+disabled or expired (it does not re-check the grantor's or the project's
+state; those are re-checked when a request presents the token). A service that
+validates tokens offline only notices at the token's `exp`, so introspect when
+that delay matters.
 
 Keystone accepts such a token on its own internal interface only together with
 the SVID of the acting service: send `Authorization: Bearer <token>` over the
@@ -361,7 +363,8 @@ with the internal context and appear in the grant's `disabled_reason`.
 - EC2 credentials under a grant (phase 4) are not implemented. Trusts remain
   available.
 - An exchange accepts a Keystone token, the token of an earlier exchange, or a
-  plain access JWT issued to a user by the OAuth2 provider. A JWT of an
+  plain access JWT issued to a user by the OAuth2 provider for the exchanging
+  client; a chain started from a JWT ends at the JWT's expiry. A JWT of an
   application credential, trust or EC2 credential cannot start a chain.
 - Renewal re-reads an application credential, so deleting or expiring one ends
   the chain at the next exchange or request.

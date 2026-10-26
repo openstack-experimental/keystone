@@ -1959,6 +1959,7 @@ fn make_on_behalf_of(
         subject_methods: methods.iter().map(|m| m.to_string()).collect(),
         auth_time: Utc::now(),
         root_jti: "root".into(),
+        root_exp: None,
     }
 }
 

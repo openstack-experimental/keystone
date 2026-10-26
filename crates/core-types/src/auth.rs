@@ -1488,6 +1488,10 @@ pub enum AuthenticationContext {
         /// Identifier of the user token that started the chain: revoking
         /// it ends the chain at the next hop (§6.3).
         root_jti: String,
+        /// When the chain's root token expires, if the root is a JWT. The
+        /// chain ends then: a JWT's revocation entry is swept at its own
+        /// expiry, so a longer chain could outlive its revocation.
+        root_exp: Option<i64>,
     },
 }
 

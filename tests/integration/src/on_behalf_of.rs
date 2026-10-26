@@ -20,6 +20,8 @@
 //! cut by revoking the root token, removing a role or letting the client's
 //! operation lifetime pass.
 
+use std::collections::HashSet;
+
 use chrono::Utc;
 use eyre::Result;
 use tracing_test::traced_test;
@@ -35,7 +37,7 @@ use openstack_keystone_core_types::assignment::{Assignment, AssignmentType};
 use openstack_keystone_core_types::auth::AuthenticationError;
 use openstack_keystone_core_types::oauth2_client::{
     Audience, DelegationContext, DelegationPolicy, OAuth2ClientResource,
-    OAuth2ClientResourceCreateBuilder,
+    OAuth2ClientResourceCreateBuilder, OpenStackAccessTokenClaims,
 };
 use openstack_keystone_key_repository::asymmetric::{
     SigningAlgorithm, derive_kid, jwt_algorithm, to_encoding_key,
@@ -109,20 +111,27 @@ async fn exchange(
 
 /// Build the hop token the endpoint would return and sign it with the
 /// domain's real key.
-async fn mint_hop(
-    state: &ServiceState,
+fn hop_claims(
     domain_id: &str,
     exchanged: &ExchangedOnBehalfOf,
-) -> Result<String> {
+) -> Result<OpenStackAccessTokenClaims> {
     let now = Utc::now().timestamp();
-    let claims = build_on_behalf_of_claims(
+    Ok(build_on_behalf_of_claims(
         exchanged,
         &format!("{ISSUER}/{domain_id}"),
         Uuid::new_v4().to_string(),
         now,
         now + 300,
         Audience::control_plane(),
-    )?;
+    )?)
+}
+
+async fn mint_hop(
+    state: &ServiceState,
+    domain_id: &str,
+    exchanged: &ExchangedOnBehalfOf,
+) -> Result<String> {
+    let claims = hop_claims(domain_id, exchanged)?;
     let key = state
         .provider
         .get_oauth2_key_provider()
@@ -650,6 +659,73 @@ async fn test_a_plain_user_jwt_starts_a_chain() -> Result<()> {
 
 #[tokio::test]
 #[traced_test]
+async fn test_a_plain_jwt_of_another_client_is_not_exchangeable() -> Result<()> {
+    let f = fixture(3600).await?;
+    let seed = exchange(
+        &f.state,
+        &f.domain_id,
+        &f.client,
+        OnBehalfOfSubject::Keystone(&f.encoded),
+    )
+    .await?;
+    let mut claims = plain_user_claims(&seed, &f.domain_id, vec!["password".into()])?;
+    claims.client_id = "another-client".into();
+    let jwt = crate::service_grant::sign_claims(&f.state, &f.domain_id, &claims).await?;
+    assert!(matches!(
+        exchange(
+            &f.state,
+            &f.domain_id,
+            &f.client,
+            OnBehalfOfSubject::Hop(&jwt)
+        )
+        .await,
+        Err(OnBehalfOfError::UnsupportedSubject(_))
+    ));
+    Ok(())
+}
+
+/// A JWT root's revocation entry is swept at the JWT's own `exp`, so the
+/// chain must end there too, however long the client's operation lifetime.
+#[tokio::test]
+#[traced_test]
+async fn test_a_chain_rooted_at_a_jwt_ends_with_the_jwt() -> Result<()> {
+    let f = fixture(3600).await?;
+    let seed = exchange(
+        &f.state,
+        &f.domain_id,
+        &f.client,
+        OnBehalfOfSubject::Keystone(&f.encoded),
+    )
+    .await?;
+    let mut claims = plain_user_claims(&seed, &f.domain_id, vec!["password".into()])?;
+    claims.exp = Utc::now().timestamp() + 2;
+    let jwt = crate::service_grant::sign_claims(&f.state, &f.domain_id, &claims).await?;
+    let first = exchange(
+        &f.state,
+        &f.domain_id,
+        &f.client,
+        OnBehalfOfSubject::Hop(&jwt),
+    )
+    .await?;
+    assert!(first.valid_until.timestamp() <= claims.exp);
+    let hop = mint_hop(&f.state, &f.domain_id, &first).await?;
+
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    assert!(matches!(
+        exchange(
+            &f.state,
+            &f.domain_id,
+            &f.client,
+            OnBehalfOfSubject::Hop(&hop)
+        )
+        .await,
+        Err(OnBehalfOfError::OperationExpired)
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
 async fn test_a_service_credentials_jwt_is_not_exchangeable() -> Result<()> {
     let f = fixture(3600).await?;
     let seed = exchange(
@@ -687,19 +763,10 @@ async fn test_introspection_sees_the_chain_end() -> Result<()> {
         OnBehalfOfSubject::Keystone(&f.encoded),
     )
     .await?;
-    let hop = mint_hop(&f.state, &f.domain_id, &first).await?;
-    let issuer = format!("{ISSUER}/{}", f.domain_id);
-    let live = || {
-        is_chain_live(
-            &f.state,
-            &f.domain_id,
-            &issuer,
-            SigningAlgorithm::Es256,
-            &f.client.client_id,
-            &hop,
-        )
-    };
-    assert!(live().await);
+    let claims = hop_claims(&f.domain_id, &first)?;
+    let revoked = HashSet::new();
+    let live = || is_chain_live(&f.state, &f.domain_id, &claims, &revoked);
+    assert!(live().await?);
 
     // Revoking the user's token ends the chain for a resource server that
     // asks, although the hop token itself is neither expired nor revoked.
@@ -708,6 +775,6 @@ async fn test_introspection_sees_the_chain_end() -> Result<()> {
         .get_revoke_provider()
         .revoke_token(&ExecutionContext::internal(&f.state), &f.token)
         .await?;
-    assert!(!live().await);
+    assert!(!live().await?);
     Ok(())
 }

@@ -1233,13 +1233,18 @@ How phase 2 implements §6, and where it refines the text above.
   validated with `TokenApi::validate_to_context`, which also checks
   revocation) and the hop token of an earlier exchange by the same actor
   (`urn:ietf:params:oauth:token-type:access_token`, verified against the
-  issuing domain's JWKS and `revoked_jtis`). A plain access JWT of the same domain's issuer, issued
-  to a user (no `act`, not `client_credentials`), starts a chain too: it is
-  verified like a hop token, its `jti` is the chain's root and its `iat` the
-  authentication time. Its claims do not name the credential behind a
-  delegated subject, so an application credential, trust or EC2 JWT is not
-  exchangeable. Revoking the JWT's `jti` ends the chain on every later hop.
-  The JWT alone is still not a Keystone credential (§8.1).
+  issuing domain's JWKS and `revoked_jtis`). A plain access JWT of the same
+  domain's issuer, issued to the exchanging client for a user (no `act`, not
+  `client_credentials`), starts a chain too: it is verified like a hop token,
+  its `jti` is the chain's root and its `iat` the authentication time. Its
+  claims do not name the credential behind a delegated subject, so an
+  application credential, trust or EC2 JWT is not exchangeable. Revoking the
+  JWT's `jti` ends the chain on every later hop, and the chain ends at the
+  JWT's `exp` (carried as `root_exp`), because the revocation entry is swept
+  then. The JWT alone is still not a Keystone credential (§8.1). The
+  authority-minting flow for such a JWT is not part of this phase: the first
+  one that issues it must carry the original authentication time rather than
+  a fresh `iat`, or a re-issue would restart the operation lifetime.
 - **Client authentication.** An on-behalf-of exchange is authenticated with
   `tls_client_auth` on the internal interface, like redemption: the request
   names the `client_id`, the SVID must match its `spiffe_ids`, and its
@@ -1279,8 +1284,10 @@ How phase 2 implements §6, and where it refines the text above.
   credential of an application-credential chain, so deleting or expiring it
   ends the chain even when its tokens were not revoked.
 - **Introspection.** The introspection endpoint reports a service grant token
-  inactive once its grant is gone, disabled or expired, and an on-behalf-of
-  token inactive once its chain would be refused at the next exchange (revoked
+  inactive once its grant is gone, disabled or expired (the grantor, project
+  and roles are re-checked only when a request presents the token, as
+  redemption needs the grantee's SVID, which introspection lacks), and an
+  on-behalf-of token inactive once its chain would be refused at the next exchange (revoked
   root, lost role, deleted credential, operation lifetime). A resource server
   that verifies tokens offline cannot see this and accepts such a token until
   its `exp`; the hop lifetime bounds that exposure, and a server that needs

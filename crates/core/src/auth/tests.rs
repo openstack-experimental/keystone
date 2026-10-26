@@ -4040,6 +4040,7 @@ fn make_on_behalf_of_ctx(
         subject_methods: ["password".to_string()].into(),
         auth_time: chrono::Utc::now(),
         root_jti: "root".into(),
+        root_exp: None,
     }
 }
 

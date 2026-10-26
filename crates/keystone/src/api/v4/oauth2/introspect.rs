@@ -42,6 +42,8 @@
 //!   `redeem_refresh_token`, which rejects only `expires_at < now`: a token is
 //!   usable through its expiry second, so introspection agrees.
 
+use std::collections::HashSet;
+
 use axum::{
     Form, Json,
     extract::{Path, State},
@@ -289,14 +291,19 @@ impl IntrospectContext<'_> {
     }
 
     /// Whether the service grant or on-behalf-of chain a token was issued
-    /// under still exists. Fails closed: a lookup error reports inactive.
+    /// under still exists. An ended delegation is `Ok(false)`; a lookup
+    /// failure is an error, never an inactive token.
+    ///
+    /// A service grant is checked for existence, `enabled` and expiry only.
+    /// Its redemption also needs the grantee's SVID, which introspection
+    /// does not have; the grantor, project and roles are re-checked when a
+    /// request presents the token (ADR 0036 §8.1).
     async fn delegation_is_live(
         &self,
         claims: &OpenStackAccessTokenClaims,
-        token: &str,
-        issuer: &str,
-    ) -> bool {
-        match &claims.delegation_context {
+        revoked_jtis: &HashSet<String>,
+    ) -> Result<bool, Oauth2TokenError> {
+        let live = match &claims.delegation_context {
             DelegationContext::ServiceGrant { grant_id, .. } => self
                 .state
                 .provider
@@ -307,24 +314,21 @@ impl IntrospectContext<'_> {
                     grant_id,
                 )
                 .await
-                .ok()
-                .flatten()
-                .is_some_and(|grant| grant.is_redeemable(chrono::Utc::now())),
-            DelegationContext::OnBehalfOf {
-                actor_client_id, ..
-            } => {
-                is_chain_live(
-                    self.state,
-                    self.domain_id,
-                    issuer,
-                    self.signing_algorithm,
-                    actor_client_id,
-                    token,
-                )
-                .await
+                .map(|grant| grant.is_some_and(|g| g.is_redeemable(chrono::Utc::now())))
+                .map_err(|e| e.to_string()),
+            DelegationContext::OnBehalfOf { .. } => {
+                is_chain_live(self.state, self.domain_id, claims, revoked_jtis)
+                    .await
+                    .map_err(|e| e.to_string())
             }
-            _ => true,
-        }
+            _ => Ok(true),
+        };
+        live.map_err(|e| {
+            // Reporting inactive would make a resource server treat a
+            // storage failure as a revocation.
+            tracing::warn!(error = %e, "oauth2 introspect: delegation lookup failed");
+            Oauth2TokenError::internal("token introspection failed")
+        })
     }
 
     /// `Some(response)` if `token` is a currently valid access token of
@@ -369,7 +373,7 @@ impl IntrospectContext<'_> {
         // that check it offline: a resource server asking here is told when
         // the chain or grant behind it has ended (ADR 0036 §7.2).
         if let IntrospectedAccessToken::OpenStack(c) = &verified
-            && !self.delegation_is_live(c, token, &issuer).await
+            && !self.delegation_is_live(c, &revoked_jtis).await?
         {
             return Ok(None);
         }
@@ -727,6 +731,118 @@ mod tests {
         assert_eq!(body["openstack_context"]["roles"], json!(["member"]));
         assert_eq!(body["openstack_context"]["user_id"], "shadow");
         assert_eq!(body["delegation_context"]["auth_method"], "plain");
+    }
+
+    fn service_grant_claims() -> Value {
+        let mut claims = openstack_claims();
+        claims["amr"] = json!(["service_grant"]);
+        claims["delegation_context"] = json!({
+            "auth_method": "service_grant",
+            "delegated_project_id": "project-1",
+            "grant_id": "g1",
+        });
+        claims["act"] = json!({
+            "client_id": "client-9", "sub_type": "spiffe", "sub": "spiffe://td/client-9",
+        });
+        claims["scope_type"] = json!("project");
+        claims["project_id"] = json!("project-1");
+        claims["project_domain_id"] = json!("domain-1");
+        claims["scope_roles"] = json!([]);
+        claims
+    }
+
+    fn stored_grant(
+        modify: impl FnOnce(&mut openstack_keystone_core_types::service_grant::ServiceGrant),
+    ) -> openstack_keystone_core_types::service_grant::ServiceGrant {
+        use openstack_keystone_core_types::service_grant::{GrantTarget, Grantee, ServiceGrant};
+        let mut grant = ServiceGrant {
+            id: "g1".into(),
+            version: 1,
+            domain_id: "domain-1".into(),
+            grantor_user_id: "user-1".into(),
+            grantee: Grantee::Client {
+                client_id: "client-9".into(),
+                client_domain_id: "domain-1".into(),
+            },
+            target: GrantTarget::Project {
+                project_id: "project-1".into(),
+                project_domain_id: "domain-1".into(),
+            },
+            role_ids: vec!["member".into()],
+            expires_at: None,
+            description: None,
+            enabled: true,
+            created_at: chrono::Utc::now(),
+            last_redeemed_at: None,
+            disabled_reason: None,
+        };
+        modify(&mut grant);
+        grant
+    }
+
+    fn grant_provider(
+        result: Result<
+            Option<openstack_keystone_core_types::service_grant::ServiceGrant>,
+            openstack_keystone_core_types::service_grant::ServiceGrantProviderError,
+        >,
+    ) -> crate::service_grant::MockServiceGrantProvider {
+        let mut mock = crate::service_grant::MockServiceGrantProvider::default();
+        let result = std::sync::Mutex::new(Some(result));
+        mock.expect_get_service_grant()
+            .returning(move |_, _, _| result.lock().unwrap().take().unwrap_or(Ok(None)));
+        mock
+    }
+
+    #[tokio::test]
+    async fn test_service_grant_token_is_active_while_the_grant_is() {
+        let (token, key_mock) = signed(service_grant_claims(), &[]);
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock().await)
+            .mock_oauth2_session(session_with(None))
+            .mock_oauth2_key(key_mock)
+            .mock_service_grant(grant_provider(Ok(Some(stored_grant(|_| {})))));
+        let (status, body) = call(provider, &form(&token)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["active"], true);
+    }
+
+    #[tokio::test]
+    async fn test_service_grant_token_is_inactive_once_the_grant_ended() {
+        let expired = chrono::Utc::now() - chrono::Duration::seconds(5);
+        let cases = [
+            ("deleted", None),
+            ("disabled", Some(stored_grant(|g| g.enabled = false))),
+            (
+                "expired",
+                Some(stored_grant(|g| g.expires_at = Some(expired))),
+            ),
+        ];
+        for (name, grant) in cases {
+            let (token, key_mock) = signed(service_grant_claims(), &[]);
+            let provider = Provider::mocked_builder()
+                .mock_oauth2_client(client_mock().await)
+                .mock_oauth2_session(session_with(None))
+                .mock_oauth2_key(key_mock)
+                .mock_service_grant(grant_provider(Ok(grant)));
+            let (status, body) = call(provider, &form(&token)).await;
+            assert_eq!(status, StatusCode::OK, "{name}");
+            assert_eq!(body, json!({"active": false}), "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_grant_lookup_error_is_500_not_inactive() {
+        use openstack_keystone_core_types::service_grant::ServiceGrantProviderError;
+        let (token, key_mock) = signed(service_grant_claims(), &[]);
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock().await)
+            .mock_oauth2_session(session_with(None))
+            .mock_oauth2_key(key_mock)
+            .mock_service_grant(grant_provider(Err(ServiceGrantProviderError::Provider(
+                "backend down".into(),
+            ))));
+        let (status, _) = call(provider, &form(&token)).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[tokio::test]

@@ -308,6 +308,11 @@ pub enum DelegationContext {
         auth_time: i64,
         /// Identifier of the user token that started the chain (§6.3).
         root_jti: String,
+        /// When the chain's root token, a JWT, expires: the chain ends then,
+        /// as the JWT's revocation entry is swept at its own expiry.
+        /// Absent for a chain rooted at a Keystone token.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        root_exp: Option<i64>,
         /// The project of the subject's own delegation, if it had one.
         #[serde(
             default,

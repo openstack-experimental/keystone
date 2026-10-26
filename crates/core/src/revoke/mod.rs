@@ -429,6 +429,7 @@ mod tests {
                 subject_methods: ["password".to_string()].into(),
                 auth_time,
                 root_jti: "root_audit_id".into(),
+                root_exp: None,
             })
             .principal(PrincipalInfo {
                 identity: IdentityInfo::User(
