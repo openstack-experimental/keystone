@@ -82,6 +82,28 @@ Coordinate Fernet and distributed-encryption key changes separately from binary
 upgrades. Follow the dedicated [Fernet](tokens/fernet.md) and
 [distributed-storage](storage/distributed.md) procedures.
 
+### Behaviour changes to check before upgrading
+
+- **Rate limiting is on by default.** `[rate_limit_global_ip]` and
+  `[rate_limit_user_auth]` default to `enabled = true` with a burst of 100 and
+  10 requests per second. The global limiter keys on the client address, so:
+  - behind a reverse proxy, list it in `[rate_limit_trusted_proxies]`, or every
+    client shares the proxy's bucket;
+  - other OpenStack services that validate tokens (`GET /v3/auth/tokens`)
+    arrive from a few addresses at a high rate. Raise `burst_size` and
+    `replenish_rate_per_second` of `[rate_limit_global_ip]` to the validation
+    rate of the busiest service node, or set `enabled = false` where a proxy
+    already limits.
+- **Default listener ports.** `[interface_public]` without `tcp_address` binds
+  `0.0.0.0:8080` and `[interface_internal]` without `tcp_address` binds
+  `0.0.0.0:8081`. Earlier builds swapped these two when the section was
+  present. If your load balancer, service catalog or Kubernetes Service relied
+  on the old behaviour, set `tcp_address` explicitly before upgrading.
+- **Multi-factor rules are enforced.** A user with `multi_factor_auth_rules`
+  must now satisfy them on `POST /v3/auth/tokens` (see
+  [Multi-factor authentication rules](features/mfa.md)). Check that those users
+  have the second factor enrolled.
+
 ## Backup and recovery
 
 Preserve the database, all Fernet and credential key repositories, distributed

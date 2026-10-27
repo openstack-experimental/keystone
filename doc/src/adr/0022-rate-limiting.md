@@ -63,7 +63,7 @@ manually evaluate limits, and if a limit is exceeded, they will construct a
 standardized `HTTP 429 Too Many Requests` response containing a `Retry-After`
 header.
 
----
+______________________________________________________________________
 
 ## 1. Configuration-Driven Limits
 
@@ -108,10 +108,10 @@ trusted_proxies =
 To prevent operators from silently misconfiguring the limiters into an
 ineffective state, the config parser MUST enforce the following bounds:
 
-| Parameter                   | Minimum | Maximum |
+| Parameter | Minimum | Maximum |
 | --------------------------- | ------- | ------- |
-| `burst_size`                | 1       | 100,000 |
-| `replenish_rate_per_second` | 1       | 100,000 |
+| `burst_size` | 1 | 100,000 |
+| `replenish_rate_per_second` | 1 | 100,000 |
 
 Values outside these ranges MUST cause startup failure identically to the
 fail-hard rule for `replenish_rate_per_second = 0`.
@@ -137,7 +137,7 @@ pub struct RateLimitState {
 }
 ```
 
----
+______________________________________________________________________
 
 ## 2. Error Response Construction
 
@@ -203,7 +203,7 @@ pub fn check_rate_limit<K: Clone>(
 }
 ```
 
----
+______________________________________________________________________
 
 ## 3. Handler Execution Flow
 
@@ -262,7 +262,7 @@ pub async fn create_token(
 }
 ```
 
----
+______________________________________________________________________
 
 ## 4. Security Invariants
 
@@ -270,25 +270,25 @@ Any code change violating the following is rejected at review:
 
 1. **No Hardcoded Limits:** `burst_size` and `replenish_rate` MUST originate
    from the `keystone.conf` INI configuration state.
-2. **Fail-Hard Initialization:** If a governor is configured with
+1. **Fail-Hard Initialization:** If a governor is configured with
    `enabled = true` but cannot be initialized (e.g., invalid parameters such as
    `replenish_rate_per_second = 0`), the application MUST fail to start. Silent
    fallback to no-limiting is a security regression.
-3. **Response Uniformity:** The HTTP 429 response body and headers MUST be
+1. **Response Uniformity:** The HTTP 429 response body and headers MUST be
    identical regardless of which governor tripped, to prevent additional
    disclosure channels beyond the status code itself. The 429 response MUST
    include a correctly calculated `Retry-After` header. No additional headers
    that expose the rate-limit key or any identifying information should be
    present, to prevent user enumeration via rate-limit probing.
-4. **Pre-Hash Enforcement:** Rate limit checks for authentication endpoints MUST
+1. **Pre-Hash Enforcement:** Rate limit checks for authentication endpoints MUST
    be executed _before_ any CPU-intensive operations (e.g., Argon2id/Bcrypt
    password verification) are triggered.
-5. **Distinct Buckets:** Different operational contexts MUST use physically
+1. **Distinct Buckets:** Different operational contexts MUST use physically
    separate `RateLimiter` instances in the application state. Multiplexing
    different entity types into the same keyed store is prohibited.
-6. **Monotonic Clock:** Rate limiters MUST use `governor::clock::MonotonicClock`
+1. **Monotonic Clock:** Rate limiters MUST use `governor::clock::MonotonicClock`
    to prevent NTP backward shifts from resetting quota windows.
-7. **Key Normalization:** Any key derived from user input (e.g., username) MUST
+1. **Key Normalization:** Any key derived from user input (e.g., username) MUST
    be normalized before being used as a rate-limit key. Normalization MUST
    apply, in order: NFKC Unicode normalization, case-folding to lowercase, and
    any additional canonicalization applied by the authentication logic (e.g.,
@@ -296,12 +296,12 @@ Any code change violating the following is rejected at review:
    (e.g., Cyrillic `а` vs. Latin `a`) to create distinct buckets for the same
    logical identity. The normalization function MUST be a single shared utility
    used by both the rate limiter and the authentication pipeline.
-8. **Post-Lookup User Throttle:** For unauthenticated endpoints, per-IP rate
+1. **Post-Lookup User Throttle:** For unauthenticated endpoints, per-IP rate
    limiting is the primary throttle applied before any database lookup. Per-user
    rate limiting MUST only be applied after the user is confirmed to exist. This
    prevents key-exhaustion bypass attacks where an attacker crafts novel
    usernames, each with independent quota.
-9. **Trusted Proxy Source IP:** The IP address used as a rate-limit key MUST be
+1. **Trusted Proxy Source IP:** The IP address used as a rate-limit key MUST be
    the originating client IP, not the address of any intermediate reverse proxy.
    When `trusted_proxies` is non-empty, the client IP MUST be extracted from the
    first untrusted hop in exactly the configured `trusted_header`
@@ -310,10 +310,10 @@ Any code change violating the following is rejected at review:
    When `trusted_proxies` is empty, the direct peer address MUST be used.
    Accepting both headers implicitly, or accepting a header from an untrusted
    peer, allows a client to spoof its apparent IP and defeat per-IP limiting.
-10. **Minimum `Retry-After`:** The `Retry-After` header value MUST be at least 1
-    second. Sub-second wait durations MUST be rounded up to 1. A value of 0 is
-    valid per RFC 7231 ("retry immediately") and causes a thundering herd when
-    many clients receive it simultaneously.
+1. **Minimum `Retry-After`:** The `Retry-After` header value MUST be at least 1
+   second. Sub-second wait durations MUST be rounded up to 1. A value of 0 is
+   valid per RFC 7231 ("retry immediately") and causes a thundering herd when
+   many clients receive it simultaneously.
 
 ## Consequences
 
@@ -406,19 +406,19 @@ Audit of every unauthenticated or pre-authentication endpoint that performs
 cryptographic work. Each is throttled before the expensive step; no handler
 change was required.
 
-| Surface                                                                                                                                                                                                                                                          | Limiter                                                                                             | Placement                                          |
+| Surface | Limiter | Placement |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `v3/auth/token/create` (password, token, application credential, and other methods)                                                                                                                                                                              | `check_ip()`                                                                                        | handler entry                                      |
-| `v3/auth/token/show` (token validation)                                                                                                                                                                                                                          | `check_ip()`                                                                                        | handler entry                                      |
-| `v3/ec2tokens/create`                                                                                                                                                                                                                                            | `check_ip()`                                                                                        | handler entry                                      |
-| Federation JWT / OIDC login (`jwt::login`, `oidc::callback`)                                                                                                                                                                                                     | `check_ip()`                                                                                        | handler entry                                      |
-| `v4/spiffe`                                                                                                                                                                                                                                                      | `check_ip()`                                                                                        | handler entry                                      |
-| Auth plugins (`core/src/auth_plugin.rs`)                                                                                                                                                                                                                         | `check_ip()`                                                                                        | plugin dispatch                                    |
-| OAuth2 browser and discovery endpoints (`authorize`, `authorize_mfa`, `device`, `device_authorization`, `device_federated`, `device_mfa`, `federated`, `jwks`, `jwks_revocation`, `well_known`, `userinfo`, `introspect`, `revoke`, `logout`, `upstream_logout`) | `check_ip()`                                                                                        | handler entry                                      |
-| OAuth2 `/token`: `client_credentials`, `authorization_code`, `token_exchange`                                                                                                                                                                                    | `check_ip()` via `dpop::bind_token_request` (`SourceLimit::Pending`)                                | before DPoP proof verification                     |
-| OAuth2 `/token`: `device_code`, `refresh_token`                                                                                                                                                                                                                  | `check_ip()` already charged by the grant, then `dpop::bind_token_request` (`SourceLimit::Charged`) | before DPoP proof verification                     |
-| OAuth2 `/token`: service grant                                                                                                                                                                                                                                   | per-SVID `oauth2_token_rate_limiter`                                                                | before any lookup; requires a verified SPIFFE SVID |
-| API-key authentication                                                                                                                                                                                                                                           | per-key and per-IP `api_key_rate_limiter`                                                           | `core/src/api/api_key_auth.rs`                     |
+| `v3/auth/token/create` (password, token, application credential, and other methods) | `check_ip()` | handler entry |
+| `v3/auth/token/show` (token validation) | `check_ip()` | handler entry |
+| `v3/ec2tokens/create` | `check_ip()` | handler entry |
+| Federation JWT / OIDC login (`jwt::login`, `oidc::callback`) | `check_ip()` | handler entry |
+| `v4/spiffe` | `check_ip()` | handler entry |
+| Auth plugins (`core/src/auth_plugin.rs`) | `check_ip()` | plugin dispatch |
+| OAuth2 browser and discovery endpoints (`authorize`, `authorize_mfa`, `device`, `device_authorization`, `device_federated`, `device_mfa`, `federated`, `jwks`, `jwks_revocation`, `well_known`, `userinfo`, `introspect`, `revoke`, `logout`, `upstream_logout`) | `check_ip()` | handler entry |
+| OAuth2 `/token`: `client_credentials`, `authorization_code`, `token_exchange` | `check_ip()` via `dpop::bind_token_request` (`SourceLimit::Pending`) | before DPoP proof verification |
+| OAuth2 `/token`: `device_code`, `refresh_token` | `check_ip()` already charged by the grant, then `dpop::bind_token_request` (`SourceLimit::Charged`) | before DPoP proof verification |
+| OAuth2 `/token`: service grant | per-SVID `oauth2_token_rate_limiter` | before any lookup; requires a verified SPIFFE SVID |
+| API-key authentication | per-key and per-IP `api_key_rate_limiter` | `core/src/api/api_key_auth.rs` |
 
 Modules without their own limiter (`passkey`, `sso`, `consent`, `backchannel`)
 are not endpoints: they are helpers reached only through the handlers above,
@@ -430,7 +430,7 @@ on the client IP, so deployments behind a proxy must configure trusted proxy
 headers. New unauthenticated crypto endpoints must add a `check_ip()` call and a
 burst-exhaustion `429` test; this is a review requirement, not a follow-up ADR.
 
-## Default addendum (2026-10-28)
+## Default addendum (2026-10-27)
 
 `[rate_limit_global_ip]` and `[rate_limit_user_auth]` now default to
 `enabled = true` (`burst_size = 100`, `replenish_rate_per_second = 10`).
@@ -442,3 +442,9 @@ Upgrade note: behind a reverse proxy that is not listed in
 `[rate_limit_trusted_proxies]`, every client resolves to the proxy address and
 shares one global bucket. Configure the trusted proxies, or raise `burst_size`
 and `replenish_rate_per_second`, before upgrading such a deployment.
+
+`v3/auth/token/show` is also covered, and other OpenStack services validate
+user tokens through it from a few addresses at a high rate. Size
+`[rate_limit_global_ip]` for the validation rate of the busiest service node
+(see the upgrade notes in the administrator guide, operations), or the
+service's own API calls are answered with `429`.

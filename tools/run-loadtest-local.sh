@@ -48,6 +48,13 @@ cat <<EOF > "$CONFIG_FILE"
 opa_base_url = unix://${STATE_DIR}/opa.sock
 opa_policies_path = policy
 
+# The load generator sends every request from 127.0.0.1.
+[rate_limit_global_ip]
+enabled = false
+
+[rate_limit_user_auth]
+enabled = false
+
 [auth]
 methods = password,token,openid,application_credential,x509
 

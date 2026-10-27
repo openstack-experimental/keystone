@@ -97,6 +97,14 @@ cat << EOF > "$CONFIG_FILE"
 opa_base_url = unix:///tmp/nextest/keystone/opa.sock
 opa_policies_path = policy
 
+# Every request comes from 127.0.0.1; the default limiters would throttle
+# the parallel API tests.
+[rate_limit_global_ip]
+enabled = false
+
+[rate_limit_user_auth]
+enabled = false
+
 [auth]
 # mapped is the fixed, plugin-name-independent method every mode=mapping
 # dynamic plugin's issued tokens carry (ADR 0025 section 4); a mode=full_auth
