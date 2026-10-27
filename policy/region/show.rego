@@ -14,7 +14,10 @@ import data.identity
 #
 # The `input.target` is null
 #
-default allow := false
+# Any authenticated caller may read regions: python-keystone's default is
+# `check_str=''` (any valid token). The admin and system-reader rules below
+# are redundant under this default and kept to mirror `auth/project/list`.
+default allow := true
 
 # METADATA
 # description: "`Admin` is allowed by default"

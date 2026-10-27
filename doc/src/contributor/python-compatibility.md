@@ -119,8 +119,3 @@ filed** — no issue numbers exist yet, so nothing here links to one:
 - **`OS-ENDPOINT-POLICY`** — `/v3/policies/{id}/OS-ENDPOINT-POLICY/*` and
   `/v3/endpoints/{id}/OS-ENDPOINT-POLICY/policy`, backed by the
   `policy_association` table. Tempest's `test_policies` does not exercise it.
-- **`input.credentials.system_scope` audit** — several policies compare
-  against a key `Credentials` never emits. The affected rules are not uniform
-  and `region`'s python default is *broader* than the rego, so this needs an
-  endpoint-by-endpoint audit rather than a rename. See
-  [security model](security-model.md) §9 for the per-rule breakdown.

@@ -26,11 +26,7 @@ import data.identity
 #
 # NOTE on the credentials key: the system scope arrives as
 # `input.credentials.system` (`Credentials.system` in
-# `crates/core/src/policy.rs`, serialized under its own field name). Several
-# older policies in this tree compare against `input.credentials.system_scope`,
-# a key `Credentials` never emits, which makes their system-reader branches
-# unreachable against real input — their Rego unit tests only pass because they
-# hand-write that key. Do not copy that spelling here.
+# `crates/core/src/policy.rs`, serialized under its own field name).
 #
 default allow := false
 

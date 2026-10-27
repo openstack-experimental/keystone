@@ -10,10 +10,9 @@ surface (`authorize`, `token`, `device`, `device_authorization`, `jwks`,
 `jwks_revocation`, `well_known`), `v4/spiffe`, `v3/ec2tokens/create`,
 `v3/auth/token/show`, and the federation JWT/OIDC login endpoints (security
 review V6, V8a). Status was left at `Proposed` after the feature shipped;
-corrected 2026-09-14 (security review re-evaluation) so a reader triaging by
-ADR status does not under-weight this live surface. Follow-up ADR extending
-coverage to any remaining unauthenticated crypto endpoints is still open —
-see the security review V6 for current coverage.
+corrected 2026-09-14 (security review re-evaluation) so a reader triaging by ADR
+status does not under-weight this live surface. The coverage follow-up is closed
+by the [Coverage addendum](#coverage-addendum-2026-10-27) below.
 
 ## Context
 
@@ -109,10 +108,10 @@ trusted_proxies =
 To prevent operators from silently misconfiguring the limiters into an
 ineffective state, the config parser MUST enforce the following bounds:
 
-| Parameter                  | Minimum | Maximum  |
-|----------------------------|---------|----------|
-| `burst_size`               | 1       | 100,000  |
-| `replenish_rate_per_second`| 1       | 100,000  |
+| Parameter                   | Minimum | Maximum |
+| --------------------------- | ------- | ------- |
+| `burst_size`                | 1       | 100,000 |
+| `replenish_rate_per_second` | 1       | 100,000 |
 
 Values outside these ranges MUST cause startup failure identically to the
 fail-hard rule for `replenish_rate_per_second = 0`.
@@ -334,14 +333,14 @@ Any code change violating the following is rejected at review:
   per unique key. Under adversarial conditions (unique-key flooding), entries
   must be aggressively pruned. The store MUST:
   - Cap at a configurable maximum entry count (default: 10,000).
-  - Be trimmed every 60 seconds via a background task using LRU eviction:
-    when the cap is reached, the least-recently-seen entry is evicted to make
-    room for the new key. LRU is preferred over fail-open (dropping new keys)
-    because fail-open degrades rate limiting for **all** users simultaneously
-    once the store is full — including legitimate users who are not flooding —
-    whereas LRU preserves quotas for actively-authenticating sessions.
-  - The global IP limiter remains effective as a backstop regardless of
-    per-user store state.
+  - Be trimmed every 60 seconds via a background task using LRU eviction: when
+    the cap is reached, the least-recently-seen entry is evicted to make room
+    for the new key. LRU is preferred over fail-open (dropping new keys) because
+    fail-open degrades rate limiting for **all** users simultaneously once the
+    store is full — including legitimate users who are not flooding — whereas
+    LRU preserves quotas for actively-authenticating sessions.
+  - The global IP limiter remains effective as a backstop regardless of per-user
+    store state.
 - **Clock source:** `DefaultClock` uses `SystemTime`, which can be adjusted
   backward by NTP drift, resetting quota windows. Using `MonotonicClock`
   (required by Invariant 6) prevents this. The tradeoff is that `MonotonicClock`
@@ -366,8 +365,8 @@ Any code change violating the following is rejected at review:
 - **Key normalization:** Per-user rate-limit keys MUST be normalized before
   lookup. This means NFKC Unicode normalization, case-folding, stripping
   trailing `@`, and any other canonicalization applied by the authentication
-  logic. Without NFKC, Unicode homoglyph variants produce distinct keys for
-  the same logical identity, each with independent quotas. The normalization
+  logic. Without NFKC, Unicode homoglyph variants produce distinct keys for the
+  same logical identity, each with independent quotas. The normalization
   function MUST be a single shared utility to ensure consistency between the
   rate limiter and the authentication pipeline.
 - **User enumeration trade-off:** Per-user rate limiting inherently enables user
@@ -390,8 +389,9 @@ Any code change violating the following is rejected at review:
   `OS-FEDERATION/protocols/{protocol}/authenticate`), application credential
   flows, or token-based operations. These endpoints perform cryptographic
   verification and are CPU-intensive, making them denial-of-service targets. A
-  follow-up ADR (tracking issue: TBD) will extend handler-level rate limiting to
-  these endpoints with appropriate IP-based governance.
+  follow-up was resolved by the
+  [Coverage addendum](#coverage-addendum-2026-10-27): these endpoints now call
+  `check_ip()` at handler level.
 - **New dependency:** The `governor` crate must be added to the workspace
   `Cargo.toml`. It is actively maintained with no known security advisories.
 - **Relationship with ADR 0010 (account lockout):** Rate limiting provides a
@@ -399,3 +399,33 @@ Any code change violating the following is rejected at review:
   layer by locking the account after sustained failed authentication. Both
   mechanisms are independent and additive. A rate-limited request never reaches
   the lockout logic, reducing database writes for failed-auth counters.
+
+## Coverage addendum (2026-10-27)
+
+Audit of every unauthenticated or pre-authentication endpoint that performs
+cryptographic work. Each is throttled before the expensive step; no handler
+change was required.
+
+| Surface                                                                                                                                                                                                                                                          | Limiter                                                                                             | Placement                                          |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `v3/auth/token/create` (password, token, application credential, and other methods)                                                                                                                                                                              | `check_ip()`                                                                                        | handler entry                                      |
+| `v3/auth/token/show` (token validation)                                                                                                                                                                                                                          | `check_ip()`                                                                                        | handler entry                                      |
+| `v3/ec2tokens/create`                                                                                                                                                                                                                                            | `check_ip()`                                                                                        | handler entry                                      |
+| Federation JWT / OIDC login (`jwt::login`, `oidc::callback`)                                                                                                                                                                                                     | `check_ip()`                                                                                        | handler entry                                      |
+| `v4/spiffe`                                                                                                                                                                                                                                                      | `check_ip()`                                                                                        | handler entry                                      |
+| Auth plugins (`core/src/auth_plugin.rs`)                                                                                                                                                                                                                         | `check_ip()`                                                                                        | plugin dispatch                                    |
+| OAuth2 browser and discovery endpoints (`authorize`, `authorize_mfa`, `device`, `device_authorization`, `device_federated`, `device_mfa`, `federated`, `jwks`, `jwks_revocation`, `well_known`, `userinfo`, `introspect`, `revoke`, `logout`, `upstream_logout`) | `check_ip()`                                                                                        | handler entry                                      |
+| OAuth2 `/token`: `client_credentials`, `authorization_code`, `token_exchange`                                                                                                                                                                                    | `check_ip()` via `dpop::bind_token_request` (`SourceLimit::Pending`)                                | before DPoP proof verification                     |
+| OAuth2 `/token`: `device_code`, `refresh_token`                                                                                                                                                                                                                  | `check_ip()` already charged by the grant, then `dpop::bind_token_request` (`SourceLimit::Charged`) | before DPoP proof verification                     |
+| OAuth2 `/token`: service grant                                                                                                                                                                                                                                   | per-SVID `oauth2_token_rate_limiter`                                                                | before any lookup; requires a verified SPIFFE SVID |
+| API-key authentication                                                                                                                                                                                                                                           | per-key and per-IP `api_key_rate_limiter`                                                           | `core/src/api/api_key_auth.rs`                     |
+
+Modules without their own limiter (`passkey`, `sso`, `consent`, `backchannel`)
+are not endpoints: they are helpers reached only through the handlers above,
+after the per-IP check.
+
+Unchanged limitations, already stated under Consequences: limits are per node
+and in memory (effective limit scales with replica count), and `governor` keys
+on the client IP, so deployments behind a proxy must configure trusted proxy
+headers. New unauthenticated crypto endpoints must add a `check_ip()` call and a
+burst-exhaustion `429` test; this is a review requirement, not a follow-up ADR.

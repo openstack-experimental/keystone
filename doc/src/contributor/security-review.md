@@ -35,8 +35,8 @@ does not yet cover what it was proposed to cover.
 | **J**  | Landed                    | `tools/check_security_checklist_sast.py`                                                                                                                    |
 
 Vector status (updated after §0a): **V3, V5, V8a, V9, V10 closed**; **V1, V2
-structurally backed** by Gates D/J; **V6 closed for the three endpoints it
-named** (the design-level follow-up ADR remains open); **V3a's mechanism is
+structurally backed** by Gates D/J; **V6 closed** (coverage
+audited, ADR 0022 addendum 2026-10-27; abuse/XFF tests open); **V3a's mechanism is
 now a non-optional CI check, coverage remains partial**; **V4's publish side
 is signed+verified, a verify-and-pin tool now exists for the load side, but
 nothing runs it automatically**. **V7 and V8 are no longer hypothetical** —
@@ -316,11 +316,11 @@ every handler module containing `.enforce(` must also reference
 `policy_contract` in its test module, with an explicit reviewed allowlist for
 the exceptions.
 
-The payoff is not hypothetical. `security-model.md` §9 now records a defect
-class found in exactly this way — several policies test
+The payoff is not hypothetical. A defect class was found in exactly this way
+(and fixed in #1048) — several policies tested
 `input.credentials.system_scope`, a key nothing ever emits (`Credentials`
-serializes it as `system`), making those rules unreachable. It fails closed, so
-it is a functional bug rather than a vulnerability, but it is precisely a
+serializes it as `system`), making those rules unreachable. It failed closed, so
+it was a functional bug rather than a vulnerability, but it is precisely a
 handler↔policy contract mismatch that `opa test` cannot see and that the B3
 real-`opa run` tests do. Broader B2/B3 adoption is how the rest of that class
 gets found.
@@ -501,7 +501,7 @@ from `AuthenticationContext::ApplicationCredential`, which reauthentication
 carries unchanged per `security-model.md` §5's table — there is no separate
 rescope code path to diverge from).
 
-### V6 — Denial of service on unrate-limited cryptographic endpoints (P2; the three named endpoints closed 2026-09-14)
+### V6 — Denial of service on unrate-limited cryptographic endpoints (P2; closed 2026-10-27)
 
 **Attack.** ADR 0022 phase 1 rate-limits `POST /v3/auth/tokens` by IP (and
 optionally per confirmed user). The ADR itself notes that **federation
@@ -510,36 +510,22 @@ token validation are not covered** — all perform crypto (signature/hash
 verification) and are DoS amplifiers. An attacker hits `/v3/ec2tokens` or an
 OIDC `authenticate` endpoint to burn CPU without ever authenticating.
 
-**Current state (2026-07-09).** Global-IP limiter merged (phase 1); per-endpoint
-coverage is "follow-up ADR TBD." Also note `governor` is per-node in-memory, so
+**Original state (2026-07-09).** Global-IP limiter merged (phase 1); per-endpoint
+coverage was "follow-up ADR TBD." Also note `governor` is per-node in-memory, so
 effective limits are N× in an N-replica deployment (documented consequence).
 
-**Re-evaluated 2026-09-14: partially closed; the original three crypto
-endpoints are still open.** `check_ip()` coverage has grown well beyond phase 1
-— it now gates `v3/auth/token/create`, the full OAuth2 surface
-(`authorize`, `token`, `device`, `device_authorization`, `jwks`,
-`jwks_revocation`, `well_known`) and `v4/spiffe`. That is the V8a work plus
-more.
-
-The endpoints this vector actually named remain unlimited, verified by direct
-read — none of them contains a `check_ip`/rate-limit call:
-
-| Endpoint                                | Expensive work reached unauthenticated |
-| --------------------------------------- | -------------------------------------- |
-| `v3/ec2tokens/create`                   | HMAC signature verification            |
-| `v3/auth/token/show` (token validation) | Fernet/JWS decrypt + verify            |
-| federation `authenticate` endpoints     | OIDC/JWT signature verification        |
-
-`ec2tokens` is the notable one: it is both an unrate-limited crypto endpoint
-(V6) and the redemption path of the V1 crown-jewel scenario, and it currently
-carries neither a rate limit nor a B2/B3 policy-contract test (V3a).
+**Re-evaluated 2026-10-27: closed.** The three named endpoints
+(`v3/ec2tokens/create`, `v3/auth/token/show`, federation JWT/OIDC login) call
+`check_ip()` before any signature, HMAC or token decryption. A full audit of
+unauthenticated crypto surfaces (all OAuth2 grants, `v4/spiffe`, auth plugins,
+API-key auth) found no uncovered endpoint; the per-endpoint matrix is in the
+[ADR 0022 coverage addendum](../adr/0022-rate-limiting.md#coverage-addendum-2026-10-27).
 
 **Control.**
 
-- _Design:_ the promised follow-up ADR extending handler-level limiting to
-  federation / app-cred / EC2 / token-validate, with IP governance before the
-  crypto step (ADR 0022 Invariant 4, "pre-hash enforcement," generalized to
-  "pre-crypto").
+- _Design:_ handler-level limiting before the crypto step (ADR 0022
+  Invariant 4, "pre-hash enforcement," generalized to "pre-crypto"); coverage
+  matrix and the rule for new endpoints are in the ADR 0022 coverage addendum.
 - _Testing:_ a load/abuse test per crypto endpoint asserting 429 before the
   expensive path executes; a test that spoofed `X-Forwarded-For` from an
   untrusted peer does not reset the bucket (ADR 0022 Invariant 9).
@@ -552,10 +538,9 @@ carries neither a rate limit nor a B2/B3 policy-contract test (V3a).
 `jwt::login` / `oidc::callback` handlers (before JWKS fetch / JWT
 verification) — same posture as `/v3/auth/tokens`: checked first, before any
 expensive work. `ec2tokens/create` also closed its V3a gap in the same pass
-(§V3a), so it no longer carries neither control. The design-level follow-up
-ADR extending `check_ip` coverage more broadly, and the load/abuse and
-`X-Forwarded-For`-spoofing tests, remain open — this closes the three
-concrete endpoints the vector named, not the general design/testing asks.
+(§V3a), so it no longer lacks either control. The design-level coverage audit was
+completed 2026-10-27 (ADR 0022 coverage addendum). The load/abuse and
+`X-Forwarded-For`-spoofing tests remain open.
 
 ### V7 — Dynamic auth plugins: pre-auth attack surface (P1 — now live, no longer hypothetical)
 
