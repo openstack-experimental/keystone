@@ -673,7 +673,17 @@ async fn remove_user_from_group_expiring_rejects_a_cross_backend_membership() {
 async fn authenticate_by_password_uses_the_resolved_per_domain_driver() {
     // python-keystone `test_authenticate_to_each_domain`: password auth
     // is served by the driver the request's domain resolves to.
-    let state = get_mocked_state(None, None).await;
+    let state = get_mocked_state(
+        Some(openstack_keystone_config::Config {
+            rate_limit_user_auth: openstack_keystone_config::RateLimitSection {
+                enabled: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        }),
+        None,
+    )
+    .await;
 
     let mut sql_mock = MockIdentityBackend::default();
     sql_mock.expect_is_domain_aware().return_const(true);

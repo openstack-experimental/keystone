@@ -454,7 +454,17 @@ async fn test_authenticate_by_totp_id_with_mismatching_name_rejected() {
 /// that does not match the user's domain is rejected as a wrong password.
 #[tokio::test]
 async fn test_authenticate_by_password_id_with_mismatching_domain_rejected() {
-    let state = get_mocked_state(None, None).await;
+    let state = get_mocked_state(
+        Some(openstack_keystone_config::Config {
+            rate_limit_user_auth: openstack_keystone_config::RateLimitSection {
+                enabled: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        }),
+        None,
+    )
+    .await;
     let mut backend = MockIdentityBackend::default();
     backend.expect_authenticate_by_password().returning(|_, _| {
         Ok(AuthenticationResultBuilder::default()
@@ -796,7 +806,17 @@ async fn test_authenticate_by_password_unknown_user_uniform_error() {
 /// hot path.
 #[tokio::test]
 async fn test_authenticate_by_password_probe_skipped_when_disabled() {
-    let state = get_mocked_state(None, None).await;
+    let state = get_mocked_state(
+        Some(openstack_keystone_config::Config {
+            rate_limit_user_auth: openstack_keystone_config::RateLimitSection {
+                enabled: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        }),
+        None,
+    )
+    .await;
 
     let mut backend = MockIdentityBackend::default();
     backend.expect_check_user_exist().times(0);

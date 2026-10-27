@@ -271,10 +271,10 @@ pub struct Config {
 
     /// Global per-IP rate limiting (ADR-0022, §1).
     ///
-    /// Maps to the `[rate_limit_global_ip]` INI section. When `enabled =
-    /// false` (the default) the governor is not instantiated and all requests
-    /// bypass the check. Set `enabled = true` together with valid
-    /// `burst_size` and `replenish_rate_per_second` to activate.
+    /// Maps to the `[rate_limit_global_ip]` INI section. Enabled by default;
+    /// set `enabled = false` to instantiate no governor and let all requests
+    /// bypass the check. `burst_size` and `replenish_rate_per_second` size
+    /// the bucket.
     #[serde(rename = "rate_limit_global_ip", default)]
     pub rate_limit_global_ip: RateLimitSection,
 
@@ -288,8 +288,8 @@ pub struct Config {
 
     /// Per-user authentication rate limiting (ADR-0022, §1).
     ///
-    /// Maps to the `[rate_limit_user_auth]` INI section. When `enabled =
-    /// false` (the default) the governor is not instantiated and
+    /// Maps to the `[rate_limit_user_auth]` INI section. Enabled by default;
+    /// with `enabled = false` the governor is not instantiated and
     /// authentication requests bypass the check. The limiter is keyed on the
     /// canonical user ID and is only consulted after the user is confirmed
     /// to exist (ADR-0022, Invariant 8).

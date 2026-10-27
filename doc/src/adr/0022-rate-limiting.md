@@ -429,3 +429,16 @@ and in memory (effective limit scales with replica count), and `governor` keys
 on the client IP, so deployments behind a proxy must configure trusted proxy
 headers. New unauthenticated crypto endpoints must add a `check_ip()` call and a
 burst-exhaustion `429` test; this is a review requirement, not a follow-up ADR.
+
+## Default addendum (2026-10-28)
+
+`[rate_limit_global_ip]` and `[rate_limit_user_auth]` now default to
+`enabled = true` (`burst_size = 100`, `replenish_rate_per_second = 10`).
+Previously both defaulted to `false`, so a deployment that never configured
+them had no limiter and the coverage above did nothing. Set `enabled = false`
+to opt out.
+
+Upgrade note: behind a reverse proxy that is not listed in
+`[rate_limit_trusted_proxies]`, every client resolves to the proxy address and
+shares one global bucket. Configure the trusted proxies, or raise `burst_size`
+and `replenish_rate_per_second`, before upgrading such a deployment.

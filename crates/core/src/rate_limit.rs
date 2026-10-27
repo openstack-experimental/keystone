@@ -100,9 +100,15 @@ impl RateLimitSnapshot {
     fn disabled() -> Self {
         Self {
             applied_config: AppliedRateLimitConfig {
-                global_ip: RateLimitSection::default(),
+                global_ip: RateLimitSection {
+                    enabled: false,
+                    ..RateLimitSection::default()
+                },
                 trusted_proxies: RateLimitTrustedProxiesSection::default(),
-                user_auth: RateLimitSection::default(),
+                user_auth: RateLimitSection {
+                    enabled: false,
+                    ..RateLimitSection::default()
+                },
             },
             global_ip_limiter: None,
             trusted_proxies: Vec::new(),
@@ -605,7 +611,14 @@ mod tests {
 
     #[test]
     fn disabled_section_yields_no_limiter() {
-        let state = RateLimitState::from_config(&Config::default()).unwrap();
+        let state = RateLimitState::from_config(&Config {
+            rate_limit_global_ip: RateLimitSection {
+                enabled: false,
+                ..Default::default()
+            },
+            ..Config::default()
+        })
+        .unwrap();
         assert!(!state.global_ip_enabled());
     }
 
@@ -849,8 +862,21 @@ mod tests {
     }
 
     #[test]
-    fn user_auth_disabled_by_default() {
+    fn user_auth_enabled_by_default() {
         let state = RateLimitState::from_config(&Config::default()).unwrap();
+        assert!(state.user_auth_enabled());
+    }
+
+    #[test]
+    fn user_auth_disabled_never_limits() {
+        let state = RateLimitState::from_config(&Config {
+            rate_limit_user_auth: RateLimitSection {
+                enabled: false,
+                ..Default::default()
+            },
+            ..Config::default()
+        })
+        .unwrap();
         assert!(!state.user_auth_enabled());
         for _ in 0..1000 {
             assert!(state.check_user("uid").is_ok());

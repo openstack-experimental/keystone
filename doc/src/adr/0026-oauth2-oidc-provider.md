@@ -1242,8 +1242,8 @@ endpoints. To mitigate:
   lock a victim's pending code out by hammering it; the IP-only key is what
   bounds spraying of many different codes, since each guess gets a fresh code
   key. The client IP is resolved as for the per-IP limiter (trusted-proxy
-  settings apply even with `[rate_limit_global_ip]` disabled, which is the
-  default), and the backoff works with that limiter disabled. Operators behind
+  settings apply even with `[rate_limit_global_ip]` disabled, which was the
+  default before the 2026-10-28 default addendum of ADR 0022), and the backoff works with that limiter disabled. Operators behind
   a reverse proxy must list it in `[rate_limit_trusted_proxies]`; otherwise all
   users share the proxy's IP and one client can trip the IP-wide key for all
   (set `device_ip_free_failures = 0` to disable it). State is node-local and
@@ -1256,8 +1256,9 @@ endpoints. To mitigate:
   `(client_id, device_code)`. Further polls with that pair are answered `429` +
   `Retry-After` before any storage lookup. The quiet period is node-local and
   in-memory. Issuance at `/device_authorization` is not blocked per IP; it is
-  bounded only by the generic per-IP limiter (`[rate_limit_global_ip]`, disabled
-  by default), which operators exposing the device flow should enable.
+  bounded only by the generic per-IP limiter (`[rate_limit_global_ip]`, enabled
+  by default since ADR 0022's 2026-10-28 addendum), which operators exposing the
+  device flow should keep enabled.
 - When a valid active grant is polled faster than the advertised `interval`, the
   server returns a `slow_down` error response per RFC 8628 §3.5 (not a generic
   penalty error), signaling the client to increase its polling rate.

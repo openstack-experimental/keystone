@@ -33,7 +33,7 @@
 use ipnet::IpNet;
 use serde::Deserialize;
 
-use crate::common::{ProxyHeader, csv_ipnet};
+use crate::common::{ProxyHeader, csv_ipnet, default_true};
 
 /// Default burst capacity when the key is absent from the config file.
 fn default_burst_size() -> u32 {
@@ -58,9 +58,10 @@ fn default_replenish_rate_per_second() -> u32 {
 /// ```
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 pub struct RateLimitSection {
-    /// When `false` (the default) the corresponding `governor` limiter is not
-    /// instantiated and the handler bypasses this check entirely.
-    #[serde(default)]
+    /// When `false` the corresponding `governor` limiter is not instantiated
+    /// and the handler bypasses this check entirely. Defaults to `true`, so
+    /// a configuration that omits the section is rate limited.
+    #[serde(default = "default_true")]
     pub enabled: bool,
 
     /// Maximum number of cells that can be consumed in a burst before
@@ -97,7 +98,7 @@ pub struct RateLimitTrustedProxiesSection {
 impl Default for RateLimitSection {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             burst_size: default_burst_size(),
             replenish_rate_per_second: default_replenish_rate_per_second(),
         }
@@ -111,9 +112,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_is_disabled() {
+    fn default_is_enabled() {
         let s = RateLimitSection::default();
-        assert!(!s.enabled);
+        assert!(s.enabled);
         assert_eq!(s.burst_size, 100);
         assert_eq!(s.replenish_rate_per_second, 10);
     }
@@ -141,7 +142,7 @@ mod tests {
     #[test]
     fn deserialize_defaults_when_fields_absent() {
         let s: RateLimitSection = serde_json::from_value(json!({})).unwrap();
-        assert!(!s.enabled);
+        assert!(s.enabled);
         assert_eq!(s.burst_size, 100);
         assert_eq!(s.replenish_rate_per_second, 10);
     }
