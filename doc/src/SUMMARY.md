@@ -58,6 +58,7 @@ ______________________________________________________________________
   - [Fernet tokens](admin/tokens/fernet.md)
   - [Distributed encrypted storage](admin/storage/distributed.md)
   - [Passkeys](admin/features/passkeys.md)
+  - [Multi-factor authentication rules](admin/features/mfa.md)
   - [Federation](admin/features/federation/index.md)
     - [Keycloak](admin/features/federation/keycloak.md)
     - [Okta](admin/features/federation/okta.md)

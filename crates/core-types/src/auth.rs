@@ -76,6 +76,11 @@ pub enum AuthenticationError {
     #[error("this action is forbidden")]
     Forbidden,
 
+    /// The authentication methods used do not satisfy the user's multi-factor
+    /// authentication rules.
+    #[error("the authentication methods used do not satisfy the multi-factor authentication rules")]
+    MfaRulesNotSatisfied,
+
     /// Project is disabled.
     #[error("The project is disabled.")]
     ProjectDisabled(String),

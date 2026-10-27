@@ -296,6 +296,43 @@ pub(super) async fn authenticate_request(
     Ok(res)
 }
 
+/// Check a fresh login against the multi-factor rules of the user.
+///
+/// A user can require that certain method combinations were used
+/// (`multi_factor_auth_rules`). The methods come from the security context,
+/// so a re-authentication with a token carries the methods of the original
+/// token. Delegations (application credentials, trusts) are exempt: they are
+/// created by an already authenticated user and are used by automation that
+/// cannot present a second factor. Workload principals have no user options.
+/// A failed user lookup rejects the login instead of skipping the check.
+pub(super) async fn enforce_mfa_rules(
+    state: &ServiceState,
+    ctx: &SecurityContext,
+) -> Result<(), KeystoneApiError> {
+    if matches!(
+        ctx.authentication_context(),
+        AuthenticationContext::ApplicationCredential { .. } | AuthenticationContext::Trust { .. }
+    ) {
+        return Ok(());
+    }
+    let IdentityInfo::User(user_info) = &ctx.principal().identity else {
+        return Ok(());
+    };
+    let user = match &user_info.user {
+        Some(user) => user.clone(),
+        None => state
+            .provider
+            .get_identity_provider()
+            .get_user(&ExecutionContext::internal(state), &user_info.user_id)
+            .await?
+            .ok_or(AuthenticationError::Unauthorized)?,
+    };
+    if !user.options.mfa_rules_satisfied(ctx.auth_methods()) {
+        return Err(AuthenticationError::MfaRulesNotSatisfied.into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use openstack_keystone_core_types::auth::*;
@@ -311,6 +348,114 @@ mod tests {
     use crate::identity::MockIdentityProvider;
     use crate::provider::Provider;
     use crate::token::MockTokenProvider;
+
+    fn mfa_result(context: AuthenticationContext) -> AuthenticationResult {
+        AuthenticationResultBuilder::default()
+            .context(context)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build()
+            .unwrap()
+    }
+
+    fn mfa_user() -> openstack_keystone_core_types::identity::UserResponse {
+        UserResponseBuilder::default()
+            .id("uid")
+            .name("uname")
+            .domain_id("udid")
+            .enabled(true)
+            .options(openstack_keystone_core_types::identity::UserOptions {
+                multi_factor_auth_rules: Some(vec![vec!["password".into(), "totp".into()]]),
+                ..Default::default()
+            })
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_enforce_mfa_rules_password_and_totp_pass() {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_get_user()
+            .returning(|_, _| Ok(Some(mfa_user())));
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_identity(identity_mock),
+            true,
+            None,
+        )
+        .await;
+        let ctx = SecurityContext::try_from(vec![
+            mfa_result(AuthenticationContext::Password),
+            mfa_result(AuthenticationContext::Totp),
+        ])
+        .unwrap();
+
+        enforce_mfa_rules(&state, &ctx).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_enforce_mfa_rules_password_alone_rejected() {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_get_user()
+            .returning(|_, _| Ok(Some(mfa_user())));
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_identity(identity_mock),
+            true,
+            None,
+        )
+        .await;
+        let ctx = SecurityContext::try_from(mfa_result(AuthenticationContext::Password)).unwrap();
+
+        assert!(matches!(
+            enforce_mfa_rules(&state, &ctx).await,
+            Err(KeystoneApiError::Unauthorized { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_enforce_mfa_rules_unknown_user_rejected() {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_get_user().returning(|_, _| Ok(None));
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_identity(identity_mock),
+            true,
+            None,
+        )
+        .await;
+        let ctx = SecurityContext::try_from(mfa_result(AuthenticationContext::Password)).unwrap();
+
+        assert!(enforce_mfa_rules(&state, &ctx).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_enforce_mfa_rules_application_credential_exempt() {
+        // No `get_user` expectation: the user is never looked up.
+        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+        let ctx = SecurityContext::try_from(mfa_result(
+            AuthenticationContext::ApplicationCredential {
+                application_credential: openstack_keystone_core_types::application_credential::ApplicationCredentialBuilder::default()
+                    .id("app_cred_id")
+                    .name("my_app_cred")
+                    .project_id("pid")
+                    .user_id("uid")
+                    .unrestricted(false)
+                    .roles(vec![])
+                    .build()
+                    .unwrap(),
+                token: None,
+            },
+        ))
+        .unwrap();
+
+        enforce_mfa_rules(&state, &ctx).await.unwrap();
+    }
 
     #[tokio::test]
     async fn test_authenticate_request_password() {

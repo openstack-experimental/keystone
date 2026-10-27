@@ -33,7 +33,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::scope::{Project as ScopeProject, Scope as ProviderScope};
 
 use crate::api::common::PeerAddr;
-use crate::api::v3::auth::token::common::authenticate_request;
+use crate::api::v3::auth::token::common::{authenticate_request, enforce_mfa_rules};
 use crate::api::v3::auth::token::types::{AuthRequest, CreateTokenParameters, TokenResponse};
 use crate::api::{Catalog, CatalogService, error::KeystoneApiError};
 use crate::audit::{
@@ -130,6 +130,7 @@ async fn create_inner(
     .await?;
     let ctx = SecurityContext::try_from(auth_res)?;
     *known_initiator = Some(build_initiator_from_principal(ctx.principal()));
+    enforce_mfa_rules(state, &ctx).await?;
     // Application credentials are bound to a single project, which is derived
     // from the credential. Same as in python keystone, requesting a scope is
     // prohibited, also when exchanging an application credential token. The
@@ -251,6 +252,94 @@ mod tests {
     use crate::token::MockTokenProvider;
 
     use super::super::openapi_router;
+
+    fn user_with_options(
+        options: openstack_keystone_core_types::identity::UserOptions,
+    ) -> openstack_keystone_core_types::identity::UserResponse {
+        openstack_keystone_core_types::identity::UserResponse {
+            id: "uid".into(),
+            name: "uname".into(),
+            domain_id: "user_domain_id".into(),
+            enabled: true,
+            default_project_id: None,
+            extra: std::collections::HashMap::new(),
+            federated: None,
+            options,
+            password_expires_at: None,
+        }
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_post_password_only_rejected_by_mfa_rules() {
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build()
+            .unwrap();
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_password()
+            .returning(move |_, _| Ok(auth.clone()));
+        identity_mock.expect_get_user().returning(|_, _| {
+            Ok(Some(user_with_options(
+                openstack_keystone_core_types::identity::UserOptions {
+                    multi_factor_auth_rules: Some(vec![vec!["password".into(), "totp".into()]]),
+                    ..Default::default()
+                },
+            )))
+        });
+        // No token provider expectation: the token must never be issued.
+        let provider = Provider::mocked_builder()
+            .mock_identity(identity_mock)
+            .build()
+            .unwrap();
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(Config::default()),
+                DatabaseConnection::default(),
+                provider,
+                Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .method("POST")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({
+                            "auth": {
+                                "identity": {
+                                    "methods": ["password"],
+                                    "password": {"user": {"id": "uid", "password": "pass"}}
+                                }
+                            }
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
 
     #[tokio::test]
     #[traced_test]
@@ -659,6 +748,11 @@ mod tests {
         identity_mock
             .expect_authenticate_by_password()
             .returning(move |_, _| Ok(auth_clone.clone()));
+        identity_mock.expect_get_user().returning(|_, _| {
+            Ok(Some(user_with_options(
+                openstack_keystone_core_types::identity::UserOptions::default(),
+            )))
+        });
 
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
@@ -1937,6 +2031,11 @@ mod tests {
         identity_mock
             .expect_authenticate_by_password()
             .returning(move |_, _| Ok(auth.clone()));
+        identity_mock.expect_get_user().returning(|_, _| {
+            Ok(Some(user_with_options(
+                openstack_keystone_core_types::identity::UserOptions::default(),
+            )))
+        });
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
             .expect_get_project()

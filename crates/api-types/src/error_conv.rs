@@ -156,6 +156,9 @@ impl From<AuthenticationError> for KeystoneApiError {
                 KeystoneApiError::unauthorized(value, None::<String>)
             }
             AuthenticationError::Forbidden => KeystoneApiError::forbidden(value),
+            AuthenticationError::MfaRulesNotSatisfied => {
+                KeystoneApiError::unauthorized(value, None::<String>)
+            }
             AuthenticationError::ProjectDisabled(..) => {
                 KeystoneApiError::unauthorized(value, None::<String>)
             }

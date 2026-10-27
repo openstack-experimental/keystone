@@ -109,6 +109,7 @@ pub fn sanitize_authentication_error(e: &AuthenticationError) -> &'static str {
     match e {
         AuthenticationError::DomainDisabled(_) => "DomainDisabled",
         AuthenticationError::ProjectDisabled(_) => "ProjectDisabled",
+        AuthenticationError::MfaRulesNotSatisfied => "MfaRulesNotSatisfied",
         AuthenticationError::TrustorUserDisabled(_) => "TrustorUserDisabled",
         AuthenticationError::ServiceGrantDisabled(_) => "ServiceGrantDisabled",
         AuthenticationError::UserDisabled(_) => "UserDisabled",

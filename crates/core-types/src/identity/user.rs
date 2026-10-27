@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
@@ -248,6 +248,31 @@ pub struct UserOptions {
     pub multi_factor_auth_enabled: Option<bool>,
 }
 
+impl UserOptions {
+    /// Check the authentication methods used for a login against the user's
+    /// multi-factor rules.
+    ///
+    /// Each rule is a list of method names that must all have been used; the
+    /// login passes when at least one rule is fully covered by `methods`.
+    /// Empty rules are ignored, so a user whose rules are all empty is not
+    /// restricted. A user without rules, or with
+    /// `multi_factor_auth_enabled = false`, is never restricted.
+    #[must_use]
+    pub fn mfa_rules_satisfied(&self, methods: &HashSet<String>) -> bool {
+        if self.multi_factor_auth_enabled == Some(false) {
+            return true;
+        }
+        let Some(rules) = &self.multi_factor_auth_rules else {
+            return true;
+        };
+        let mut rules = rules.iter().filter(|rule| !rule.is_empty()).peekable();
+        if rules.peek().is_none() {
+            return true;
+        }
+        rules.any(|rule| rule.iter().all(|method| methods.contains(method)))
+    }
+}
+
 /// User federation data.
 #[derive(Builder, Clone, Debug, Default, Eq, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
@@ -445,4 +470,73 @@ pub struct Domain {
     #[builder(default)]
     #[validate(length(max = 255))]
     pub name: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn options(rules: Option<Vec<Vec<&str>>>, enabled: Option<bool>) -> UserOptions {
+        UserOptions {
+            multi_factor_auth_rules: rules.map(|rules| {
+                rules
+                    .into_iter()
+                    .map(|rule| rule.into_iter().map(String::from).collect())
+                    .collect()
+            }),
+            multi_factor_auth_enabled: enabled,
+            ..Default::default()
+        }
+    }
+
+    fn methods(names: &[&str]) -> HashSet<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn test_mfa_rules_no_rules_not_restricted() {
+        assert!(options(None, None).mfa_rules_satisfied(&methods(&["password"])));
+    }
+
+    #[test]
+    fn test_mfa_rules_password_alone_fails_two_factor_rule() {
+        let opts = options(Some(vec![vec!["password", "totp"]]), None);
+        assert!(!opts.mfa_rules_satisfied(&methods(&["password"])));
+    }
+
+    #[test]
+    fn test_mfa_rules_all_methods_of_one_rule_pass() {
+        let opts = options(Some(vec![vec!["password", "totp"]]), None);
+        assert!(opts.mfa_rules_satisfied(&methods(&["password", "totp"])));
+    }
+
+    #[test]
+    fn test_mfa_rules_any_rule_is_enough() {
+        let opts = options(
+            Some(vec![vec!["password", "totp"], vec!["x509"]]),
+            Some(true),
+        );
+        assert!(opts.mfa_rules_satisfied(&methods(&["x509"])));
+        assert!(!opts.mfa_rules_satisfied(&methods(&["totp"])));
+    }
+
+    #[test]
+    fn test_mfa_rules_token_carries_original_methods() {
+        let opts = options(Some(vec![vec!["password", "totp"]]), None);
+        assert!(opts.mfa_rules_satisfied(&methods(&["password", "totp", "token"])));
+    }
+
+    #[test]
+    fn test_mfa_rules_disabled_user_not_restricted() {
+        let opts = options(Some(vec![vec!["password", "totp"]]), Some(false));
+        assert!(opts.mfa_rules_satisfied(&methods(&["password"])));
+    }
+
+    #[test]
+    fn test_mfa_rules_empty_rules_ignored() {
+        assert!(options(Some(vec![]), None).mfa_rules_satisfied(&methods(&["password"])));
+        assert!(options(Some(vec![vec![]]), None).mfa_rules_satisfied(&methods(&["password"])));
+        let opts = options(Some(vec![vec![], vec!["totp"]]), None);
+        assert!(!opts.mfa_rules_satisfied(&methods(&["password"])));
+    }
 }

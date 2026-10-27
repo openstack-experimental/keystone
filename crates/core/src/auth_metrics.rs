@@ -168,6 +168,7 @@ pub fn auth_failure_reason(e: &AuthenticationError) -> &'static str {
     match e {
         AuthenticationError::DomainDisabled(_) => "DomainDisabled",
         AuthenticationError::ProjectDisabled(_) => "ProjectDisabled",
+        AuthenticationError::MfaRulesNotSatisfied => "MfaRulesNotSatisfied",
         AuthenticationError::TrustorUserDisabled(_) => "TrustorUserDisabled",
         AuthenticationError::ServiceGrantDisabled(_) => "ServiceGrantDisabled",
         AuthenticationError::UserDisabled(_) => "UserDisabled",

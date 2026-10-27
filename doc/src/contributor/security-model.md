@@ -483,6 +483,14 @@ one of the client's `spiffe_ids`, and only for the grant being accessed.
   `SecurityContext::validate()`, expiry, trust-chain validation, role resolution
   — so it is the safe path when in doubt. A validated context is only obtainable
   via `new_for_scope()` / `test_new()` (test-only).
+- **Multi-factor rules are checked at issuance, from the chain.** Token
+  creation on `/v3/auth/tokens` compares the methods carried by the
+  `SecurityContext` (`auth_methods()`, which includes the methods of a parent
+  token) with the user's `multi_factor_auth_rules` (`enforce_mfa_rules`). Delegations
+  (application credentials, trusts) are exempt. The rules are not evaluated by
+  the other token-issuing entry points (passkey login, federation, K8s, EC2,
+  OAuth2). A new entry point that issues a user token must decide explicitly
+  whether it honours them.
 
 ## 7. Reviewer checklist
 
