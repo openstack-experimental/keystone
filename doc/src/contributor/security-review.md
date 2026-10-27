@@ -34,6 +34,12 @@ does not yet cover what it was proposed to cover.
 | **I**  | Landed                    | `tools/check_event_payload_no_secret_fields.py` + `policy_contract::assert_no_secrets`                                                                       |
 | **J**  | Landed                    | `tools/check_security_checklist_sast.py`                                                                                                                    |
 
+CRA mapping: the Cyber Resilience Act Annex VII item 3 (cybersecurity risk
+assessment) draws on this review, the [Security model](security-model.md) and
+the [CRA requirements](cra-requirements.md) analysis. The
+[technical file index](cra-technical-file.md) lists where each Annex VII item
+lives. This review is not itself the packaged risk assessment.
+
 Vector status (updated after §0a): **V3, V5, V8a, V9, V10 closed**; **V1, V2
 structurally backed** by Gates D/J; **V6 closed** (coverage
 audited, ADR 0022 addendum 2026-10-27; abuse/XFF tests open); **V3a's mechanism is
