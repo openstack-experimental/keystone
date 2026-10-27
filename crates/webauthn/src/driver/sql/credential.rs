@@ -79,7 +79,7 @@ impl TryFrom<&WebauthnCredential> for webauthn_credential::ActiveModel {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use base64urlsafedata::HumanBinaryData;
     use chrono::NaiveDateTime;
     use webauthn_rs::prelude::*;
@@ -87,7 +87,7 @@ mod tests {
 
     use crate::driver::sql::model::webauthn_credential;
 
-    pub(super) fn get_fake_passkey() -> Passkey {
+    pub(crate) fn get_fake_passkey() -> Passkey {
         Credential {
             counter: 1,
             transports: None,

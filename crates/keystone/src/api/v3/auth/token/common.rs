@@ -309,6 +309,10 @@ pub(super) async fn enforce_mfa_rules(
     state: &ServiceState,
     ctx: &SecurityContext,
 ) -> Result<(), KeystoneApiError> {
+    // `authentication_context()` is the primary context of the request. A
+    // request that lists a delegation method first is a delegated login and
+    // its token stays bounded by that delegation, so it needs no second
+    // factor; the order of `methods` cannot widen what the token may do.
     if matches!(
         ctx.authentication_context(),
         AuthenticationContext::ApplicationCredential { .. } | AuthenticationContext::Trust { .. }
