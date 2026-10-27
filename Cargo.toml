@@ -115,7 +115,7 @@ governor = "0.10"
 getrandom = { version = "0.4", features = ["std"] }
 http-body-util = "0.1"
 http = { version = "1.5" }
-httpmock = { version = "0.8", features = ["http2"] }
+httpmock = { version = "0.9", features = ["http2"] }
 hyper = { version = "1.11" }
 hyper-util = { version = "0.1" }
 hkdf = { version = "0.13" }
