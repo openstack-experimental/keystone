@@ -1,6 +1,6 @@
 # Release SBOM (CRA Annex I Part II (1)). Called from the generated release
-# workflow through cargo-dist's `host-jobs` setting. Generates a CycloneDX SBOM
-# and the OpenVEX document, attests both, and uploads them to the GitHub
+# workflow through cargo-dist's `publish-jobs` setting. Generates a CycloneDX
+# SBOM and the OpenVEX document, attests both, and uploads them to the GitHub
 # release being created.
 name: Release SBOM
 

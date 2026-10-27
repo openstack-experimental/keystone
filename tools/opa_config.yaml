@@ -43,7 +43,9 @@ bundles:
     # unverified bundle. Run `tools/verify_and_pin_opa_bundle.sh` (or the
     # `opa-bundle-component` init container) to pin the verified digest.
     resource: ghcr.io/openstack-experimental/keystone/opa-bundle@sha256:0000000000000000000000000000000000000000000000000000000000000000
-    persist: true
+    # The opa-bundle-component runs OPA with a read-only root filesystem, so
+    # the bundle is not persisted to disk.
+    persist: false
     polling:
       min_delay_seconds: 600
       max_delay_seconds: 1200

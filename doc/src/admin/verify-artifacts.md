@@ -61,6 +61,12 @@ An init container (`keystone-bundle-verify`) resolves the bundle tag to a
 digest, runs `cosign verify` against this repository's GitHub Actions
 identity, and writes an OPA config pinned to the verified digest. OPA starts
 only after that succeeds, so a bad signature leaves the pod in `Init:Error`.
+The verifier image is referenced by digest, and the component ships an
+all-zero digest so the pod does not start until you pin it: resolve a
+`keystone-bundle-verify` tag to a digest, check it with
+`gh attestation verify oci://ghcr.io/openstack-experimental/keystone-bundle-verify@sha256:<digest> --repo openstack-experimental/keystone`,
+and set `digest` for the image in your overlay. The image is published for
+`linux/amd64` and `linux/arm64`.
 The pod needs egress to `ghcr.io` and the Sigstore endpoints. The standalone
 `tools/opa_config.yaml` ships with an all-zero digest that never resolves: run
 `tools/verify_and_pin_opa_bundle.sh --repo <owner/repo> --tag <tag>` to pin it.

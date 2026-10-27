@@ -14,10 +14,24 @@
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 
+# The verifier is the root of trust for the bundle, so it is referenced by
+# digest, not by a tag that any push to main can move. The all-zero digest
+# never resolves and the pod stays in ImagePullBackOff until it is pinned
+# (fail closed, like `tools/opa_config.yaml`). Pin it in your overlay:
+#
+#   1. Resolve a release tag or commit tag to a digest:
+#        crane digest ghcr.io/openstack-experimental/keystone-bundle-verify:sha-<commit>
+#   2. Check its build provenance:
+#        gh attestation verify \
+#          oci://ghcr.io/openstack-experimental/keystone-bundle-verify@sha256:<digest> \
+#          --repo openstack-experimental/keystone
+#   3. Set `digest` below (or override it in your overlay).
+#
+# The image is published for linux/amd64 and linux/arm64.
 images:
   - name: keystone-bundle-verify
     newName: ghcr.io/openstack-experimental/keystone-bundle-verify
-    newTag: main
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
 
 patches:
   - target:

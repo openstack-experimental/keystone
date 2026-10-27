@@ -189,6 +189,7 @@ jobs:
         with:
           context: .
           file: tools/Dockerfile.bundle-verify
+          platforms: linux/amd64,linux/arm64
           push: true
           sbom: true
           tags: ${{ steps.meta.outputs.tags }}
