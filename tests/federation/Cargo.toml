@@ -25,7 +25,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
 sha2.workspace = true
-thirtyfour = "0.37"
+thirtyfour = "0.38"
 tracing.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tokio-util.workspace = true

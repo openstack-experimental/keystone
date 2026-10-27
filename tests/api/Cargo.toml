@@ -49,7 +49,7 @@ tokio-rustls.workspace = true
 openstack-keystone-tls-provider.workspace = true
 tonic.workspace = true
 tracing-test.workspace = true
-thirtyfour = "0.37"
+thirtyfour = "0.38"
 webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }
 x509-parser.workspace = true
 url = { workspace = true }
