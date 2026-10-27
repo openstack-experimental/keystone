@@ -2382,9 +2382,13 @@ mod auth_plugin_http_tests {
                     },
                 ))
                 .principal(PrincipalInfo {
-                    identity: IdentityInfo::User(
-                        UserIdentityInfoBuilder::default()
-                            .user_id("vu1")
+                    // The mapping engine yields a workload principal, like
+                    // production: it has no user options to look up.
+                    identity: IdentityInfo::Principal(
+                        PrincipalIdentityInfoBuilder::default()
+                            .id("vu1")
+                            .resolved_user_name("alice")
+                            .issuer("test")
                             .build()
                             .unwrap(),
                     ),
