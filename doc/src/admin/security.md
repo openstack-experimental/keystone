@@ -22,6 +22,10 @@
   which is denied outright. See
   [Identity Mapping Administration](features/identity-mapping.md#security-considerations).
 
+Secure defaults, listeners, failure behaviour, encryption coverage, the data
+inventory and data removal are tabulated in the
+[Security reference](security-reference.md).
+
 The [contributor security model](../contributor/security-model.md) is normative
 for scope, delegation, rescope, credentials, tokens, and OPA input. Operator
 procedures must not weaken those invariants.

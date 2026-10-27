@@ -52,6 +52,7 @@
     - [`keystone`](admin/cli/keystone.md)
     - [`keystone-manage`](admin/cli/keystone-manage.md)
   - [Security](admin/security.md)
+    - [Security reference](admin/security-reference.md)
   - [Verifying release artifacts](admin/verify-artifacts.md)
   - [API policy enforcement](admin/policy.md)
   - [Fernet tokens](admin/tokens/fernet.md)
