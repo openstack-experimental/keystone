@@ -59,15 +59,17 @@ file. The Python implementation is not analysed here.
 | (g) | Basic cyber hygiene and cybersecurity training | Secure defaults ([security reference](../admin/security-reference.md)), reviewer checklist in the security model for contributors. | Operator staff training, patch hygiene, admin practices. | Out of scope for the software. |
 | (h) | Policies and procedures on the use of cryptography and encryption | [Crypto inventory](crypto-inventory.md): algorithm, provider and FIPS status per primitive, kept current by a repository rule. Encryption at rest for the Raft store and backups, Fernet for tokens, rustls for TLS. Not-validated primitives are listed. | Key management policy: KEK custody, Fernet and credential key rotation schedule, TLS termination and ciphers. | None open for documentation. SQL identity data is stored as-is in the database (security reference, encryption coverage). |
 | (i) | Human resources security, access control policies and asset management | OPA/Rego policy on every handler, delegation invariants, failed-auth lockout, inactive-account and password expiry, passkeys, mTLS/SPIFFE on the admin socket. SBOM and VEX give a component inventory. | Joiner-mover-leaver process, privileged-access review, the asset register entry for Keystone. | HR security is the operator's. No Keystone-specific access-review report is shipped. |
-| (j) | Multi-factor or continuous authentication, secured communications | TOTP and passkey (WebAuthn) methods. `multi_factor_auth_rules` is enforced on `POST /v3/auth/tokens` ([guide](../admin/features/mfa.md)). The OAuth2 browser and device login requires a second factor from any user who holds a TOTP credential or passkey (`crates/keystone/src/api/v4/oauth2/mfa.rs`). SPIFFE/mTLS for services. Public TLS is expected at a proxy. | Enforce MFA for human administrators, protect the proxy and the admin listener. | **Partial.** N4: the rules are not evaluated by the federation and OAuth2 login paths. K8s, EC2 and passkey are exempt by design. |
+| (j) | Multi-factor or continuous authentication, secured communications | TOTP and passkey (WebAuthn) methods. `multi_factor_auth_rules` is enforced on `POST /v3/auth/tokens` ([guide](../admin/features/mfa.md)). The OAuth2 browser and device login requires a second factor from any user who holds a TOTP credential or passkey (`crates/keystone/src/api/v4/oauth2/mfa.rs`). SPIFFE/mTLS for services. Public TLS is expected at a proxy. | Enforce MFA for human administrators, protect the proxy and the admin listener. | None open. The rules apply on `POST /v3/auth/tokens`. Other paths are exempt or use their own control (see the notes). |
 
 ### Notes on single measures
 
-- **(j) is the one open code gap.** The multi-factor rules of a user are
-  enforced on `POST /v3/auth/tokens` and not on the other token-issuing paths
-  (N4). K8s and EC2 are machine and delegated access, and a passkey is
-  multi-factor on its own, so those are exempt by design. Federation and the
-  OAuth2 login remain to be decided.
+- **(j) scope of `multi_factor_auth_rules`.** The rules of a user are enforced
+  on `POST /v3/auth/tokens`. K8s and EC2 are machine and delegated access, and
+  a passkey is multi-factor on its own, so those are exempt by design.
+  Federation relies on the external identity provider. The OAuth2 and OIDC
+  login belongs to the v4 API, which has no compatibility contract with Python
+  Keystone, the owner of the `multi_factor_auth_rules` property. It uses its
+  own second-factor check and does not read the property.
 - **(e) depends on the support period.** NIS2 expects patching without delay. A
   steward that patches only the latest release (see the
   [support policy](support-policy.md)) gives an operator one window: upgrade to
@@ -135,7 +137,7 @@ asks for in more detail, with the Keystone evidence.
 | Acquisition, development and maintenance | Secure development, change management, security testing, security patch management | CI gates, fuzzing, mutation tests, dated security review, VEX, [support policy](support-policy.md) | Change control, patch windows, a test environment | Latest release only is patched upstream |
 | Effectiveness assessment | Regular review of measures, audits, testing | Weekly audit and fuzz workflows, security review | Its own audits and penetration test | No third-party penetration test is recorded |
 | Cryptography | Cryptography policy, key management over the full key lifecycle | [Crypto inventory](crypto-inventory.md); key rotation for Fernet, credential keys and the Raft DEK ([Fernet](../admin/tokens/fernet.md), [distributed storage](../admin/storage/distributed.md)) | KEK custody, TLS policy, rotation schedule | None open |
-| Access control and authentication | Access policy, privileged account management, strong authentication including MFA | OPA policy on every handler, lockout and expiry, TOTP and passkeys, `multi_factor_auth_rules` ([guide](../admin/features/mfa.md)), mTLS and SPIFFE for the admin socket | Joiner-mover-leaver, privileged-access review, MFA for administrators | N4: rules not evaluated on federation and OAuth2 login |
+| Access control and authentication | Access policy, privileged account management, strong authentication including MFA | OPA policy on every handler, lockout and expiry, TOTP and passkeys, `multi_factor_auth_rules` ([guide](../admin/features/mfa.md)), mTLS and SPIFFE for the admin socket | Joiner-mover-leaver, privileged-access review, MFA for administrators | None open (see the notes on (j)) |
 | Asset management | Inventory of assets and their classification | SBOM per binary, [data inventory](../admin/security-reference.md#data-inventory) | The asset register | None open |
 | Human resources, hygiene and training, physical security | Staff screening, training, physical and environmental controls | Not applicable to the software | All of it | Out of scope for the software |
 | Significant incident criteria | When an incident is significant for these entities | Audit evidence only | Classification and reporting | Out of scope, see below |
@@ -157,6 +159,7 @@ that assessment.
 
 ## 6. Open work items
 
-| ID | Item | Priority | Effort |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------ |
-| N4 | Decide whether the federation and OAuth2 login paths must honour `multi_factor_auth_rules`, and enforce or document each | P2 | Medium |
+None. Earlier items are closed: multi-factor rules are enforced, and the
+recovery, detection and audit-retention guidance is in the
+[operations guide](../admin/operations.md) and the
+[audit guide](../admin/features/audit.md).

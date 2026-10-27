@@ -489,8 +489,8 @@ one of the client's `spiffe_ids`, and only for the grant being accessed.
   token) with the user's `multi_factor_auth_rules` (`enforce_mfa_rules`). Delegations
   (application credentials, trusts, EC2 credentials) and machine identities
   (K8s, SPIFFE) are exempt, and a passkey login counts as multi-factor on its
-  own. Federation relies on the external IdP and the OAuth2 login applies its
-  own second-factor check. A new entry point that issues a user token must
+  own. Federation relies on the external IdP. The OAuth2 login (v4 API, no
+  Python compatibility contract) applies its own second-factor check. A new entry point that issues a user token must
   decide explicitly whether it honours the rules.
 
 ## 7. Reviewer checklist

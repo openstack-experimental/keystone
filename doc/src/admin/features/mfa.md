@@ -68,9 +68,11 @@ without reading them:
   access, like application credentials (see above).
 - federation logins. The external identity provider is responsible for the
   strength of the login.
-- the OAuth2 and OIDC login pages. They ask for a second factor from every user
-  who holds a TOTP credential or a passkey, unless `multi_factor_auth_enabled`
-  is `false`, and they ignore the rules.
+- the OAuth2 and OIDC login pages. They are part of the v4 API, which does not
+  follow Python Keystone, the owner of the `multi_factor_auth_rules` property.
+  They ask for a second factor from every user who holds a TOTP credential or a
+  passkey, unless `multi_factor_auth_enabled` is `false`, and they ignore the
+  rules.
 
 A user whose rules require a password and TOTP can therefore still obtain a
 token with a registered passkey. This is intended: do not register a passkey
