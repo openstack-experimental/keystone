@@ -71,9 +71,7 @@ feature-depth = 1
 # output a note when they are encountered.
 ignore = [
     { id = "RUSTSEC-2023-0071", reason = "rsa have still not released update"},
-    { id = "RUSTSEC-2026-0367", reason = "waiting for thirtyfour and utoipa-ui to update zip"},
-    { id = "RUSTSEC-2026-0368", reason = "waiting for thirtyfour and utoipa-ui to update zip"},
-    { id = "RUSTSEC-2026-0369", reason = "waiting for thirtyfour and utoipa-ui to update zip"},
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.x via elliptic-curve/rsa has no patch; see supply-chain/vex"},
     # zstd/zstd-safe advisories: drop once wasmtime moves to zstd >=0.14.3 / zstd-safe >=8.2.0
     { id = "RUSTSEC-2026-0398", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
     { id = "RUSTSEC-2026-0391", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
@@ -275,10 +273,10 @@ skip-tree = [
 [sources]
 # Lint level for what to happen when a crate from a crate registry that is not
 # in the allow list is encountered
-unknown-registry = "warn"
+unknown-registry = "deny"
 # Lint level for what to happen when a crate from a git repository that is not
 # in the allow list is encountered
-unknown-git = "warn"
+unknown-git = "deny"
 # List of URLs for allowed crate registries. Defaults to the crates.io index
 # if not specified. If it is specified but empty, no registries are allowed.
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]

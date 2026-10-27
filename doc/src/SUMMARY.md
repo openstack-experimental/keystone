@@ -102,6 +102,7 @@
   - [Crypto inventory and FIPS](contributor/crypto-inventory.md)
   - [Cyber Resilience Act requirements](contributor/cra-requirements.md)
     - [Cybersecurity policy](contributor/cybersecurity-policy.md)
+    - [VEX statements](contributor/vex.md)
     - [CRA Art. 14 reporting runbook](contributor/cra-art14-runbook.md)
   - [Security architecture review](contributor/security-review.md)
   - [Architecture Decision Records](adr/index.md)

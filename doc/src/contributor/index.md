@@ -19,6 +19,8 @@ This section is for developers changing Keystone-NG itself.
   obligations and compares the Python and Rust implementations.
 - [Cybersecurity policy](cybersecurity-policy.md) states the project's CRA role
   (open-source steward) and vulnerability handling.
+- [VEX statements](vex.md) records the exploitability assessment behind each
+  ignored advisory.
 - [CRA Art. 14 reporting runbook](cra-art14-runbook.md) explains what the
   project gives downstream manufacturers for Art. 14 reporting.
 - [Architecture Decision Records](../adr/index.md) contain accepted and proposed

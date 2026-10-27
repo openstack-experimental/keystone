@@ -22,6 +22,10 @@ services:
 # `resource` below to a specific verified digest instead of `latest` and
 # update it through a controlled release process.
 #
+# The Kubernetes reference deployment runs this step automatically: see
+# `tools/k8s/keystone/overlays/opa-bundle-component` and
+# `tools/Dockerfile.bundle-verify`.
+#
 # `tools/verify_and_pin_opa_bundle.sh --repo <owner>/<repo> --tag <tag>`
 # does exactly that verify-then-pin step: it resolves the tag's current
 # digest, runs the same `cosign verify` the publish job runs on itself, and
@@ -35,7 +39,10 @@ services:
 bundles:
   authz:
     service: ghcr
-    resource: ghcr.io/gtema/keystone/opa-bundle:latest
+    # Fail closed: this all-zero digest never resolves, so OPA cannot load an
+    # unverified bundle. Run `tools/verify_and_pin_opa_bundle.sh` (or the
+    # `opa-bundle-component` init container) to pin the verified digest.
+    resource: ghcr.io/openstack-experimental/keystone/opa-bundle@sha256:0000000000000000000000000000000000000000000000000000000000000000
     persist: true
     polling:
       min_delay_seconds: 600

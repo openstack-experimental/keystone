@@ -1,0 +1,49 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/openstack-experimental/keystone/blob/main/supply-chain/vex/keystone.openvex.json",
+  "author": "OpenStack Keystone (Rust) maintainers",
+  "role": "Open-source steward",
+  "timestamp": "2026-10-27T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "RUSTSEC-2023-0071",
+        "aliases": [
+          "CVE-2023-49092",
+          "GHSA-c38w-74pg-36hr"
+        ]
+      },
+      "products": [
+        {
+          "@id": "pkg:github/openstack-experimental/keystone"
+        }
+      ],
+      "subcomponents": [
+        {
+          "@id": "pkg:cargo/rsa@0.9.10"
+        }
+      ],
+      "status": "affected",
+      "action_statement": "Use the default ES256 signing algorithm. Only a deployment that opts into RS256 (`[oauth2] signing_algorithm` or an RS256 JWS token key) performs RSA private-key operations and is exposed to the Marvin timing side channel; RSA public-key operations (verification of RS256 DPoP proofs, federation JWKS, JWS) are not affected. No patched `rsa` release exists.",
+      "action_statement_timestamp": "2026-10-27T00:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "RUSTSEC-2026-0387"
+      },
+      "products": [
+        {
+          "@id": "pkg:github/openstack-experimental/keystone"
+        }
+      ],
+      "subcomponents": [
+        {
+          "@id": "pkg:cargo/crypto-bigint@0.5.5"
+        }
+      ],
+      "status": "under_investigation",
+      "impact_statement": "The patched line (>= 0.7.6) is already used where possible. crypto-bigint 0.5.5 stays in the tree through elliptic-curve 0.13 (p256, ecdsa, used for ES256) and rsa 0.9, which have no release on the patched line. Exploitability depends on compiler, target CPU and a local or microarchitectural observer; it has not been assessed for these call sites. Tracked in the CRA requirements page."
+    }
+  ]
+}

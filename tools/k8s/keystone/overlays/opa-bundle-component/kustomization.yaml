@@ -1,0 +1,26 @@
+# Load the OPA policy from the cosign-signed `opa-bundle` instead of the
+# policies baked into the `keystone-opa` image. An init container resolves the
+# bundle tag to a digest, runs `cosign verify` against this repository's GitHub
+# Actions identity and writes an OPA config pinned to that digest, so OPA only
+# ever loads a verified bundle (Gate H, load side; CRA Annex I Part I (f)).
+#
+# Add it to an overlay with:
+#
+#   components:
+#     - ../opa-bundle-component
+#
+# The pod needs egress to ghcr.io and the Sigstore endpoints (TUF root,
+# Fulcio/Rekor transparency log). See doc/src/admin/verify-artifacts.md.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+images:
+  - name: keystone-bundle-verify
+    newName: ghcr.io/openstack-experimental/keystone-bundle-verify
+    newTag: main
+
+patches:
+  - target:
+      kind: StatefulSet
+      name: keystone-rs
+    path: statefulset-patch.yaml

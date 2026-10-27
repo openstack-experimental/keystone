@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keystone-rs
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: opa-bundle-verify
+          image: keystone-bundle-verify
+          env:
+            # cosign keeps its TUF cache under $HOME.
+            - name: HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: opa-bundle-config
+              mountPath: /opa-config
+            - name: opa-bundle-tmp
+              mountPath: /tmp
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              cp /usr/share/keystone/opa_config.yaml /opa-config/opa_config.yaml
+              # Fails closed: a missing tool, an unresolvable tag or a failed
+              # signature check leaves the pod in Init:Error.
+              exec /usr/local/bin/verify_and_pin_opa_bundle.sh \
+                --repo openstack-experimental/keystone \
+                --tag main \
+                --config /opa-config/opa_config.yaml
+      containers:
+        - name: opa
+          # Serve the verified, pinned bundle instead of the baked /policy.
+          command:
+            - opa
+            - run
+            - --server
+            - --config-file=/opa-config/opa_config.yaml
+            - --addr=unix:///var/opa/opa.sock
+          volumeMounts:
+            - name: opa-bundle-config
+              mountPath: /opa-config
+              readOnly: true
+      volumes:
+        - name: opa-bundle-config
+          emptyDir: {}
+        - name: opa-bundle-tmp
+          emptyDir: {}

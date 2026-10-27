@@ -1,0 +1,64 @@
+# Release SBOM (CRA Annex I Part II (1)). Called from the generated release
+# workflow through cargo-dist's `host-jobs` setting. Generates a CycloneDX SBOM
+# and the OpenVEX document, attests both, and uploads them to the GitHub
+# release being created.
+name: Release SBOM
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    name: SBOM and VEX
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install cargo-cyclonedx
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-cyclonedx@0.5.9
+
+      # One SBOM per shipped binary (`keystone`, `keystone-manage`); build-only
+      # dependencies are not part of the shipped software.
+      - name: Generate CycloneDX SBOM
+        run: |
+          set -euo pipefail
+          mkdir -p sbom
+          for crate in keystone cli-manage; do
+            cargo cyclonedx --manifest-path "crates/${crate}/Cargo.toml" \
+              --format json --spec-version 1.5 --describe binaries \
+              --no-build-deps
+            mv crates/"${crate}"/*.cdx.json sbom/
+          done
+          cp supply-chain/vex/keystone.openvex.json sbom/
+          ls -l sbom
+
+      - name: Attest SBOM and VEX
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: "sbom/*"
+
+      - name: Upload to the release
+        run: |
+          gh release upload "${{ fromJson(inputs.plan).announcement_tag }}" sbom/* --clobber

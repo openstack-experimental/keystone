@@ -1,0 +1,37 @@
+################
+##### Verify-and-pin image for the OPA policy bundle (Gate H, load side).
+##### Runs tools/verify_and_pin_opa_bundle.sh in an init container: resolve the
+##### bundle tag to a digest, `cosign verify` it against this repository's
+##### GitHub Actions identity, and write an OPA config pinned to that digest.
+FROM debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad
+
+LABEL maintainer="Artem Goncharov"
+
+ARG COSIGN_VERSION=3.1.4
+ARG COSIGN_SHA256=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+ARG ORAS_VERSION=1.3.6
+ARG ORAS_SHA256=66fb0ad7206f3f6fa77ed5b552049d364ccf4b50b1684554f731f76302b52ca0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl && \
+    curl -fsSL -o /usr/local/bin/cosign \
+      "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" && \
+    echo "${COSIGN_SHA256}  /usr/local/bin/cosign" | sha256sum -c - && \
+    chmod 755 /usr/local/bin/cosign && \
+    curl -fsSL -o /tmp/oras.tgz \
+      "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" && \
+    echo "${ORAS_SHA256}  /tmp/oras.tgz" | sha256sum -c - && \
+    tar -xzf /tmp/oras.tgz -C /usr/local/bin oras && \
+    rm /tmp/oras.tgz && \
+    apt-get purge -y --auto-remove curl && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY tools/verify_and_pin_opa_bundle.sh /usr/local/bin/verify_and_pin_opa_bundle.sh
+COPY tools/opa_config.yaml /usr/share/keystone/opa_config.yaml
+
+RUN groupadd --gid 65532 keystone && \
+    useradd --uid 65532 --gid 65532 --no-create-home \
+      --shell /usr/sbin/nologin keystone
+USER 65532:65532
+
+ENTRYPOINT ["/usr/local/bin/verify_and_pin_opa_bundle.sh"]

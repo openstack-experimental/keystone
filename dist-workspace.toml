@@ -25,6 +25,10 @@ create-release = false
 install-updater = true
 # Whether to enable GitHub Attestations
 github-attestations = true
+# Release gate: advisories and VEX must pass before anything is built
+plan-jobs = ["./release-gate"]
+# SBOM and VEX are generated and attached once the release is hosted
+publish-jobs = ["./release-sbom"]
 
 [dist.github-custom-runners]
 global = "ubuntu-latest"

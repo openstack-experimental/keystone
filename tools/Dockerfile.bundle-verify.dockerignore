@@ -1,0 +1,5 @@
+# Build context for tools/Dockerfile.bundle-verify: only the verify script and
+# the OPA config template (the root .dockerignore excludes tools/ and *.yaml).
+*
+!tools/verify_and_pin_opa_bundle.sh
+!tools/opa_config.yaml

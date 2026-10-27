@@ -1,0 +1,35 @@
+# Release gate (CRA Annex I Part II: no known exploitable vulnerabilities at
+# release). Called from the generated release workflow through cargo-dist's
+# `plan-jobs` setting in `dist-workspace.toml`, so a tag release does not build
+# or publish unless the RustSec advisory check and the VEX check pass.
+name: Release gate
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    name: Advisories and VEX
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # Fails closed: unlike `audit.yml` there is no `continue-on-error`.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check advisories sources
+          rust-version: stable
+
+      # Every `deny.toml` advisory ignore needs a VEX statement.
+      - name: Check VEX statements
+        run: python3 tools/check_vex.py
