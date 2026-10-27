@@ -74,6 +74,20 @@ ignore = [
     { id = "RUSTSEC-2026-0367", reason = "waiting for thirtyfour and utoipa-ui to update zip"},
     { id = "RUSTSEC-2026-0368", reason = "waiting for thirtyfour and utoipa-ui to update zip"},
     { id = "RUSTSEC-2026-0369", reason = "waiting for thirtyfour and utoipa-ui to update zip"},
+    # zstd/zstd-safe advisories: drop once wasmtime moves to zstd >=0.14.3 / zstd-safe >=8.2.0
+    { id = "RUSTSEC-2026-0398", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
+    { id = "RUSTSEC-2026-0391", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
+    { id = "RUSTSEC-2026-0395", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
+    { id = "RUSTSEC-2026-0396", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
+    { id = "RUSTSEC-2026-0397", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
+    { id = "RUSTSEC-2026-0399", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
+    { id = "RUSTSEC-2026-0400", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
+    { id = "RUSTSEC-2026-0401", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
+    { id = "RUSTSEC-2026-0402", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
+    { id = "RUSTSEC-2026-0403", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
+    { id = "RUSTSEC-2026-0404", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
+    { id = "RUSTSEC-2026-0405", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
+    { id = "RUSTSEC-2026-0406", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" }
     #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
     #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
     #{ crate = "a-crate-that-is-yanked@0.1.1", reason = "you can specify why you are ignoring the yanked crate" },
