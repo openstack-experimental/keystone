@@ -25,7 +25,7 @@ incidents (Art. 23). Keystone is an identity and access management service. It
 reaches NIS2 through the entities that operate it:
 
 | Actor | NIS2 role | Consequence for Keystone |
-| ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | Cloud computing service providers, data centre and managed service providers running it | Essential or important entity (Annex I digital infrastructure and ICT service management), depending on size and national transposition | Art. 21 applies to the deployment: Keystone is a core security control of their cloud. |
 | Any other in-scope entity (energy, health, public administration, ...) running it | Essential or important entity | Same measures; Keystone is one more network and information system to cover. |
 | Distribution vendors that ship or sell a Keystone build | Suppliers of the entities above; may themselves be entities (managed service provider) | Their customers must assess them under Art. 21(3). They answer with the evidence in section 3. |
@@ -49,7 +49,7 @@ for the Rust implementation is verified against this repository and cites a
 file. The Python implementation is not analysed here.
 
 | Ref | Measure | Keystone provides | Operator must add | Gap / action |
-| --- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| --- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | (a) | Policies on risk analysis and information system security | Threat analysis in the [security review](security-review.md) (vectors V1–V10) and the [security model](security-model.md) invariants. [Security reference](../admin/security-reference.md) lists secure defaults, interfaces, failure semantics and data inventory. | Its own risk register, naming Keystone, the identity data it holds and the blast radius of a compromise. | No single packaged risk assessment (also a CRA gap, see the technical file index). |
 | (b) | Incident handling | Signed, tamper-evident CADF audit of every authentication attempt and state change (ADR 0023, `admin/features/audit.md`). Rate-limit, lockout and policy-deny outcomes. OpenTelemetry traces and Prometheus metrics. [Operations](../admin/operations.md#detecting-security-incidents) lists the audit records, metrics and alerts to use as detection signals. | Detection thresholds, on-call, escalation, the incident process itself. | None open. Alert rules for authentication failures are left to the operator. |
 | (c) | Business continuity: backup management, disaster recovery, crisis management | Encrypted Raft snapshot (`backup` command, AES-256-GCM under a backup DEK), Raft replication, health and readiness endpoints. [Operations](../admin/operations.md#backup-and-recovery) lists what to back up, a restore test, what a restore does not bring back, and key custody. | Backup schedule, off-site copies, running the restore tests, recovery objectives, crisis plan. | None open. |
@@ -59,14 +59,15 @@ file. The Python implementation is not analysed here.
 | (g) | Basic cyber hygiene and cybersecurity training | Secure defaults ([security reference](../admin/security-reference.md)), reviewer checklist in the security model for contributors. | Operator staff training, patch hygiene, admin practices. | Out of scope for the software. |
 | (h) | Policies and procedures on the use of cryptography and encryption | [Crypto inventory](crypto-inventory.md): algorithm, provider and FIPS status per primitive, kept current by a repository rule. Encryption at rest for the Raft store and backups, Fernet for tokens, rustls for TLS. Not-validated primitives are listed. | Key management policy: KEK custody, Fernet and credential key rotation schedule, TLS termination and ciphers. | None open for documentation. SQL identity data is stored as-is in the database (security reference, encryption coverage). |
 | (i) | Human resources security, access control policies and asset management | OPA/Rego policy on every handler, delegation invariants, failed-auth lockout, inactive-account and password expiry, passkeys, mTLS/SPIFFE on the admin socket. SBOM and VEX give a component inventory. | Joiner-mover-leaver process, privileged-access review, the asset register entry for Keystone. | HR security is the operator's. No Keystone-specific access-review report is shipped. |
-| (j) | Multi-factor or continuous authentication, secured communications | TOTP and passkey (WebAuthn) methods. `multi_factor_auth_rules` is enforced on `POST /v3/auth/tokens` ([guide](../admin/features/mfa.md)). The OAuth2 browser and device login requires a second factor from any user who holds a TOTP credential or passkey (`crates/keystone/src/api/v4/oauth2/mfa.rs`). SPIFFE/mTLS for services. Public TLS is expected at a proxy. | Enforce MFA for human administrators, protect the proxy and the admin listener. | **Partial.** N4: the rules are not evaluated by the passkey, federation, K8s, EC2 and OAuth2 token-issuing paths. |
+| (j) | Multi-factor or continuous authentication, secured communications | TOTP and passkey (WebAuthn) methods. `multi_factor_auth_rules` is enforced on `POST /v3/auth/tokens` ([guide](../admin/features/mfa.md)). The OAuth2 browser and device login requires a second factor from any user who holds a TOTP credential or passkey (`crates/keystone/src/api/v4/oauth2/mfa.rs`). SPIFFE/mTLS for services. Public TLS is expected at a proxy. | Enforce MFA for human administrators, protect the proxy and the admin listener. | **Partial.** N4: the rules are not evaluated by the federation and OAuth2 login paths. K8s, EC2 and passkey are exempt by design. |
 
 ### Notes on single measures
 
 - **(j) is the one open code gap.** The multi-factor rules of a user are
   enforced on `POST /v3/auth/tokens` and not on the other token-issuing paths
-  (N4). A user whose rules require a password and TOTP can still get a token
-  through a registered passkey.
+  (N4). K8s and EC2 are machine and delegated access, and a passkey is
+  multi-factor on its own, so those are exempt by design. Federation and the
+  OAuth2 login remain to be decided.
 - **(e) depends on the support period.** NIS2 expects patching without delay. A
   steward that patches only the latest release (see the
   [support policy](support-policy.md)) gives an operator one window: upgrade to
@@ -83,7 +84,7 @@ of critical supply chains and does not bind the upstream project. This table is
 the answer an operator can quote when it assesses a Keystone build.
 
 | Operator question | Answer and evidence |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | What is in the build? | CycloneDX 1.5 SBOM per binary attached to each GitHub release (`release-sbom.yml`); SPDX SBOM attestation on container images; dependency graph embedded in binaries. |
 | Can I verify the artefact is from you? | GitHub build attestations on binaries and images; cosign signature on the OPA policy bundle. Steps in [Verifying release artifacts](../admin/verify-artifacts.md). |
 | Which known vulnerabilities affect it? | OpenVEX file shipped with each release and explained in [VEX statements](vex.md). Two advisories are assessed `affected` with accepted residual risk. |
@@ -95,13 +96,13 @@ the answer an operator can quote when it assesses a Keystone build.
 
 ### Coordinated vulnerability disclosure (Art. 12)
 
-Art. 12 makes each Member State designate a CSIRT as coordinator for
-coordinated vulnerability disclosure, and ENISA runs the European vulnerability
-database. Neither places a duty on the project. Keystone's own channel is GitHub
-private vulnerability reporting. GitHub advisories carry CVE identifiers, which
-European databases ingest. A reporter who goes to a national CSIRT coordinator
-instead has no direct route to the maintainers, because the project publishes no
-role mailbox. That is an accepted risk in the
+Art. 12 makes each Member State designate a CSIRT as coordinator for coordinated
+vulnerability disclosure, and ENISA runs the European vulnerability database.
+Neither places a duty on the project. Keystone's own channel is GitHub private
+vulnerability reporting. GitHub advisories carry CVE identifiers, which European
+databases ingest. A reporter who goes to a national CSIRT coordinator instead
+has no direct route to the maintainers, because the project publishes no role
+mailbox. That is an accepted risk in the
 [cybersecurity policy](cybersecurity-policy.md#accepted-risks).
 
 ## 4. Implementing Regulation (EU) 2024/2690
@@ -127,14 +128,14 @@ The measures overlap with section 2. The table adds only what the Regulation
 asks for in more detail, with the Keystone evidence.
 
 | Annex area | What it adds over Art. 21(2) | Keystone provides | Operator must add | Gap / action |
-| ---------- | ---------------------------- | ----------------- | ----------------- | ------------ |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Incident handling, monitoring and logging | Logging of security-relevant events, protected and retained, with monitoring and detection | Signed CADF audit of every authentication attempt and state change, spool and sink, [detection guide](../admin/operations.md#detecting-security-incidents) | Centralised log store, retention period, time synchronisation, access control on logs, detection rules | None open. Retention is the operator's decision; the [audit guide](../admin/features/audit.md#retention-and-protection) says what Keystone does and does not keep |
 | Business continuity and disaster recovery | Backup management, recovery plans, tested | Encrypted snapshots, [recovery guide](../admin/operations.md#backup-and-recovery) | Recovery objectives, tests, crisis plan | None open |
 | Supply chain security | Policy on suppliers, security requirements in contracts, register of suppliers | [Supplier assurance summary](#3-supplier-assurance-summary-arts-213-and-22), SBOM, VEX, attestations | Supplier register entry, contract terms, review of the vendor build | None open |
 | Acquisition, development and maintenance | Secure development, change management, security testing, security patch management | CI gates, fuzzing, mutation tests, dated security review, VEX, [support policy](support-policy.md) | Change control, patch windows, a test environment | Latest release only is patched upstream |
 | Effectiveness assessment | Regular review of measures, audits, testing | Weekly audit and fuzz workflows, security review | Its own audits and penetration test | No third-party penetration test is recorded |
 | Cryptography | Cryptography policy, key management over the full key lifecycle | [Crypto inventory](crypto-inventory.md); key rotation for Fernet, credential keys and the Raft DEK ([Fernet](../admin/tokens/fernet.md), [distributed storage](../admin/storage/distributed.md)) | KEK custody, TLS policy, rotation schedule | None open |
-| Access control and authentication | Access policy, privileged account management, strong authentication including MFA | OPA policy on every handler, lockout and expiry, TOTP and passkeys, `multi_factor_auth_rules` ([guide](../admin/features/mfa.md)), mTLS and SPIFFE for the admin socket | Joiner-mover-leaver, privileged-access review, MFA for administrators | N4: rules not evaluated on all token paths |
+| Access control and authentication | Access policy, privileged account management, strong authentication including MFA | OPA policy on every handler, lockout and expiry, TOTP and passkeys, `multi_factor_auth_rules` ([guide](../admin/features/mfa.md)), mTLS and SPIFFE for the admin socket | Joiner-mover-leaver, privileged-access review, MFA for administrators | N4: rules not evaluated on federation and OAuth2 login |
 | Asset management | Inventory of assets and their classification | SBOM per binary, [data inventory](../admin/security-reference.md#data-inventory) | The asset register | None open |
 | Human resources, hygiene and training, physical security | Staff screening, training, physical and environmental controls | Not applicable to the software | All of it | Out of scope for the software |
 | Significant incident criteria | When an incident is significant for these entities | Audit evidence only | Classification and reporting | Out of scope, see below |
@@ -157,5 +158,5 @@ that assessment.
 ## 6. Open work items
 
 | ID | Item | Priority | Effort |
-| --- | ---- | -------- | ------ |
-| N4 | Decide whether the passkey, federation, K8s, EC2 and OAuth2 token-issuing paths must honour `multi_factor_auth_rules`, and enforce or document each | P2 | Medium |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------ |
+| N4 | Decide whether the federation and OAuth2 login paths must honour `multi_factor_auth_rules`, and enforce or document each | P2 | Medium |

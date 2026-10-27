@@ -48,30 +48,34 @@ token, so a user who passed a rule once can rescope without a new second factor.
 - The user has no `multi_factor_auth_rules`, or only empty rules.
 - The user option `multi_factor_auth_enabled` is `false`. Leave it unset or
   `true` to keep the rules active.
-- The login is a delegation: an application credential or a trust. Both are
-  created by an already authenticated user, and they exist so that automation
-  can authenticate without a second factor. Limit them with their own
-  restrictions and short lifetimes.
+- The login is a delegation: an application credential, a trust or an EC2
+  credential. These are created by an already authenticated user, and they
+  exist so that automation can authenticate without a second factor. Limit
+  them with their own restrictions and short lifetimes.
 
-Workload identities (SPIFFE, Kubernetes) have no user options.
+Machine identities are exempt by design: SPIFFE and Kubernetes workloads have
+no user options and no human to prompt for a second factor.
 
 ## Where the rules are not evaluated
 
 The rules apply on `POST /v3/auth/tokens` only. These paths issue tokens
 without reading them:
 
-- the passkey login (`webauthn` extension),
-- federation logins,
-- Kubernetes authentication, EC2 tokens and the other service-specific
-  endpoints,
+- the passkey login (`webauthn` extension). A passkey is a multi-factor
+  credential on its own (possession of the authenticator plus user
+  verification), so it does not need a second method.
+- Kubernetes authentication and EC2 tokens. They are machine and delegated
+  access, like application credentials (see above).
+- federation logins. The external identity provider is responsible for the
+  strength of the login.
 - the OAuth2 and OIDC login pages. They ask for a second factor from every user
   who holds a TOTP credential or a passkey, unless `multi_factor_auth_enabled`
   is `false`, and they ignore the rules.
 
 A user whose rules require a password and TOTP can therefore still obtain a
-token with a registered passkey. Treat a passkey as a strong factor on its own,
-or do not register one for such a user. Close the other paths at the proxy if
-they must not be reachable.
+token with a registered passkey. This is intended: do not register a passkey
+for a user who must not have that path. Require MFA at the identity provider
+for federated users.
 
 ## Avoiding a lockout
 

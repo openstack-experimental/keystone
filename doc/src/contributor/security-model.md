@@ -487,10 +487,11 @@ one of the client's `spiffe_ids`, and only for the grant being accessed.
   creation on `/v3/auth/tokens` compares the methods carried by the
   `SecurityContext` (`auth_methods()`, which includes the methods of a parent
   token) with the user's `multi_factor_auth_rules` (`enforce_mfa_rules`). Delegations
-  (application credentials, trusts) are exempt. The rules are not evaluated by
-  the other token-issuing entry points (passkey login, federation, K8s, EC2,
-  OAuth2). A new entry point that issues a user token must decide explicitly
-  whether it honours them.
+  (application credentials, trusts, EC2 credentials) and machine identities
+  (K8s, SPIFFE) are exempt, and a passkey login counts as multi-factor on its
+  own. Federation relies on the external IdP and the OAuth2 login applies its
+  own second-factor check. A new entry point that issues a user token must
+  decide explicitly whether it honours the rules.
 
 ## 7. Reviewer checklist
 
