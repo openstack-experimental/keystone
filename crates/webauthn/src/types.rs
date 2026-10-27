@@ -24,6 +24,8 @@ use webauthn_rs::prelude::Passkey;
 
 mod provider;
 
+#[cfg(test)]
+pub(crate) use provider::MockWebauthnApi;
 pub use provider::WebauthnApi;
 
 /// WebAuthN credential of a user.

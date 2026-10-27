@@ -27,9 +27,8 @@ default and should be turned on.
 | `[distributed_storage] kek_provider` | `env` | The `env` KEK is accepted **only** with `dev_mode = true`, so a production node does not start until `pkcs11` or `tpm` is set explicitly. | `pkcs11` or `tpm`. |
 | `[distributed_storage] local_reads_mode` | `disabled` | Every read is linearizable; no stale reads. | Keep `disabled` unless a consumer needs stale `PUBLIC`/`INTERNAL` reads. |
 | `[api_policy]` | OPA at `http://localhost:8181` | Every authorised endpoint is evaluated by OPA. | Run OPA beside Keystone; see [policy](policy.md). |
-| `[api_policy] enable` | `true` | **Accepted but not read.** The enforcer is always created, so policy cannot be switched off through this key. | Do not rely on it. |
-| `[rate_limit_global_ip]`, `[rate_limit_user_auth]` and the other `[rate_limit_*]` sections | `enabled = false`, `burst_size = 100`, `replenish_rate_per_second = 10` | **Gap.** No limiter is active until a section is enabled. Limits are per node and held in memory (ADR 0022). | Enable `[rate_limit_global_ip]` and `[rate_limit_user_auth]` and size them for the deployment. Enabled values outside `1..=100000` stop startup. |
-| `[rate_limit_trusted_proxies] trusted_proxies` | empty | No forwarding header is trusted; the peer address is used. | List only the proxies that sanitise the header, and set `trusted_header`. |
+| `[rate_limit_global_ip]`, `[rate_limit_user_auth]` | `enabled = true`, `burst_size = 100`, `replenish_rate_per_second = 10` | Both limiters are active without configuration. Limits are per node and held in memory (ADR 0022). Enabled values outside `1..=100000` stop startup. | Size the buckets for the deployment; set `enabled = false` only when a proxy already limits. |
+| `[rate_limit_trusted_proxies] trusted_proxies` | empty | No forwarding header is trusted; the peer address is used. Behind an unlisted proxy every client shares the proxy's bucket. | List the proxies that sanitise the header, and set `trusted_header`. |
 | `[interface_admin]` | not configured | The admin interface is not started. When configured it is a Unix socket only, with optional `peer_uid` and `peer_gid` checks. | Configure `peer_uid` or `peer_gid`, and restrict the socket directory. |
 | `[interface_internal]` | not configured | No second TCP listener. | Configure only when a separate trust zone is needed. |
 | `[DEFAULT] debug` | `false` | No DEBUG log level for the file sink. | Keep `false` in production. |
@@ -47,8 +46,8 @@ public listener.
 
 | Interface | Config section | Default bind | Transport and authentication | Notes |
 | --- | --- | --- | --- | --- |
-| Public REST | `[interface_public]` | `0.0.0.0:8080` when the section is absent; `0.0.0.0:8081` when the section is present without `tcp_address` | `type = http` (default, plain HTTP, bearer tokens) or `type = spiffe` (mTLS with trust domains) | Set `tcp_address` explicitly. |
-| Internal REST | `[interface_internal]` | `0.0.0.0:8080` when the section is present without `tcp_address` | Same `type` choices as public | Disabled when the section is absent. |
+| Public REST | `[interface_public]` | `0.0.0.0:8080` | `type = http` (default, plain HTTP, bearer tokens) or `type = spiffe` (mTLS with trust domains) | |
+| Internal REST | `[interface_internal]` | `0.0.0.0:8081` when the section is present without `tcp_address` | Same `type` choices as public | Disabled when the section is absent. |
 | Admin | `[interface_admin]` | Unix socket `/var/lib/keystone/keystone.sock` | SPIFFE mTLS over the socket, plus `peer_uid` and `peer_gid` | `admin_svid` maps a matching SVID to the system admin role. Used for bootstrap. |
 | Health and metrics | `[interface_metrics]` | `0.0.0.0:8099` | Plain HTTP, no authentication: `/health`, `/ready`, `/metrics` | Bind to a monitoring network. |
 | Raft peer | `[distributed_storage] node_listener_addr` | `0.0.0.0:8081` | gRPC with mTLS, SPIFFE or certificate based | Only with distributed storage. Needs a node-specific port when it shares a host with the public listener. |
@@ -56,9 +55,7 @@ public listener.
 | OPA | `[api_policy] opa_base_url` | outbound, `http://localhost:8181` | HTTP, or a Unix socket URL | Keep on loopback or a Unix socket. With `opa_policies_path` set, Keystone starts OPA itself. |
 | Auth plugins | `[auth_plugins]` | in-process WASM | Capability list and SHA-256 artefact pinning (TOK-10) | Pre-authentication attack surface; load only reviewed plugins. |
 
-The public and internal listeners default to the same port family. The default
-for the *public* listener depends on whether its section exists, which is easy
-to misread; always set `tcp_address`.
+Policy enforcement has no off switch: the OPA enforcer is always created.
 
 ## Failure semantics
 
@@ -123,13 +120,18 @@ What `DELETE /v3/users/{id}` (and the v4 equivalent) removes. The identity
 service deletes the user record, then, in the same audited operation, the
 user's credentials, application credentials, trusts and role assignments, the
 cached user entries, and the identity mapping on domain-specific backends.
+Event hooks then remove passkeys, revoke OAuth2 sessions and purge the
+auth-plugin identity index.
 
 | Location | Removed on user delete? | Notes |
 | --- | --- | --- |
 | User record in the SQL identity backend | Yes | |
 | Credentials, application credentials, trusts, role assignments | Yes | Cascade in the identity service. A retry after a partial failure finishes the cascade. |
 | In-process user caches | Yes | Per node; other nodes expire entries by TTL. |
-| Passkeys, OAuth2 sessions, API keys, federated links | **Gap** | The delete path does not call the removal for these stores. Confirm foreign-key behaviour for your backend and remove them explicitly until the cascade is added. |
+| Passkeys and pending passkey ceremony state | Yes, best effort | Removed by an event hook after the delete succeeds. A failure is logged (`failed to purge passkeys of deleted user`) and not retried; the janitor expires ceremony state. |
+| OAuth2 refresh-token families, pending authorisations and device grants | Revoked | The OAuth2 session hook tombstones them on delete, so none can mint a new token. |
+| Federated user links | Yes | Database foreign key with `ON DELETE CASCADE` (SQL identity backend). |
+| API keys | Not user data | API keys belong to a domain and SCIM provider, not to a user. |
 | Issued tokens | No (stateless) | Valid until expiry; revoke by user. |
 | Revocation events | No | Kept so revocation outlives the user. |
 | Audit records | No | Retained by design for accountability; they hold identifiers only. |
