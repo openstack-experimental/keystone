@@ -7,13 +7,13 @@
 [IAM data plane and check API design](iam-data-plane.md)
 [Public KMS architecture](kms-vision.md)
 
----
+______________________________________________________________________
 
 # Installation Guides
 
 - [Installation](install/index.md)
 
----
+______________________________________________________________________
 
 # General Information
 
@@ -22,7 +22,7 @@
   - [Compatibility](getting-started/compatibility.md)
   - [Performance comparison](getting-started/performance.md)
 
----
+______________________________________________________________________
 
 # User Documentation
 
@@ -40,7 +40,7 @@
   - [Kubernetes TokenReview Authentication](user/features/kubernetes-auth.md)
   - [Identity Mapping Rules and API](user/features/identity-mapping.md)
 
----
+______________________________________________________________________
 
 # Administrator Guides
 
@@ -74,20 +74,20 @@
   - [OpenTelemetry](admin/features/opentelemetry.md)
   - [Observability](admin/features/observability.md)
 
----
+______________________________________________________________________
 
 # Configuration Options
 
 - [Configuration reference](configuration/index.md)
   - [Configuration options](configuration/options.md)
 
----
+______________________________________________________________________
 
 # API Reference
 
 - [OpenAPI and Swagger UI](./swagger-ui.html)
 
----
+______________________________________________________________________
 
 # Contributor Documentation
 
@@ -107,6 +107,7 @@
     - [Support policy](contributor/support-policy.md)
     - [VEX statements](contributor/vex.md)
     - [CRA Art. 14 reporting runbook](contributor/cra-art14-runbook.md)
+  - [NIS2 requirements](contributor/nis2-requirements.md)
   - [Security architecture review](contributor/security-review.md)
   - [Architecture Decision Records](adr/index.md)
     - [Record architecture decisions](adr/0001-record-architecture-decisions.md)
