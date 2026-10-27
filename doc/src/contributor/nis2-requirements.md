@@ -51,24 +51,22 @@ file. The Python implementation is not analysed here.
 | Ref | Measure | Keystone provides | Operator must add | Gap / action |
 | --- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | (a) | Policies on risk analysis and information system security | Threat analysis in the [security review](security-review.md) (vectors V1–V10) and the [security model](security-model.md) invariants. [Security reference](../admin/security-reference.md) lists secure defaults, interfaces, failure semantics and data inventory. | Its own risk register, naming Keystone, the identity data it holds and the blast radius of a compromise. | No single packaged risk assessment (also a CRA gap, see the technical file index). |
-| (b) | Incident handling | Signed, tamper-evident CADF audit of every authentication attempt and state change (ADR 0023, `admin/features/audit.md`). Rate-limit, lockout and policy-deny outcomes. OpenTelemetry traces and Prometheus metrics (`admin/operations.md`). | Detection rules, on-call, escalation, the incident process itself. | N2: no operator guide that says which audit events and metrics to alert on. |
-| (c) | Business continuity: backup management, disaster recovery, crisis management | Encrypted Raft snapshot (`backup` command, AES-256-GCM under a backup DEK), Raft replication, health and readiness endpoints. [Operations](../admin/operations.md) has an upgrade checklist and a recovery paragraph. | Backup schedule, off-site copies, restore tests, recovery objectives, crisis plan. | N1: recovery guide is one paragraph; no restore-test procedure, no key-escrow guidance beyond "preserve the KEK". |
+| (b) | Incident handling | Signed, tamper-evident CADF audit of every authentication attempt and state change (ADR 0023, `admin/features/audit.md`). Rate-limit, lockout and policy-deny outcomes. OpenTelemetry traces and Prometheus metrics. [Operations](../admin/operations.md#detecting-security-incidents) lists the audit records, metrics and alerts to use as detection signals. | Detection thresholds, on-call, escalation, the incident process itself. | None open. Alert rules for authentication failures are left to the operator. |
+| (c) | Business continuity: backup management, disaster recovery, crisis management | Encrypted Raft snapshot (`backup` command, AES-256-GCM under a backup DEK), Raft replication, health and readiness endpoints. [Operations](../admin/operations.md#backup-and-recovery) lists what to back up, a restore test, what a restore does not bring back, and key custody. | Backup schedule, off-site copies, running the restore tests, recovery objectives, crisis plan. | None open. |
 | (d) | Supply chain security, including relationships with direct suppliers | Dependency policy (`cargo deny`, `cargo vet`, Dependabot), digest-pinned base images, SBOM per binary, build attestations, cosign-signed policy bundle, OpenVEX statements ([section 3](#3-supplier-assurance-summary-arts-213-and-22)). | Supplier due diligence on the vendor or build it deploys; verifying the artefacts before rollout. | None open. Evidence exists; see section 3. |
 | (e) | Security in acquisition, development and maintenance, including vulnerability handling and disclosure | Secure development gates (policy CI gates A–J, fuzzing, mutation tests, `unsafe_code = "forbid"`), [cybersecurity policy](cybersecurity-policy.md), [SECURITY.md](https://github.com/openstack-experimental/keystone/blob/main/SECURITY.md) disclosure process, VEX, advisories via GHSA. | Patch management with a service-level target, change control, a test environment. | Upstream patches the latest release only ([support policy](support-policy.md)); an operator on a vendor build needs the vendor's window. |
 | (f) | Policies and procedures to assess the effectiveness of the measures | Weekly audit and fuzz workflows, scheduled mutation testing, a dated security review. CI is the test record. | Its own audits, penetration tests and review cadence. | No per-release test report and no third-party penetration test is recorded (technical file index, known gaps). |
 | (g) | Basic cyber hygiene and cybersecurity training | Secure defaults ([security reference](../admin/security-reference.md)), reviewer checklist in the security model for contributors. | Operator staff training, patch hygiene, admin practices. | Out of scope for the software. |
 | (h) | Policies and procedures on the use of cryptography and encryption | [Crypto inventory](crypto-inventory.md): algorithm, provider and FIPS status per primitive, kept current by a repository rule. Encryption at rest for the Raft store and backups, Fernet for tokens, rustls for TLS. Not-validated primitives are listed. | Key management policy: KEK custody, Fernet and credential key rotation schedule, TLS termination and ciphers. | None open for documentation. SQL identity data is stored as-is in the database (security reference, encryption coverage). |
 | (i) | Human resources security, access control policies and asset management | OPA/Rego policy on every handler, delegation invariants, failed-auth lockout, inactive-account and password expiry, passkeys, mTLS/SPIFFE on the admin socket. SBOM and VEX give a component inventory. | Joiner-mover-leaver process, privileged-access review, the asset register entry for Keystone. | HR security is the operator's. No Keystone-specific access-review report is shipped. |
-| (j) | Multi-factor or continuous authentication, secured communications | TOTP and passkey (WebAuthn) methods; a v3 request can combine methods; the OAuth2 browser and device login requires a second factor from any user who holds a TOTP credential or passkey (`crates/keystone/src/api/v4/oauth2/mfa.rs`). SPIFFE/mTLS for services. Public TLS is expected at a proxy. | Enforce MFA for human administrators, protect the proxy and the admin listener. | **Gap.** N3: `multi_factor_auth_rules` is stored and returned but not enforced on `POST /v3/auth/tokens`, so a password alone still issues a token. |
+| (j) | Multi-factor or continuous authentication, secured communications | TOTP and passkey (WebAuthn) methods. `multi_factor_auth_rules` is enforced on `POST /v3/auth/tokens` ([guide](../admin/features/mfa.md)). The OAuth2 browser and device login requires a second factor from any user who holds a TOTP credential or passkey (`crates/keystone/src/api/v4/oauth2/mfa.rs`). SPIFFE/mTLS for services. Public TLS is expected at a proxy. | Enforce MFA for human administrators, protect the proxy and the admin listener. | **Partial.** N4: the rules are not evaluated by the passkey, federation, K8s, EC2 and OAuth2 token-issuing paths. |
 
 ### Notes on single measures
 
-- **(b) and (c) are thin on guidance.** Keystone has strong audit and a working
-  backup command, but the operator guidance that turns them into incident
-  handling and continuity is short. N1 and N2 close that.
-- **(j) is the one code gap.** The rules a user sets for required factor
-  combinations are not applied to token issuance (N3). The OAuth2 login does
-  require the second factor, so the gap is the v3 password path.
+- **(j) is the one open code gap.** The multi-factor rules of a user are
+  enforced on `POST /v3/auth/tokens` and not on the other token-issuing paths
+  (N4). A user whose rules require a password and TOTP can still get a token
+  through a registered passkey.
 - **(e) depends on the support period.** NIS2 expects patching without delay. A
   steward that patches only the latest release (see the
   [support policy](support-policy.md)) gives an operator one window: upgrade to
@@ -110,7 +108,7 @@ role mailbox. That is an accepted risk in the
 
 - **Art. 23 incident reporting** (early warning in 24 h, notification in 72 h,
   final report in one month). It is the operator's duty to its CSIRT. The audit
-  trail and N2 give it the evidence. The reporting timeline itself is not
+  trail and the detection guide give it the evidence. The reporting timeline itself is not
   analysed on this page.
 - **Art. 20 governance** (management approval, oversight and training).
 - **Implementing Regulation (EU) 2024/2690**, which sets detailed technical and
@@ -123,7 +121,5 @@ role mailbox. That is an accepted risk in the
 ## 5. Open work items
 
 | ID | Item | Priority | Effort |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------ |
-| N1 | Expand the recovery guide: backup schedule, restore-test procedure, key-escrow for the KEK and Fernet keys, what a restore does not bring back | P1 | Low |
-| N2 | Add an incident-detection guide: which audit events, rate-limit and lockout signals and metrics to alert on, and how audit records support Art. 23 evidence | P1 | Low |
-| N3 | Enforce `multi_factor_auth_rules` when issuing tokens on `/v3/auth/tokens` (Python parity), or document the gap and the OAuth2-only second factor | P1 | Medium |
+| --- | ---- | -------- | ------ |
+| N4 | Decide whether the passkey, federation, K8s, EC2 and OAuth2 token-issuing paths must honour `multi_factor_auth_rules`, and enforce or document each | P2 | Medium |
