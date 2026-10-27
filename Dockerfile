@@ -1,6 +1,6 @@
 ################
 ##### Builder
-FROM rust:1.99.0-slim-trixie AS base
+FROM rust:1.99.0-slim-trixie@sha256:2752b332db73fdbb7dc576f06c82ed1f312005784ef913d7e04a28f5f55dc581 AS base
 ENV CARGO_HOME=/usr/local/cargo
 ENV CARGO_TARGET_DIR=/app/target
 
@@ -42,7 +42,7 @@ RUN cargo build --release --bins --features "${KEYSTONE_FEATURES}"
 
 ################
 ##### Runtime
-FROM debian:trixie-slim AS runtime
+FROM debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad AS runtime
 
 LABEL maintainer="Artem Goncharov"
 
@@ -71,5 +71,13 @@ RUN if [ -n "${KEYSTONE_TEST_TOOLS}" ]; then \
       apt-get install -y --no-install-recommends ${KEYSTONE_TEST_TOOLS} && \
       rm -rf /var/lib/apt/lists/*; \
     fi
+
+# Run as an unprivileged user. The numeric uid/gid match the `runAsUser` /
+# `fsGroup` of the Kubernetes manifests (tools/k8s/keystone). Binaries stay
+# root-owned and are not writable by this user.
+RUN groupadd --gid 65532 keystone && \
+    useradd --uid 65532 --gid 65532 --no-create-home \
+      --shell /usr/sbin/nologin keystone
+USER 65532:65532
 
 CMD ["/usr/local/bin/keystone"]

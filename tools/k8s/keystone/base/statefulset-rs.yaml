@@ -25,10 +25,25 @@ spec:
         app.kubernetes.io/name: keystone-rs
     spec:
       serviceAccountName: keystone
+      # Same uid/gid as the image user (Dockerfile) and the production
+      # overlay. `fsGroup` makes the `emptyDir` volumes writable for it.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         - name: db-waiter
           image: busybox
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           command: ['sh', '-c', 'echo "Waiting for PostgreSQL to be available..."; while ! nc -z -w 1 keystone-db-rw 5432; do echo "Still waiting for postgres-service..."; sleep 2; done; echo "PostgreSQL is available! Starting application."']
         # After a node reboot the SPIRE agent can come up later than this
         # pod. Without the Workload API socket keystone times out waiting
@@ -36,6 +51,11 @@ spec:
         - name: spire-waiter
           image: busybox
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           command: ['sh', '-c', 'echo "Waiting for the SPIFFE Workload API socket..."; while ! test -S /run/spire/sockets/spire-agent.sock; do echo "Still waiting for spire-agent.sock..."; sleep 2; done; echo "SPIFFE Workload API socket is available."']
           volumeMounts:
             - mountPath: /run/spire/sockets
@@ -53,6 +73,11 @@ spec:
 
           image: keystone-rs
           name: keystone
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8080
               name: keystone-rs
@@ -120,10 +145,17 @@ spec:
               name: "opa-socket"
             - mountPath: /run/keystone
               name: admin-socket
+            - mountPath: /tmp
+              name: tmp
 
         - command: ["opa", "run", "--server", "/policy", "--addr", "unix:///var/opa/opa.sock", "--watch", "/etc/certs"]
           image: keystone-rs
           name: opa
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8181
               name: http
@@ -139,7 +171,12 @@ spec:
           image: ghcr.io/spiffe/spiffe-helper:0.11.0
           args: ["-config", "/etc/spiffe-helper/helper.conf"]
           securityContext:
-            runAsUser: 1000
+            # Same uid as keystone and opa so both can read the key it writes.
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           volumeMounts:
             - name: certs
               mountPath: /etc/certs
@@ -172,6 +209,8 @@ spec:
         - name: admin-socket
           emptyDir: {}
         - name: opa-socket
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}
         - name: "spiffe-workload-api"
           csi:

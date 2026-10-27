@@ -25,3 +25,8 @@ updates:
       wasmtime:
         patterns:
           - "wasmtime*"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
