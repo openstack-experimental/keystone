@@ -2,8 +2,9 @@
 
 ## Supported versions
 
-Only the latest release receives security fixes. This applies until a 1.0 line
-exists and a longer support period is defined.
+Only the latest release receives security fixes. The upstream project gives no
+longer support period; vendors that ship Keystone own theirs. See the
+[support policy](doc/src/contributor/support-policy.md).
 
 ## Reporting a vulnerability
 

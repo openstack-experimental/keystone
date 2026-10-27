@@ -24,7 +24,8 @@ vendors need. See [CRA requirements](cra-requirements.md) for the gap analysis.
 - Fixes are prepared privately. Once a fix is released, the project publishes a
   GitHub Security Advisory with a CVE request and announces it in the
   `Security announcements` GitHub Discussions category.
-- Only the latest release receives security fixes until a 1.0 line exists.
+- Only the latest release receives security fixes. See the
+  [support policy](support-policy.md).
 - Downstream manufacturers follow the [Art. 14 runbook](cra-art14-runbook.md).
 
 ## Cooperation with authorities

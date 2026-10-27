@@ -3,8 +3,8 @@
   "@id": "https://github.com/openstack-experimental/keystone/blob/main/supply-chain/vex/keystone.openvex.json",
   "author": "OpenStack Keystone (Rust) maintainers",
   "role": "Open-source steward",
-  "timestamp": "2026-10-27T00:00:00Z",
-  "version": 1,
+  "timestamp": "2026-10-28T00:00:00Z",
+  "version": 2,
   "statements": [
     {
       "vulnerability": {
@@ -42,8 +42,9 @@
           "@id": "pkg:cargo/crypto-bigint@0.5.5"
         }
       ],
-      "status": "under_investigation",
-      "impact_statement": "The patched line (>= 0.7.6) is already used where possible. crypto-bigint 0.5.5 stays in the tree through elliptic-curve 0.13 (p256, ecdsa, used for ES256) and rsa 0.9, which have no release on the patched line. Exploitability depends on compiler, target CPU and a local or microarchitectural observer; it has not been assessed for these call sites. Tracked in the CRA requirements page."
+      "status": "affected",
+      "action_statement": "No patched release is reachable yet: crypto-bigint 0.5.5 is pulled in only by jsonwebtoken's rust_crypto backend (p256/ecdsa 0.13), which signs the default ES256 tokens; Keystone's own p256 use is already on the patched 0.14 line. The affected operations run on secret scalars during ES256 signing, but remote exploitation needs per-signature timing measurements and a lattice attack on partially known nonces and is judged impractical; a co-located observer is a stronger threat. Operators should not share the host CPU with untrusted workloads and should rotate signing keys on the normal schedule. The project moves to a patched p256 when jsonwebtoken releases on it, or to jsonwebtoken's aws_lc_rs backend.",
+      "action_statement_timestamp": "2026-10-28T00:00:00Z"
     }
   ]
 }
