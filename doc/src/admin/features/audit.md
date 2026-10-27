@@ -57,32 +57,32 @@ Records are JSON lines using the DSP0262 (CADF) key names:
 }
 ```
 
-* `outcome` is one of the DSP0262 values `success`, `failure`, `pending`
+- `outcome` is one of the DSP0262 values `success`, `failure`, `pending`
   (provider record written before the change) or `unknown`; no other value is
   written, and a record carrying one is rejected on read. A rejected request
   such as a rate limit is a `failure` whose `reason.reasonCode` is
   `TooManyRequests` or `ClientError`. Rate-limited or otherwise denied plugin
   invocations are likewise a `failure` with the cause in `reason.reasonCode`.
-* `reason.reasonCode` is a fixed vocabulary word (an error variant name such as
+- `reason.reasonCode` is a fixed vocabulary word (an error variant name such as
   `Conflict` or `UserLocked`), never error text. The `reason` key is omitted
   when there is none.
-* OAuth2 token-endpoint records (`authenticate` for the `authorization_code`,
+- OAuth2 token-endpoint records (`authenticate` for the `authorization_code`,
   `refresh_token` and `device_code` grants) carry a second `attachments`
   entry, `oauth2`, with `content` `{"client_id": "...", "grant_type": "..."}`.
   It is covered by the signature. Look attachments up by `name`, never by
   position. A rejected `device_code` client is a `failure` whose
   `reason.reasonCode` is the OAuth2 error (`invalid_client`,
   `unauthorized_client`).
-* `action` is a lowercase verb or a `/`-separated name such as
+- `action` is a lowercase verb or a `/`-separated name such as
   `oauth2/refresh_reuse_detected`.
-* `initiator.host` carries the client address and, for pre-authentication
+- `initiator.host` carries the client address and, for pre-authentication
   failures, a non-secret identifier such as the EC2 access key id. It is
   **omitted** when empty, whereas `project_id` and `domain_id` are `null`.
-* The correlation id is the `correlation_id:` tag: the server-generated
+- The correlation id is the `correlation_id:` tag: the server-generated
   `x-openstack-request-id`; a client-supplied value is discarded.
-* The `integrity` attachment carries the sequence number, boot session, key
+- The `integrity` attachment carries the sequence number, boot session, key
   version, schema version, the initiator's domain and the observer node.
-* Records contain identifiers only: no passwords, tokens, secrets or free text.
+- Records contain identifiers only: no passwords, tokens, secrets or free text.
 
 ## The spool
 
@@ -143,13 +143,34 @@ KEK generation on the FIPS 140-3 validated AWS-LC module. Call
 stack follows the service's `fips` feature (the TLS provider crate), not this
 one.
 
+## Retention and protection
+
+Keystone keeps audit records only as long as they are on the spool. The
+retention period of the evidence is the operator's decision, and it must be
+long enough for incident investigation and for the duties the deployment is
+under.
+
+- With a `sink`, a sealed segment is deleted from the spool once the sink has
+  accepted it. From then on the downstream store owns retention. Set its period
+  there, and make the store append-only or write-once for the period.
+- Without a `sink`, segments stay on the spool until an external shipper
+  removes them, or until `spool_max_segments` forces Keystone to delete the
+  oldest with an `ERROR` log. Do not rely on that limit as a retention policy.
+- Records carry the time of the node that wrote them (`eventTime`). Keep every
+  node's clock synchronised, or the order of events across nodes cannot be
+  reconstructed.
+- Allow read access to the spool and to the shipped records only to the people
+  who investigate incidents, and keep the HMAC keys apart from the records, so
+  that someone who can alter the records cannot re-sign them.
+- Archive the spool of a node before you rebuild or retire it.
+
 ## Verifying records in a SIEM
 
 1. Parse the JSON line.
-2. Remove the `signature` key.
-3. Serialize the rest in JCS canonical form (RFC 8785).
-4. Compute HMAC-SHA256 with the key for `hmac_key_version` (and `node_id`).
-5. Compare with `signature`.
+1. Remove the `signature` key.
+1. Serialize the rest in JCS canonical form (RFC 8785).
+1. Compute HMAC-SHA256 with the key for `hmac_key_version` (and `node_id`).
+1. Compare with `signature`.
 
 Cache every key version you have seen. Reference vectors, including the `host`
 cases, are in `tests/audit/hmac_vectors.jsonl`, and

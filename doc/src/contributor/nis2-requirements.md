@@ -104,21 +104,57 @@ instead has no direct route to the maintainers, because the project publishes no
 role mailbox. That is an accepted risk in the
 [cybersecurity policy](cybersecurity-policy.md#accepted-risks).
 
-## 4. Not covered here
+## 4. Implementing Regulation (EU) 2024/2690
+
+Implementing Regulation (EU) 2024/2690 sets the technical and methodological
+requirements of Art. 21(5) NIS2 for DNS service providers, TLD registries, cloud
+computing service providers, data centre service providers, content delivery
+networks, managed service providers, managed security service providers, online
+marketplaces, search engines, social networks and trust service providers. It
+also defines when an incident is significant for these entities. Other NIS2
+entities remain under Art. 21(2) only. The most likely class for a Keystone
+deployment is the **cloud computing service provider**, the operator of an
+OpenStack cloud.
+
+Section headings in the Annex (security policy, risk management, incident
+handling, continuity, supply chain, acquisition and development, effectiveness,
+hygiene, cryptography, human resources, access control, asset management,
+physical security) are quoted from general knowledge and cited at section level
+only. Check them, and the sub-requirements, against the Official Journal text
+before use.
+
+The measures overlap with section 2. The table adds only what the Regulation
+asks for in more detail, with the Keystone evidence.
+
+| Annex area | What it adds over Art. 21(2) | Keystone provides | Operator must add | Gap / action |
+| ---------- | ---------------------------- | ----------------- | ----------------- | ------------ |
+| Incident handling, monitoring and logging | Logging of security-relevant events, protected and retained, with monitoring and detection | Signed CADF audit of every authentication attempt and state change, spool and sink, [detection guide](../admin/operations.md#detecting-security-incidents) | Centralised log store, retention period, time synchronisation, access control on logs, detection rules | None open. Retention is the operator's decision; the [audit guide](../admin/features/audit.md#retention-and-protection) says what Keystone does and does not keep |
+| Business continuity and disaster recovery | Backup management, recovery plans, tested | Encrypted snapshots, [recovery guide](../admin/operations.md#backup-and-recovery) | Recovery objectives, tests, crisis plan | None open |
+| Supply chain security | Policy on suppliers, security requirements in contracts, register of suppliers | [Supplier assurance summary](#3-supplier-assurance-summary-arts-213-and-22), SBOM, VEX, attestations | Supplier register entry, contract terms, review of the vendor build | None open |
+| Acquisition, development and maintenance | Secure development, change management, security testing, security patch management | CI gates, fuzzing, mutation tests, dated security review, VEX, [support policy](support-policy.md) | Change control, patch windows, a test environment | Latest release only is patched upstream |
+| Effectiveness assessment | Regular review of measures, audits, testing | Weekly audit and fuzz workflows, security review | Its own audits and penetration test | No third-party penetration test is recorded |
+| Cryptography | Cryptography policy, key management over the full key lifecycle | [Crypto inventory](crypto-inventory.md); key rotation for Fernet, credential keys and the Raft DEK ([Fernet](../admin/tokens/fernet.md), [distributed storage](../admin/storage/distributed.md)) | KEK custody, TLS policy, rotation schedule | None open |
+| Access control and authentication | Access policy, privileged account management, strong authentication including MFA | OPA policy on every handler, lockout and expiry, TOTP and passkeys, `multi_factor_auth_rules` ([guide](../admin/features/mfa.md)), mTLS and SPIFFE for the admin socket | Joiner-mover-leaver, privileged-access review, MFA for administrators | N4: rules not evaluated on all token paths |
+| Asset management | Inventory of assets and their classification | SBOM per binary, [data inventory](../admin/security-reference.md#data-inventory) | The asset register | None open |
+| Human resources, hygiene and training, physical security | Staff screening, training, physical and environmental controls | Not applicable to the software | All of it | Out of scope for the software |
+| Significant incident criteria | When an incident is significant for these entities | Audit evidence only | Classification and reporting | Out of scope, see below |
+
+Keystone is one component of a cloud. Whether the cloud as a whole meets the
+Regulation depends on the operator's controls around it. This page does not make
+that assessment.
+
+## 5. Not covered here
 
 - **Art. 23 incident reporting** (early warning in 24 h, notification in 72 h,
   final report in one month). It is the operator's duty to its CSIRT. The audit
-  trail and the detection guide give it the evidence. The reporting timeline itself is not
-  analysed on this page.
+  trail and the detection guide give it the evidence. The reporting timeline
+  itself is not analysed on this page. The same applies to the significant
+  incident thresholds of Regulation 2024/2690.
 - **Art. 20 governance** (management approval, oversight and training).
-- **Implementing Regulation (EU) 2024/2690**, which sets detailed technical and
-  methodological requirements for cloud computing service providers and other
-  digital infrastructure. A cloud operator running Keystone will need it. It
-  deserves its own pass.
 - **National transposition.** Member States add sector rules, supervision and
   penalties.
 
-## 5. Open work items
+## 6. Open work items
 
 | ID | Item | Priority | Effort |
 | --- | ---- | -------- | ------ |
