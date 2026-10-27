@@ -21,8 +21,8 @@ use crate::{ListenerConfig, UnixSocketListener};
 /// Keystone internal API interface.
 #[derive(Debug, Deserialize, Clone)]
 pub struct InternalInterface {
-    /// Default address to use for the Rest API. Defaults to `0.0.0.0:8080`.
-    #[serde(default = "default_public_tcp_address")]
+    /// Default address to use for the Rest API. Defaults to `0.0.0.0:8081`.
+    #[serde(default = "default_internal_tcp_address")]
     pub tcp_address: SocketAddr,
 
     /// Listener configuration.
@@ -33,8 +33,9 @@ pub struct InternalInterface {
 /// Keystone public API interface.
 #[derive(Debug, Deserialize, Clone)]
 pub struct PublicInterface {
-    /// Default address to use for the Rest API. Defaults to `0.0.0.0:8081`.
-    #[serde(default = "default_internal_tcp_address")]
+    /// Default address to use for the Rest API. Defaults to `0.0.0.0:8080`,
+    /// whether or not the `[interface_public]` section is present.
+    #[serde(default = "default_public_tcp_address")]
     pub tcp_address: SocketAddr,
 
     /// Listener configuration.
@@ -174,6 +175,19 @@ trust_domains = "a,b,c"
         } else {
             panic!("should be Http listener");
         }
+    }
+
+    #[test]
+    fn test_default_addresses() {
+        let public: PublicInterface = serde_json::from_value(json!({"type": "http"})).unwrap();
+        assert_eq!(public.tcp_address.to_string(), "0.0.0.0:8080");
+        assert_eq!(
+            public.tcp_address,
+            PublicInterface::default().tcp_address,
+            "section present and absent must agree"
+        );
+        let internal: InternalInterface = serde_json::from_value(json!({"type": "http"})).unwrap();
+        assert_eq!(internal.tcp_address.to_string(), "0.0.0.0:8081");
     }
 
     #[test]

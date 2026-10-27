@@ -46,7 +46,6 @@ done
 cat <<EOF > "$CONFIG_FILE"
 [api_policy]
 opa_base_url = unix://${STATE_DIR}/opa.sock
-enable = true
 opa_policies_path = policy
 
 [auth]

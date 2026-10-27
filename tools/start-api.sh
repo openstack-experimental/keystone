@@ -95,7 +95,6 @@ cat << EOF > "$CONFIG_FILE"
 
 [api_policy]
 opa_base_url = unix:///tmp/nextest/keystone/opa.sock
-enable = true
 opa_policies_path = policy
 
 [auth]

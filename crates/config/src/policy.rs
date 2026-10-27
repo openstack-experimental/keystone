@@ -16,15 +16,9 @@ use std::path::PathBuf;
 use url::Url;
 use url_macro::url;
 
-use crate::common::default_true;
-
 /// The configuration options for the API policy enforcement.
 #[derive(Clone, Debug, Deserialize)]
 pub struct PolicyProvider {
-    /// Whether the policy enforcement should be enforced or not.
-    #[serde(default = "default_true")]
-    pub enable: bool,
-
     /// OpenPolicyAgent instance url to use for evaluating the policy.
     #[serde(default = "default_opa_base_url")]
     pub opa_base_url: Url,
@@ -38,7 +32,6 @@ pub struct PolicyProvider {
 impl Default for PolicyProvider {
     fn default() -> Self {
         Self {
-            enable: true,
             opa_base_url: default_opa_base_url(),
             opa_policies_path: None,
         }
