@@ -129,6 +129,28 @@ pub trait IdentityBackend: Send + Sync {
         domain_id: Option<&'a str>,
     ) -> Result<String, IdentityProviderError>;
 
+    /// Check whether the user is a member of the group.
+    ///
+    /// The default implementation scans [`Self::list_groups_of_user`];
+    /// drivers should override it with a direct lookup.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
+    async fn check_user_in_group<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_id: &'a str,
+    ) -> Result<bool, IdentityProviderError> {
+        Ok(self
+            .list_groups_of_user(state, user_id)
+            .await?
+            .iter()
+            .any(|g| g.id == group_id))
+    }
+
     /// Create group.
     ///
     /// # Parameters

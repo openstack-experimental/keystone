@@ -160,6 +160,17 @@ domain_matches_domain_scope if {
 	any_domain_id = input.credentials.domain_id
 }
 
+# Both the group and the user of a group membership belong to the domain of the
+# caller's domain scope. Used by the `identity/group/user/*` policies, where
+# `input.existing` carries both `group` and `user` (`any_domain_id` cannot be
+# used since it is only defined for a single resource).
+membership_domains_match_domain_scope if {
+	input.existing.group.domain_id != null
+	input.existing.user.domain_id != null
+	input.existing.group.domain_id == input.credentials.domain_id
+	input.existing.user.domain_id == input.credentials.domain_id
+}
+
 is_system_admin if {
 	"admin" in input.credentials.roles
 	input.credentials.system == "all"

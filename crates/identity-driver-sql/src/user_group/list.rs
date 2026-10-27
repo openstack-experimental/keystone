@@ -73,6 +73,47 @@ pub async fn list_group_user_ids<S: AsRef<str>>(
     Ok(user_ids)
 }
 
+/// Check whether the user is a member of the group (direct or not-yet-expired
+/// federated membership).
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `user_id`: User ID.
+/// - `group_id`: Group ID.
+/// - `last_verified_cutof`: Cutoff date for verifying expiring memberships.
+///
+/// # Returns
+/// A `Result` containing `true` when the membership exists, or an `Error`.
+pub async fn is_user_in_group<U: AsRef<str>, G: AsRef<str>>(
+    db: &DatabaseConnection,
+    user_id: U,
+    group_id: G,
+    last_verified_cutof: &DateTime<Utc>,
+) -> Result<bool, IdentityProviderError> {
+    if user_group_membership::Entity::find_by_id((
+        user_id.as_ref().to_string(),
+        group_id.as_ref().to_string(),
+    ))
+    .one(db)
+    .await
+    .context("checking direct group membership")?
+    .is_some()
+    {
+        return Ok(true);
+    }
+    Ok(expiring_user_group_membership::Entity::find()
+        .filter(expiring_user_group_membership::Column::UserId.eq(user_id.as_ref()))
+        .filter(expiring_user_group_membership::Column::GroupId.eq(group_id.as_ref()))
+        .filter(
+            expiring_user_group_membership::Column::LastVerified
+                .gt(last_verified_cutof.naive_utc()),
+        )
+        .one(db)
+        .await
+        .context("checking expiring group membership")?
+        .is_some())
+}
+
 /// List all groups the user is member of.
 ///
 /// Selects all groups with the ID in the list of user group memberships and
@@ -181,5 +222,35 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ids, vec!["user-1".to_string(), "user-2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_is_user_in_group_direct() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_group_membership::Model {
+                user_id: "u".into(),
+                group_id: "g".into(),
+            }]])
+            .into_connection();
+        let cutoff = Config::default()
+            .federation
+            .get_expiring_user_group_membership_cutof_datetime();
+        assert!(is_user_in_group(&db, "u", "g", &cutoff).await.unwrap());
+        // Only the direct lookup is issued.
+        assert_eq!(db.into_transaction_log().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_is_user_in_group_none() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([
+                Vec::<user_group_membership::Model>::new(),
+                Vec::<user_group_membership::Model>::new(),
+            ])
+            .into_connection();
+        let cutoff = Config::default()
+            .federation
+            .get_expiring_user_group_membership_cutof_datetime();
+        assert!(!is_user_in_group(&db, "u", "g", &cutoff).await.unwrap());
     }
 }

@@ -40,6 +40,7 @@ regressions.
 | Regions | `/v3/regions` (CRUD, plus `PUT /v3/regions/{id}`) | Done (#1078) |
 | Policies (legacy blob store) | `/v3/policies` (CRUD) | Done (#1035) — tempest verified, see below |
 | Unified limits | `/v3/registered_limits` (CRUD, batch create), `/v3/limits` (CRUD, batch create), `/v3/limits/model` | Done (#1091) |
+| Group membership | `GET /v3/groups/{group_id}/users`, `HEAD`/`PUT`/`DELETE /v3/groups/{group_id}/users/{user_id}` | Done — SQL and LDAP (read-only) drivers; the list filters by `name`, `domain_id`, `enabled`, `unique_id` (no `password_expires_at`) |
 | Project tags | `/v3/projects/{project_id}/tags` | Missing |
 | Application credentials (v3.10) | `/v3/users/{user_id}/application_credentials` | Missing |
 | Access rules (v3.13) | `/v3/users/{user_id}/access_rules` | Missing |

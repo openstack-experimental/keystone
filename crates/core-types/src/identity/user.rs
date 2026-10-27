@@ -302,6 +302,12 @@ pub struct UserListParameters {
     #[validate(length(max = 64))]
     pub unique_id: Option<String>,
 
+    /// Filter users by membership in the group (direct and not-yet-expired
+    /// federated memberships).
+    #[builder(default)]
+    #[validate(length(max = 64))]
+    pub group_id: Option<String>,
+
     /// Filter users by the `enabled` flag (matches the stored column, as the
     /// Python implementation does).
     #[builder(default)]

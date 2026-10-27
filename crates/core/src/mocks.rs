@@ -1502,6 +1502,13 @@ mod identity {
                 group_id: &'a str,
             ) -> Result<Vec<String>, IdentityProviderError>;
 
+            async fn check_user_in_group<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                user_id: &'a str,
+                group_id: &'a str,
+            ) -> Result<bool, IdentityProviderError>;
+
             async fn find_group_by_name_ci<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,

@@ -924,6 +924,25 @@ impl IdentityApi for IdentityService {
             .build()?)
     }
 
+    /// Check whether the user is a member of the group.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
+    #[tracing::instrument(name = "provider.identity.check_user_in_group", level = "debug", skip_all, fields(user_id = %user_id, group_id = %group_id))]
+    async fn check_user_in_group<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        user_id: &'a str,
+        group_id: &'a str,
+    ) -> Result<bool, IdentityProviderError> {
+        self.membership_backend(ctx, user_id, group_id)
+            .await?
+            .check_user_in_group(ctx.state(), user_id, group_id)
+            .await
+    }
+
     /// Create group.
     ///
     /// # Parameters
@@ -1335,9 +1354,13 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         params: &UserListParameters,
     ) -> Result<Vec<UserResponse>, IdentityProviderError> {
-        let backend = self
-            .driver_for(ctx.state(), params.domain_id.as_deref())
-            .await?;
+        let backend = match params.group_id.as_deref() {
+            Some(group_id) => self.driver_for_group(ctx, group_id).await?,
+            None => {
+                self.driver_for(ctx.state(), params.domain_id.as_deref())
+                    .await?
+            }
+        };
         let mut users = backend.list_users(ctx.state(), params).await?;
         if !Arc::ptr_eq(&backend, &self.backend_driver) {
             for user in &mut users {

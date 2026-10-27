@@ -22,11 +22,13 @@ pub mod list;
 pub mod show;
 pub mod types;
 pub mod update;
+mod user;
 
 pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .routes(routes!(list::list, create::create))
         .routes(routes!(show::show, delete::delete, update::update))
+        .nest("/{group_id}/users", user::openapi_router())
 }
 
 #[cfg(test)]

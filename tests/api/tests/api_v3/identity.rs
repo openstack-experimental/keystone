@@ -14,6 +14,7 @@
 
 mod application_credential;
 mod group;
+mod group_users;
 mod user;
 mod user_groups;
 mod user_projects;

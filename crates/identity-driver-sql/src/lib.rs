@@ -211,6 +211,35 @@ impl IdentityBackend for SqlBackend {
         user::check_user_exist(&state.db.connection(), user_id, name, domain_id).await
     }
 
+    /// Check whether the user is a member of the group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
+    ///
+    /// # Returns
+    /// A `Result` containing `true` when the user is a member, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.identity.check_user_in_group", level = "debug", skip_all, fields(user_id = %user_id, group_id = %group_id))]
+    async fn check_user_in_group<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_id: &'a str,
+    ) -> Result<bool, IdentityProviderError> {
+        let cutoff_time = state
+            .config_manager
+            .config
+            .read()
+            .await
+            .federation
+            .get_expiring_user_group_membership_cutof_datetime();
+        Ok(
+            user_group::is_user_in_group(&state.db.connection(), user_id, group_id, &cutoff_time)
+                .await?,
+        )
+    }
+
     /// Create group.
     ///
     /// # Parameters

@@ -14,9 +14,11 @@
 
 use std::collections::HashMap;
 
+use chrono::{DateTime, Utc};
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
+use sea_orm::sea_query::{Query, UnionType};
 use sea_orm::{Condition, Cursor, SelectModel};
 
 use openstack_keystone_config::Config;
@@ -27,10 +29,10 @@ use openstack_keystone_core_types::identity::{
 };
 
 use crate::entity::{
-    federated_user as db_federated_user, local_user as db_local_user,
-    nonlocal_user as db_nonlocal_user, password as db_password,
+    expiring_user_group_membership, federated_user as db_federated_user,
+    local_user as db_local_user, nonlocal_user as db_nonlocal_user, password as db_password,
     prelude::{FederatedUser, LocalUser, NonlocalUser, User as DbUser, UserOption as DbUserOption},
-    user as db_user, user_option as db_user_option,
+    user as db_user, user_group_membership, user_option as db_user_option,
 };
 use crate::federated_user::MergeFederatedUserData;
 use crate::local_user;
@@ -65,6 +67,7 @@ type JoinedUserDetailsRow = (
 /// A `Result` containing a `Cursor` for the select model.
 fn get_user_list_query(
     params: &UserListParameters,
+    expiring_cutof: &DateTime<Utc>,
 ) -> Result<Cursor<SelectModel<db_user::Model>>, IdentityProviderError> {
     let mut user_select = DbUser::find();
 
@@ -74,6 +77,30 @@ fn get_user_list_query(
 
     if let Some(enabled) = params.enabled {
         user_select = user_select.filter(db_user::Column::Enabled.eq(enabled));
+    }
+
+    if let Some(group_id) = &params.group_id {
+        user_select = user_select.filter(
+            db_user::Column::Id.in_subquery(
+                Query::select()
+                    .column(user_group_membership::Column::UserId)
+                    .from(user_group_membership::Entity)
+                    .and_where(user_group_membership::Column::GroupId.eq(group_id))
+                    .union(
+                        UnionType::All,
+                        Query::select()
+                            .column(expiring_user_group_membership::Column::UserId)
+                            .from(expiring_user_group_membership::Entity)
+                            .and_where(expiring_user_group_membership::Column::GroupId.eq(group_id))
+                            .and_where(
+                                expiring_user_group_membership::Column::LastVerified
+                                    .gt(expiring_cutof.naive_utc()),
+                            )
+                            .to_owned(),
+                    )
+                    .to_owned(),
+            ),
+        );
     }
 
     let mut cursor = user_select.cursor_by(db_user::Column::Id);
@@ -206,7 +233,10 @@ pub async fn list(
     }
 
     // Fetch main `user` entries
-    let db_users: Vec<db_user::Model> = get_user_list_query(params)?
+    let expiring_cutof = conf
+        .federation
+        .get_expiring_user_group_membership_cutof_datetime();
+    let db_users: Vec<db_user::Model> = get_user_list_query(params, &expiring_cutof)?
         .all(db)
         .await
         .context("fetching users data")?;
@@ -700,5 +730,28 @@ mod tests {
                 r.statements().iter().map(|x| x.sql.clone()).collect::<Vec<_>>()
             );
             }
+    }
+
+    #[tokio::test]
+    async fn test_list_group_id_filter() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<db_user::Model>::new()])
+            .append_query_results([Vec::<BTreeMap<String, sea_orm::Value>>::new()])
+            .into_connection();
+        let config = Config::default();
+        let params = UserListParameters {
+            group_id: Some("g".into()),
+            ..Default::default()
+        };
+        assert!(list(&config, &db, &params).await.unwrap().is_empty());
+
+        // The expiring-membership cutoff is time based, compare the SQL text.
+        let log = db.into_transaction_log();
+        let expected = r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user" WHERE "user"."id" IN (SELECT "user_id" FROM "user_group_membership" WHERE "user_group_membership"."group_id" = $1 UNION ALL (SELECT "user_id" FROM "expiring_user_group_membership" WHERE "expiring_user_group_membership"."group_id" = $2 AND "expiring_user_group_membership"."last_verified" > $3)) ORDER BY "user"."id" ASC"#;
+        assert!(
+            format!("{:?}", log[0]).contains(&expected.replace('"', "\\\"")),
+            "unexpected SQL: {:?}",
+            log[0]
+        );
     }
 }

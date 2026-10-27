@@ -357,6 +357,37 @@ impl IdentityBackend for LdapBackend {
         params: &UserListParameters,
     ) -> Result<Vec<UserResponse>, IdentityProviderError> {
         let default_domain_id = self.default_domain_id(state).await;
+        if let Some(group_id) = &params.group_id {
+            // Group members are stored on the group entry: resolve them to
+            // users and apply the remaining filters locally.
+            let member_ids =
+                group::list_users_of_group(&self.service_pool, &self.config, group_id).await?;
+            let mut users = Vec::with_capacity(member_ids.len());
+            for member_id in member_ids {
+                let Some(user) = user::get(
+                    &self.service_pool,
+                    &self.config,
+                    &default_domain_id,
+                    &member_id,
+                )
+                .await?
+                else {
+                    continue;
+                };
+                if params
+                    .domain_id
+                    .as_ref()
+                    .is_some_and(|d| *d != user.domain_id)
+                    || params.name.as_ref().is_some_and(|n| *n != user.name)
+                    || params.unique_id.as_ref().is_some_and(|u| *u != user.id)
+                    || params.enabled.is_some_and(|e| e != user.enabled)
+                {
+                    continue;
+                }
+                users.push(user);
+            }
+            return Ok(users);
+        }
         user::list(&self.service_pool, &self.config, &default_domain_id, params).await
     }
 

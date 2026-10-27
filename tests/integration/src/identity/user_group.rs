@@ -22,6 +22,7 @@ mod add;
 mod bulk;
 mod expiring;
 mod list;
+mod members;
 mod remove;
 mod set;
 

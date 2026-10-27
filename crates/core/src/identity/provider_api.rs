@@ -104,6 +104,19 @@ pub trait IdentityApi: Send + Sync {
         auth: &UserTotpAuthRequest,
     ) -> Result<AuthenticationResult, IdentityProviderError>;
 
+    /// Check whether the user is a member of the group.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
+    async fn check_user_in_group<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        user_id: &'a str,
+        group_id: &'a str,
+    ) -> Result<bool, IdentityProviderError>;
+
     /// Create a new group.
     ///
     /// # Parameters
