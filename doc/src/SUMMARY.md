@@ -93,6 +93,7 @@
   - [Local development](contributor/development.md)
   - [Observability stack](contributor/observability.md)
   - [Testing](contributor/testing.md)
+  - [Rust vs Python comparison](contributor/memory-comparison.md)
   - [API development](contributor/api-development.md)
   - [Python API compatibility](contributor/python-compatibility.md)
   - [Authentication plugin development](contributor/auth-plugins.md)
