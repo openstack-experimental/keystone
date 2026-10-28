@@ -34,7 +34,11 @@ use crate::v3::auth::password::{
 };
 use crate::v3::auth::rescope::{rescope_invalid_project, rescope_to_system};
 use crate::v3::auth::system::system_scope_auth;
+use crate::v3::catalog::cycle as catalog_cycle;
+use crate::v3::churn::cycle as churn_cycle;
+use crate::v3::credential::cycle as credential_cycle;
 use crate::v3::domain::list as domain_list;
+use crate::v3::group::cycle as group_cycle;
 use crate::v3::project::{
     create as project_create, delete as project_delete, list as project_list, show as project_show,
     show_random as project_show_random,
@@ -46,6 +50,7 @@ use crate::v3::role_assignment::{
     list as role_assignment_list, list_by_domain as role_assignment_list_by_domain,
     list_by_role as role_assignment_list_by_role, list_by_user as role_assignment_list_by_user,
 };
+use crate::v3::trust::cycle as trust_cycle;
 use crate::v3::user::{
     create as user_create, delete as user_delete, list as user_list, show as user_show,
     show_random as user_show_random,
@@ -124,16 +129,29 @@ async fn main() -> Result<(), GooseError> {
     }
 
     // Default to 45 users so all weighted scenarios get at least 1 user
-    // (total weight = 36; 45 ensures proportional coverage).
+    // (total weight = 59; 45 ensures proportional coverage).
     // Can be overridden by passing --users on the CLI. To actually run this
     // as a stress test, scale further with goose's own CLI flags, e.g.:
     //   --users 500 --hatch-rate 20 --run-time 10m
+    // Think time of the read scenarios, LOADTEST_THINK_MS=<ms> (default 0, flat
+    // out). With a value set each read VU waits 0.5x-1.5x of it between
+    // transactions, closer to real client behaviour than a tight loop.
+    let think_ms: u64 = env::var("LOADTEST_THINK_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let think = (
+        Duration::from_millis(think_ms / 2),
+        Duration::from_millis(think_ms + think_ms / 2),
+    );
+
     let attack = GooseAttack::initialize()?
         .set_default(GooseDefault::Users, 45usize)?
         // Read-heavy workload: list endpoints hit the most common production path.
         .register_scenario(
             scenario!("ReadHeavy")
                 .set_weight(5)?
+                .set_wait_time(think.0, think.1)?
                 .register_transaction(transaction!(openstack_login).set_on_start())
                 .register_transaction(transaction!(user_list))
                 .register_transaction(transaction!(project_list))
@@ -150,6 +168,7 @@ async fn main() -> Result<(), GooseError> {
         .register_scenario(
             scenario!("ValidateToken")
                 .set_weight(2)?
+                .set_wait_time(think.0, think.1)?
                 .register_transaction(transaction!(openstack_login).set_on_start())
                 .register_transaction(transaction!(validate_token)),
         )
@@ -186,6 +205,7 @@ async fn main() -> Result<(), GooseError> {
         .register_scenario(
             scenario!("RoleList")
                 .set_weight(2)?
+                .set_wait_time(think.0, think.1)?
                 .register_transaction(transaction!(openstack_login).set_on_start())
                 .register_transaction(transaction!(role_list)),
         )
@@ -195,6 +215,7 @@ async fn main() -> Result<(), GooseError> {
         .register_scenario(
             scenario!("RoleAssignmentList")
                 .set_weight(3)?
+                .set_wait_time(think.0, think.1)?
                 .register_transaction(transaction!(openstack_login).set_on_start())
                 .register_transaction(transaction!(role_assignment_list))
                 .register_transaction(transaction!(role_assignment_list_by_user))
@@ -207,6 +228,7 @@ async fn main() -> Result<(), GooseError> {
         .register_scenario(
             scenario!("UserRead")
                 .set_weight(4)?
+                .set_wait_time(think.0, think.1)?
                 .register_transaction(transaction!(openstack_login).set_on_start())
                 .register_transaction(transaction!(user_list))
                 .register_transaction(transaction!(user_show_random)),
@@ -217,6 +239,7 @@ async fn main() -> Result<(), GooseError> {
         .register_scenario(
             scenario!("ProjectRead")
                 .set_weight(3)?
+                .set_wait_time(think.0, think.1)?
                 .register_transaction(transaction!(openstack_login).set_on_start())
                 .register_transaction(transaction!(project_list))
                 .register_transaction(transaction!(project_show_random)),
@@ -254,6 +277,41 @@ async fn main() -> Result<(), GooseError> {
             scenario!("SystemScopeAuth")
                 .set_weight(2)?
                 .register_transaction(transaction!(system_scope_auth)),
+        )
+        // Churn scenarios: unlike the *CRUD scenarios above (one create in
+        // on_start, one delete in on_stop), each iteration creates, uses and
+        // deletes its resources, so allocator and cache behaviour under
+        // sustained write load shows up in the memory profile.
+        .register_scenario(
+            scenario!("GroupChurn")
+                .set_weight(3)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(group_cycle)),
+        )
+        .register_scenario(
+            scenario!("CatalogChurn")
+                .set_weight(2)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(catalog_cycle)),
+        )
+        .register_scenario(
+            scenario!("CredentialChurn")
+                .set_weight(2)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(credential_cycle)),
+        )
+        .register_scenario(
+            scenario!("TrustChurn")
+                .set_weight(2)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(trust_cycle)),
+        )
+        // New user + project + role + token on every iteration.
+        .register_scenario(
+            scenario!("IdentityChurn")
+                .set_weight(4)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(churn_cycle)),
         )
         // Raft-backed API Key CRUD (ADR 0021): create/revoke go through
         // api-key-driver-raft's log-append + quorum-commit write path.

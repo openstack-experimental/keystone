@@ -32,6 +32,11 @@ pub fn set_auth_role_id(id: String) {
     AUTH_ROLE_ID.set(id).ok();
 }
 
+/// Role every seeded user is granted, if seeding succeeded.
+pub fn auth_role_id() -> Option<&'static str> {
+    AUTH_ROLE_ID.get().map(String::as_str)
+}
+
 async fn list_with_query(
     user: &mut GooseUser,
     name: &str,
