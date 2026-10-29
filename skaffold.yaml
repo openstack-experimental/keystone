@@ -361,7 +361,7 @@ verify:
         - name: "BROWSERDRIVER_URL"
           value: "http://selenium-service:4444"
         - name: "KEYSTONE_URL"
-          value: "http://keystone-rs:8080"
+          value: "http://keystone-rs.default.svc.cluster.local:8080"
         - name: "KEYCLOAK_URL"
           value: "http://keycloak:8080"
         - name: "KEYCLOAK_PASSWORD"
