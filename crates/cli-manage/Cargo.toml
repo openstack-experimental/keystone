@@ -15,6 +15,7 @@ name="keystone-manage"
 path="src/main.rs"
 
 [dependencies]
+openstack-keystone-jwt-crypto.workspace = true
 async-trait.workspace = true
 clap = { workspace = true, features = ["derive"] }
 color-eyre.workspace = true

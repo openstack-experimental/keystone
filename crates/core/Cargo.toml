@@ -9,6 +9,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+openstack-keystone-jwt-crypto.workspace = true
 arc-swap.workspace = true
 argon2.workspace = true
 async-trait.workspace = true

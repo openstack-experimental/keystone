@@ -17,6 +17,7 @@ name="keystone"
 path="src/bin/keystone.rs"
 
 [dependencies]
+openstack-keystone-jwt-crypto.workspace = true
 async-trait.workspace = true
 axum = { workspace = true, features = ["form", "http1", "http2", "macros", "matched-path", "original-uri", "query", "tokio", "tracing"] }
 axum-extra = { workspace = true, features = ["cookie"] }

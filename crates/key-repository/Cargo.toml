@@ -11,6 +11,7 @@ homepage.workspace = true
 exclude.workspace = true
 
 [dependencies]
+openstack-keystone-jwt-crypto.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 chrono = { workspace = true, features = ["now"] }

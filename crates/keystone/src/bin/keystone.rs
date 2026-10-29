@@ -24,5 +24,6 @@ use openstack_keystone::server::startup;
 #[tokio::main]
 async fn main() -> Result<(), Report> {
     openstack_keystone_tls_provider::install_default();
+    openstack_keystone_jwt_crypto::install();
     startup::run().await
 }

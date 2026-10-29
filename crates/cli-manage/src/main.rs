@@ -103,6 +103,7 @@ pub trait PerformAction {
 async fn main() -> Result<(), Report> {
     let args = Args::parse();
     openstack_keystone_tls_provider::install_default();
+    openstack_keystone_jwt_crypto::install();
     // Keep the `[distributed_storage]` section registration linked (ADR 0018).
     openstack_keystone_distributed_storage::anchor();
     let cfg = oslo_config::load_snapshot_from::<Config>(args.config).await?;
