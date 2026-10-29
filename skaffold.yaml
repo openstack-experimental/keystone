@@ -83,6 +83,7 @@ manifests:
     - tools/k8s/tests/keystone-ca.yaml
     - tools/k8s/tests/keystone-peer-cert.yaml
     - tools/k8s/tests/keystone-raft-spiffe-id.yaml
+    - tools/k8s/tests/api-test-spiffe-ids.yaml
     - tools/k8s/tests/keystone-storage-operator.yaml
 deploy:
   statusCheck: true
@@ -271,8 +272,15 @@ verify:
           value: "default"
         - name: "WEBAUTHN_URL"
           value: "https://keystone.local"
+        # service_grant tests redeem grants over mTLS with SVIDs from the
+        # SPIRE agent, against the internal interface of the keystone pod.
+        - name: "SPIFFE_ENDPOINT_SOCKET"
+          value: "unix:///run/spire/sockets/spire-agent.sock"
+        - name: "KEYSTONE_INTERNAL_ADDR"
+          value: "keystone-rs-0.keystone-rs-internal.default.svc.cluster.local:8215"
     executionMode:
-      kubernetesCluster: {}
+      kubernetesCluster:
+        jobManifestPath: tools/k8s/tests/api-test-v4-job.yaml
 
   - &k8s_auth_test
     name: "k8s-auth-test"
