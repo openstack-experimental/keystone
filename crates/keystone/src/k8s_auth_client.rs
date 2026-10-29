@@ -51,6 +51,7 @@ impl KeystoneK8sHttpClient {
     /// Decode and validate a K8s JWT token (signature-less decode +
     /// expiration).
     pub fn validate_jwt(jwt: &str) -> Result<K8sClaims, K8sAuthProviderError> {
+        openstack_keystone_jwt_crypto::install();
         let token_data =
             insecure_decode::<K8sClaims>(jwt).map_err(|_| K8sAuthProviderError::InvalidToken)?;
         let claims = token_data.claims;
@@ -238,6 +239,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
             exp,
             sub: "system:serviceaccount:ns:sa".into(),
         };
+        openstack_keystone_jwt_crypto::install();
         jsonwebtoken::encode(
             &jsonwebtoken::Header::default(),
             &claims,

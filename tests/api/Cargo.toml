@@ -26,6 +26,7 @@ hmac.workspace = true
 http.workspace = true
 http-body-util.workspace = true
 jsonwebtoken.workspace = true
+openstack-keystone-jwt-crypto.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder"] }

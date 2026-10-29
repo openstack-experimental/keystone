@@ -311,6 +311,7 @@ async fn test_authorization_code_flow_id_token_interop() -> Result<()> {
         .as_str()
         .ok_or_else(|| eyre!("no id_token"))?;
     // The OP signs with ES256.
+    openstack_keystone_jwt_crypto::install();
     let header = decode_header(id_token)?;
     assert_eq!(header.alg, Algorithm::ES256);
     let kid = header

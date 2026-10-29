@@ -330,6 +330,7 @@ pub(in crate::api::v4::oauth2) fn dpop_proof_for(
         URL_SAFE_NO_PAD.encode(header.to_string()),
         URL_SAFE_NO_PAD.encode(claims.to_string())
     );
+    openstack_keystone_jwt_crypto::install();
     let key = jsonwebtoken::EncodingKey::from_ec_pem(DPOP_TEST_KEY_PEM.as_bytes()).unwrap();
     let signature =
         jsonwebtoken::crypto::sign(message.as_bytes(), &key, jsonwebtoken::Algorithm::ES256)

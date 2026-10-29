@@ -40,7 +40,7 @@ openstack-keystone-storage-api.workspace = true
 openstack-keystone-telemetry.workspace = true
 jsonwebtoken.workspace = true
 mockall = { workspace = true, optional = true }
-p256 = { workspace = true, features = ["ecdsa", "pkcs8"] }
+p256 = { workspace = true, features = ["ecdsa", "pkcs8", "pem"] }
 percent-encoding.workspace = true
 rand.workspace = true
 rsa.workspace = true
