@@ -292,6 +292,24 @@ impl ResourceBackend for SqlBackend {
         Ok(project::get_project_parents(&state.db.connection(), project_id).await?)
     }
 
+    /// Get project subtree (all descendants).
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `project_id`: ID of the project.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the descendants ordered breadth
+    /// first if the project exists, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.resource.get_project_subtree", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn get_project_subtree<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Option<Vec<Project>>, ResourceProviderError> {
+        Ok(project::get_project_subtree(&state.db.connection(), project_id).await?)
+    }
+
     /// List the tags of a project.
     ///
     /// # Parameters

@@ -28,7 +28,8 @@ use test_api::common::get_system_scope_session;
 use test_api::fixtures::{ProjectScopedUser, revoked_admin_client, warn_on_cleanup_failure};
 use test_api::guard::ResourceGuard;
 use test_api::resource::project::{
-    ProjectListRequest, create_project, delete_project, get_project, list_projects, update_project,
+    ProjectHierarchyQuery, ProjectListRequest, create_project, delete_project, get_project,
+    get_project_hierarchy, list_projects, update_project,
 };
 
 fn project_create() -> Result<openstack_keystone_api_types::v3::project::ProjectCreate> {
@@ -258,4 +259,41 @@ async fn test_project_create_rejects_revoked_token() -> Result<()> {
     };
     assert_unauthorized(result, "a revoked token must not create a project");
     Ok(())
+}
+
+#[tokio::test]
+async fn test_project_show_hierarchy_forbidden_project_scoped_manager() -> Result<()> {
+    let admin = get_system_scope_session().await?;
+    let manager = ProjectScopedUser::provision(&admin, "default", "manager").await?;
+    let result = get_project_hierarchy(
+        &manager.session,
+        &manager.project.id,
+        ProjectHierarchyQuery {
+            parents_as_list: true,
+            subtree_as_list: true,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    manager.cleanup().await?;
+    assert_forbidden(
+        result,
+        "hierarchy parameters must not bypass the project show policy",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_project_show_hierarchy_rejects_invalid_token() -> Result<()> {
+    test_api::asserts::assert_raw_request_unauthorized(
+        RawUnauthorizedRequest {
+            method: http::Method::GET,
+            path: "v3/projects/missing-project?parents_as_list&subtree_as_list",
+            body: None,
+            message: "unauthenticated requests must not show project hierarchy",
+        },
+        Some("invalid-token"),
+    )
+    .await
 }

@@ -45,6 +45,30 @@ A successful create returns `201 Created`. The remaining lifecycle operations
 use `GET /v3/projects`, `GET`, `PATCH`, and `DELETE` on
 `/v3/projects/{project_id}`.
 
+#### Project hierarchy
+
+`GET /v3/projects/{project_id}` accepts the python keystone compatible
+`parents_as_list`, `parents_as_ids`, `subtree_as_list` and `subtree_as_ids`
+query parameters. A parameter is enabled when present (with an empty value or
+any value other than `false` or `0`). The `*_as_list` and `*_as_ids` variants
+of the same relation are mutually exclusive (`400 Bad Request`).
+
+```console
+curl "${KEYSTONE_URL}/v3/projects/${PROJECT_ID}?parents_as_list&subtree_as_ids" \
+  -H "X-Auth-Token: ${TOKEN}"
+```
+
+- `parents_as_list` / `subtree_as_list` add a `parents` / `subtree` list of
+  `{"project": {...}}` entries. Parents are ordered from the closest to the
+  root, descendants breadth first.
+- `parents_as_ids` / `subtree_as_ids` add a nested object keyed by project IDs
+  (`{"<id>": {"<id>": null}}`), with `null` for leaves.
+
+Every related project is checked individually with the project `show` policy
+and projects the caller is not allowed to see are omitted. In `subtree_as_ids`
+the visible descendants of an omitted project are attached to its closest
+visible ancestor.
+
 ### Users
 
 ```console

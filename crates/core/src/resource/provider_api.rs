@@ -177,6 +177,20 @@ pub trait ResourceApi: Send + Sync {
         project_id: &'a str,
     ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
 
+    /// Get project subtree (all descendants).
+    ///
+    /// * `ctx` - The execution context.
+    /// * `project_id` - The ID of the project.
+    ///
+    /// A `Result` containing an `Option` with the descendants of the project
+    /// ordered breadth first (children before grandchildren) if the project
+    /// exists, or an `Error`.
+    async fn get_project_subtree<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+    ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
+
     /// List domains.
     ///
     /// * `state` - The current service state.

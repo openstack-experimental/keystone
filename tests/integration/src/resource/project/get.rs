@@ -146,3 +146,88 @@ async fn test_get_project_parents_multi_level() -> Result<()> {
     );
     Ok(())
 }
+
+#[traced_test]
+#[tokio::test]
+async fn test_get_project_subtree() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let parent = create_project!(state, domain.id.clone())?;
+    let child = create_project!(state, domain.id.clone(), parent.id.clone())?;
+    let grandchild = create_project!(state, domain.id.clone(), child.id.clone())?;
+    let unrelated = create_project!(state, domain.id.clone())?;
+
+    let subtree = state
+        .provider
+        .get_resource_provider()
+        .get_project_subtree(&ExecutionContext::internal(&state), &parent.id)
+        .await?
+        .expect("subtree returned");
+    let ids: Vec<&str> = subtree.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![child.id.as_str(), grandchild.id.as_str()],
+        "descendants are listed breadth first"
+    );
+    assert!(!ids.contains(&unrelated.id.as_str()));
+
+    assert!(
+        state
+            .provider
+            .get_resource_provider()
+            .get_project_subtree(&ExecutionContext::internal(&state), "no-such-project")
+            .await?
+            .is_none(),
+        "an unknown project returns None"
+    );
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_get_project_subtree_wide_tree() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let root = create_project!(state, domain.id.clone())?;
+    let child_a = create_project!(state, domain.id.clone(), root.id.clone())?;
+    let child_b = create_project!(state, domain.id.clone(), root.id.clone())?;
+    let grandchild_a = create_project!(state, domain.id.clone(), child_a.id.clone())?;
+    let grandchild_b = create_project!(state, domain.id.clone(), child_b.id.clone())?;
+
+    let subtree = state
+        .provider
+        .get_resource_provider()
+        .get_project_subtree(&ExecutionContext::internal(&state), &root.id)
+        .await?
+        .expect("subtree returned");
+    let ids: Vec<&str> = subtree.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(ids.len(), 4, "all descendants are returned: {ids:?}");
+    for (parent, child) in [(&child_a, &grandchild_a), (&child_b, &grandchild_b)] {
+        let parent_pos = ids.iter().position(|x| *x == parent.id).expect("parent");
+        let child_pos = ids.iter().position(|x| *x == child.id).expect("child");
+        assert!(parent_pos < child_pos, "parent is listed before its child");
+    }
+    // Breadth first: both direct children precede any grandchild.
+    assert!(
+        ids[..2].contains(&child_a.id.as_str()) && ids[..2].contains(&child_b.id.as_str()),
+        "direct children are listed first: {ids:?}"
+    );
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_get_project_subtree_leaf() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let leaf = create_project!(state, domain.id.clone())?;
+
+    let subtree = state
+        .provider
+        .get_resource_provider()
+        .get_project_subtree(&ExecutionContext::internal(&state), &leaf.id)
+        .await?
+        .expect("existing project returns Some");
+    assert!(subtree.is_empty(), "a leaf project has no descendants");
+    Ok(())
+}
