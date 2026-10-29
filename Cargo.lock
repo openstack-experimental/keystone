@@ -9270,6 +9270,7 @@ dependencies = [
  "jsonwebtoken",
  "openstack-keystone-api-types",
  "openstack-keystone-distributed-storage",
+ "openstack-keystone-jwt-crypto",
  "openstack-keystone-tls-provider",
  "openstack_sdk",
  "reqwest",
