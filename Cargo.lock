@@ -5465,7 +5465,10 @@ dependencies = [
  "aws-lc-rs",
  "jsonwebtoken",
  "ring",
+ "rsa 0.9.10",
  "serde",
+ "thiserror 2.0.21",
+ "zeroize",
 ]
 
 [[package]]
@@ -5510,11 +5513,7 @@ dependencies = [
  "nix",
  "notify",
  "openstack-keystone-jwt-crypto",
- "p256",
  "pem 4.0.0",
- "pkcs8 0.11.0",
- "rand 0.10.3",
- "rsa 0.9.10",
  "scopeguard",
  "secrecy",
  "serde",

@@ -215,3 +215,29 @@ fn key_family_mismatch_is_rejected() {
         .is_err()
     );
 }
+
+#[test]
+fn generated_p256_signs_and_verifies() {
+    for _ in 0..2 {
+        let key = generate(KeyKind::P256).unwrap();
+        let point = p256_point_from_spki(&key.public_spki).unwrap();
+        roundtrip(
+            Algorithm::ES256,
+            &EncodingKey::from_ec_der(&key.private_pkcs8),
+            &DecodingKey::from_ec_der(point),
+        );
+    }
+    assert!(p256_point_from_spki(&[0x30, 0x00]).is_none());
+}
+
+#[test]
+fn generated_rsa_signs_and_verifies() {
+    let key = generate(KeyKind::Rsa2048).unwrap();
+    let pkcs1 = rsa_pkcs1_from_spki(&key.public_spki).unwrap();
+    roundtrip(
+        Algorithm::RS256,
+        &EncodingKey::from_rsa_der(&key.private_pkcs8),
+        &DecodingKey::from_rsa_der(pkcs1),
+    );
+    assert!(rsa_pkcs1_from_spki(&[0x30, 0x00]).is_none());
+}
