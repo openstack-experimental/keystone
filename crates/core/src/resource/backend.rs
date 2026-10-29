@@ -204,6 +204,21 @@ pub trait ResourceBackend: Send + Sync {
         project_id: &'a str,
     ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
 
+    /// Get project subtree (all descendants).
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    ///
+    /// # Returns
+    /// - A `Result` containing an `Option` with the descendants of the project
+    ///   ordered breadth first if the project exists, or an `Error`.
+    async fn get_project_subtree<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
+
     /// List domains.
     ///
     /// # Parameters

@@ -12,14 +12,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashSet;
+
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
+use sea_orm::query::*;
 
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::resource::ResourceProviderError;
 use openstack_keystone_core_types::resource::Project;
 
 use crate::entity::prelude::Project as DbProject;
+use crate::entity::project as db_project;
 
 /// Get the parents of a project.
 ///
@@ -56,6 +60,52 @@ pub async fn get_project_parents<I: AsRef<str>>(
         project_id = project.and_then(|project| project.parent_id);
     }
 
+    Ok(Some(res))
+}
+
+/// Get all descendants of a project.
+///
+/// The tree is walked level by level (one query per level) so that the result
+/// is ordered breadth first: every project is listed after its parent.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `id`: ID of the project.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `Vec<Project>` if the project
+/// exists, or an `Error`.
+pub async fn get_project_subtree<I: AsRef<str>>(
+    db: &DatabaseConnection,
+    id: I,
+) -> Result<Option<Vec<Project>>, ResourceProviderError> {
+    if DbProject::find_by_id(id.as_ref())
+        .one(db)
+        .await
+        .context("resolving project")?
+        .is_none()
+    {
+        return Ok(None);
+    }
+    let mut res: Vec<Project> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::from([id.as_ref().to_string()]);
+    let mut level: Vec<String> = vec![id.as_ref().to_string()];
+    while !level.is_empty() {
+        let children = DbProject::find()
+            .filter(db_project::Column::ParentId.is_in(level))
+            .order_by_asc(db_project::Column::Id)
+            .all(db)
+            .await
+            .context("resolving project subtree")?;
+        level = Vec::new();
+        for child in children {
+            // Guard against corrupt parent loops.
+            if seen.insert(child.id.clone()) {
+                level.push(child.id.clone());
+                res.push(child.try_into()?);
+            }
+        }
+    }
     Ok(Some(res))
 }
 
@@ -182,5 +232,53 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn test_get_project_subtree() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_mock("1", Some("domain_id"))]])
+            .append_query_results([vec![get_mock("2", Some("1")), get_mock("3", Some("1"))]])
+            .append_query_results([vec![get_mock("4", Some("2"))]])
+            .append_query_results([Vec::<project::Model>::new()])
+            .into_connection();
+        let res = get_project_subtree(&db, "1").await.unwrap().unwrap();
+        assert_eq!(
+            res.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(),
+            vec!["2", "3", "4"]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_project_subtree_leaf() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_mock("1", Some("domain_id"))]])
+            .append_query_results([Vec::<project::Model>::new()])
+            .into_connection();
+        let res = get_project_subtree(&db, "1").await.unwrap().unwrap();
+        assert!(res.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_project_subtree_parent_loop() {
+        // 1 -> 2 -> 1: the corrupt back reference must not be followed again.
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_mock("1", Some("2"))]])
+            .append_query_results([vec![get_mock("2", Some("1"))]])
+            .append_query_results([vec![get_mock("1", Some("2"))]])
+            .into_connection();
+        let res = get_project_subtree(&db, "1").await.unwrap().unwrap();
+        assert_eq!(
+            res.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(),
+            vec!["2"]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_project_subtree_not_found() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<project::Model>::new()])
+            .into_connection();
+        assert!(get_project_subtree(&db, "1").await.unwrap().is_none());
     }
 }

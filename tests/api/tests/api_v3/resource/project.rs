@@ -379,3 +379,183 @@ async fn test_project_create_name_too_long() -> Result<()> {
     );
     Ok(())
 }
+
+fn hierarchy_ids(value: &serde_json::Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|x| x["project"]["id"].as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn test_project_show_hierarchy() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_test_domain(&test_client).await?;
+    let create = |name: String, parent: Option<String>| {
+        let mut builder = ProjectCreateBuilder::default();
+        builder
+            .name(name)
+            .enabled(true)
+            .domain_id(domain.id.clone());
+        if let Some(parent) = parent {
+            builder.parent_id(parent);
+        }
+        builder.build()
+    };
+    let root = create_project(
+        &test_client,
+        create(Uuid::new_v4().to_string(), Some(domain.id.clone()))?,
+    )
+    .await?;
+    let child = create_project(
+        &test_client,
+        create(Uuid::new_v4().to_string(), Some(root.id.clone()))?,
+    )
+    .await?;
+    let sibling = create_project(
+        &test_client,
+        create(Uuid::new_v4().to_string(), Some(root.id.clone()))?,
+    )
+    .await?;
+    let grandchild = create_project(
+        &test_client,
+        create(Uuid::new_v4().to_string(), Some(child.id.clone()))?,
+    )
+    .await?;
+
+    // Without the flags no hierarchy members are present.
+    let plain =
+        get_project_hierarchy(&test_client, &child.id, ProjectHierarchyQuery::default()).await?;
+    assert_eq!(plain["id"], child.id.as_str());
+    assert!(plain.get("parents").is_none());
+    assert!(plain.get("subtree").is_none());
+
+    // parents_as_list: closest parent first, no descendants.
+    let shown = get_project_hierarchy(
+        &test_client,
+        &child.id,
+        ProjectHierarchyQuery {
+            parents_as_list: true,
+            ..Default::default()
+        },
+    )
+    .await?;
+    let parents = hierarchy_ids(&shown["parents"]);
+    assert_eq!(parents.first(), Some(&root.id));
+    assert!(!parents.contains(&grandchild.id));
+    assert!(shown.get("subtree").is_none());
+
+    // parents_as_ids: nested object keyed by the parent IDs.
+    let shown = get_project_hierarchy(
+        &test_client,
+        &grandchild.id,
+        ProjectHierarchyQuery {
+            parents_as_ids: true,
+            ..Default::default()
+        },
+    )
+    .await?;
+    assert!(
+        shown["parents"]
+            .get(&child.id)
+            .and_then(|x| x.get(&root.id))
+            .is_some(),
+        "unexpected parents: {}",
+        shown["parents"]
+    );
+
+    // subtree_as_list: breadth first.
+    let shown = get_project_hierarchy(
+        &test_client,
+        &root.id,
+        ProjectHierarchyQuery {
+            subtree_as_list: true,
+            ..Default::default()
+        },
+    )
+    .await?;
+    let subtree = hierarchy_ids(&shown["subtree"]);
+    assert_eq!(subtree.len(), 3, "{subtree:?}");
+    let pos = |id: &str| subtree.iter().position(|x| x == id);
+    assert!(pos(&child.id) < pos(&grandchild.id));
+    assert!(pos(&sibling.id).is_some());
+    assert!(shown.get("parents").is_none());
+
+    // subtree_as_ids: nested object with `null` leaves.
+    let shown = get_project_hierarchy(
+        &test_client,
+        &root.id,
+        ProjectHierarchyQuery {
+            subtree_as_ids: true,
+            ..Default::default()
+        },
+    )
+    .await?;
+    assert_eq!(
+        shown["subtree"],
+        serde_json::json!({
+            child.id.as_str(): {grandchild.id.as_str(): null},
+            sibling.id.as_str(): null,
+        })
+    );
+
+    // A leaf project has an empty subtree.
+    let shown = get_project_hierarchy(
+        &test_client,
+        &grandchild.id,
+        ProjectHierarchyQuery {
+            subtree_as_list: true,
+            ..Default::default()
+        },
+    )
+    .await?;
+    assert!(hierarchy_ids(&shown["subtree"]).is_empty());
+
+    grandchild.delete().await?;
+    sibling.delete().await?;
+    child.delete().await?;
+    root.delete().await?;
+    domain.delete().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_project_show_hierarchy_conflicting_params() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_test_domain(&test_client).await?;
+    let project = create_project(
+        &test_client,
+        ProjectCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .enabled(true)
+            .domain_id(domain.id.clone())
+            .build()?,
+    )
+    .await?;
+    for query in [
+        ProjectHierarchyQuery {
+            parents_as_list: true,
+            parents_as_ids: true,
+            ..Default::default()
+        },
+        ProjectHierarchyQuery {
+            subtree_as_list: true,
+            subtree_as_ids: true,
+            ..Default::default()
+        },
+    ] {
+        test_api::asserts::assert_status(
+            get_project_hierarchy(&test_client, &project.id, query).await,
+            http::StatusCode::BAD_REQUEST,
+            "mutually exclusive hierarchy parameters must be rejected",
+        );
+    }
+    project.delete().await?;
+    domain.delete().await?;
+    Ok(())
+}
