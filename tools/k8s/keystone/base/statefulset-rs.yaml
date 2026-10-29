@@ -69,6 +69,11 @@ spec:
                 secretKeyRef:
                   key: "fqdn-uri"
                   name: "keystone-db-app"
+            # The non-root user has no home directory and the root filesystem
+            # is read-only. wasmtime caches compiled auth plugins under the
+            # cache directory and fails to load them without a writable one.
+            - name: "XDG_CACHE_HOME"
+              value: "/tmp/.cache"
           command: ["keystone"]
 
           image: keystone-rs
