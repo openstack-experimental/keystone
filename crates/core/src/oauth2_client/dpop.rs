@@ -417,6 +417,7 @@ pub fn verify_dpop_proof(
         .ok_or_else(|| DpopProofError::InvalidKey("`jwk` is not an object".into()))?;
     validate_key(alg, jwk_map)?;
     let jkt = jwk_thumbprint(jwk_map)?;
+    openstack_keystone_jwt_crypto::install();
     let decoding_key = match alg {
         Algorithm::ES256 => DecodingKey::from_ec_components(
             &canonical_member(jwk_map, "x", false)?,
@@ -594,6 +595,7 @@ iInRUT3PWlw/HKU=
 
     /// Sign arbitrary header and claims; the tests control every field.
     fn sign(alg: Algorithm, pem: &str, header: Value, claims: Value) -> String {
+        openstack_keystone_jwt_crypto::install();
         let key = match alg {
             Algorithm::ES256 => EncodingKey::from_ec_pem(pem.as_bytes()).unwrap(),
             _ => EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap(),
@@ -603,7 +605,11 @@ iInRUT3PWlw/HKU=
             b64(header.to_string().as_bytes()),
             b64(claims.to_string().as_bytes())
         );
-        let signature = crypto::sign(message.as_bytes(), &key, alg).unwrap();
+        // `ring` refuses to load RSA keys below 2048 bits, which the short-key
+        // tests rely on; a garbage signature exercises the same rejection
+        // paths, as the key is checked before the signature.
+        let signature =
+            crypto::sign(message.as_bytes(), &key, alg).unwrap_or_else(|_| b64(&[0x5a; 128]));
         format!("{message}.{signature}")
     }
 

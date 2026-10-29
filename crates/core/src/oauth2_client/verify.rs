@@ -272,6 +272,7 @@ fn resolve_decoding_key(
     jwks: &JwkSet,
     expected_algorithm: SigningAlgorithm,
 ) -> Result<(Algorithm, DecodingKey), TokenVerificationError> {
+    openstack_keystone_jwt_crypto::install();
     let header = decode_header(token)?;
     let expected_alg = jwt_algorithm(expected_algorithm);
     if header.alg != expected_alg {

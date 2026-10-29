@@ -1,0 +1,32 @@
+[package]
+name = "openstack-keystone-jwt-crypto"
+description = "Crypto provider for the jsonwebtoken crate backed by ring or the FIPS aws-lc-rs module."
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+exclude.workspace = true
+
+[features]
+default = ["ring"]
+# JWS primitives through `ring`. Unused, but still compiled, when `fips` is
+# also enabled.
+ring = ["dep:ring"]
+# JWS primitives through the FIPS 140-3 validated AWS-LC module. Takes
+# precedence over `ring`.
+fips = ["dep:aws-lc-rs", "aws-lc-rs/fips"]
+
+[dependencies]
+aws-lc-rs = { workspace = true, optional = true }
+jsonwebtoken.workspace = true
+ring = { workspace = true, optional = true }
+
+[dev-dependencies]
+ring.workspace = true
+serde = { workspace = true, features = ["derive"] }
+
+[lints]
+workspace = true

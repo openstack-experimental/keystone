@@ -45,6 +45,7 @@ pub fn jwt_algorithm(algorithm: SigningAlgorithm) -> Algorithm {
 
 /// Build a `jsonwebtoken` [`EncodingKey`] from stored [`KeyMaterial`].
 pub fn to_encoding_key(material: &KeyMaterial) -> Result<EncodingKey, KeyRepositoryError> {
+    openstack_keystone_jwt_crypto::install();
     match material.algorithm {
         // jsonwebtoken's rust_crypto ECDSA signer loads its EncodingKey
         // content directly via `SigningKey::from_pkcs8_der`, the same
@@ -68,6 +69,7 @@ pub fn to_encoding_key(material: &KeyMaterial) -> Result<EncodingKey, KeyReposit
 
 /// Build a `jsonwebtoken` [`DecodingKey`] from stored [`KeyMaterial`].
 pub fn to_decoding_key(material: &KeyMaterial) -> Result<DecodingKey, KeyRepositoryError> {
+    openstack_keystone_jwt_crypto::install();
     match material.algorithm {
         // jsonwebtoken's rust_crypto ECDSA verifier loads via
         // `VerifyingKey::from_sec1_bytes` (the raw EC point), but we store
