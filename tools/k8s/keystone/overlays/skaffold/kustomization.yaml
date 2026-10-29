@@ -23,3 +23,12 @@ patches:
       kind: StatefulSet
       name: keystone-rs
     path: statefulset-dev-patch.yaml
+  # DPoP nonces, replay cache and the per-domain mode cache are per replica:
+  # keep each client (e.g. the api tests) on one replica.
+  - target:
+      kind: Service
+      name: keystone-rs
+    patch: |-
+      - op: add
+        path: /spec/sessionAffinity
+        value: ClientIP

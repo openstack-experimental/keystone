@@ -1,0 +1,30 @@
+# Job template of the `api-test-v4` skaffold verify case. Skaffold replaces
+# the container's name, image, command and env with the verify entry; everything
+# else is taken from here, so pod-level wiring (labels, volumes, service
+# account) lives in this file instead of an inline JSON override.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: api-test-v4
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        # Selects the `it-*` ClusterSPIFFEIDs (api-test-spiffe-ids.yaml).
+        app.kubernetes.io/name: keystone-api-test
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: api-test-v4
+          image: placeholder
+          volumeMounts:
+            # SPIRE agent Workload API socket.
+            - name: spiffe-workload-api
+              mountPath: /run/spire/sockets
+              readOnly: true
+      volumes:
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true

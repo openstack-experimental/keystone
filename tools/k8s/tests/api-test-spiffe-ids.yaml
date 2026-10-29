@@ -1,0 +1,53 @@
+# SVIDs of the live service grant tests (tests/api/tests/api_v4/service_grant.rs)
+# in the skaffold/CI cluster; the counterpart of the `it-*` entries that
+# tools/start-spire.sh registers for the local harness. A client's spiffe_ids
+# may not overlap another's, so each test owns one. Every ClusterSPIFFEID must
+# set `spec.className` (see keystone-raft-spiffe-id.yaml). The `api-test-v4`
+# verify pod takes them through the label set in skaffold.yaml.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: keystone-api-test-redeem
+spec:
+  className: spire-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/service/it-redeem/host/h1"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-api-test
+  ttl: "1h"
+---
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: keystone-api-test-foreign
+spec:
+  className: spire-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/service/it-foreign/host/h1"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-api-test
+  ttl: "1h"
+---
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: keystone-api-test-obo
+spec:
+  className: spire-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/service/it-obo/host/h1"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-api-test
+  ttl: "1h"
+---
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: keystone-api-test-bearer
+spec:
+  className: spire-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/service/it-bearer/host/h1"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-api-test
+  ttl: "1h"

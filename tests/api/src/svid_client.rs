@@ -18,6 +18,7 @@
 //! one to present by its SPIFFE ID.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use eyre::{Result, eyre};
 use hyper_util::rt::TokioIo;
@@ -30,10 +31,15 @@ use spiffe_rustls::{authorizer, mtls_client};
 use spiffe_rustls_tokio::TlsConnector;
 use tokio::net::TcpStream;
 
-/// SPIRE agent Workload API socket of the harness.
+/// SPIRE agent Workload API socket of the local harness; the
+/// `SPIFFE_ENDPOINT_SOCKET` environment variable overrides it (in-cluster).
 const AGENT_SOCKET: &str = "unix:///tmp/spire-ci-test-harness/agent.sock";
-/// `[interface_internal]` address of the harness keystone.
+/// `[interface_internal]` address of the local harness keystone; the
+/// `KEYSTONE_INTERNAL_ADDR` environment variable overrides it (in-cluster).
 const INTERNAL_ADDR: &str = "127.0.0.1:8215";
+/// Bound for the initial SVID fetch: the source otherwise retries forever when
+/// the agent socket is missing, which hangs the test instead of failing it.
+const SVID_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
 /// Trust domain of the harness.
 const TRUST_DOMAIN: &str = "example.org";
 
@@ -71,12 +77,16 @@ pub async fn request(
     headers: &[(&str, &str)],
     body: Option<&[(&str, &str)]>,
 ) -> Result<(StatusCode, Value)> {
+    let socket = std::env::var("SPIFFE_ENDPOINT_SOCKET").unwrap_or_else(|_| AGENT_SOCKET.into());
+    let addr = std::env::var("KEYSTONE_INTERNAL_ADDR").unwrap_or_else(|_| INTERNAL_ADDR.into());
+
     let source = X509SourceBuilder::new()
-        .endpoint(AGENT_SOCKET)
+        .endpoint(&socket)
         .picker(IdPicker(svid_id.to_string()))
+        .initial_sync_timeout(SVID_FETCH_TIMEOUT)
         .build()
         .await
-        .map_err(|e| eyre!("no SVID `{svid_id}` from the SPIRE agent: {e}"))?;
+        .map_err(|e| eyre!("no SVID `{svid_id}` from the SPIRE agent at `{socket}`: {e}"))?;
 
     let config = mtls_client(source)
         .authorize(authorizer::trust_domains([
@@ -86,7 +96,7 @@ pub async fn request(
         .map_err(|e| eyre!("mTLS client config: {e}"))?;
     let connector = TlsConnector::new(Arc::new(config));
 
-    let tcp = TcpStream::connect(INTERNAL_ADDR).await?;
+    let tcp = TcpStream::connect(&addr).await?;
     // SPIFFE authenticates the peer by ID; the name is only for rustls.
     let server_name = rustls::pki_types::ServerName::try_from("keystone")?;
     let (tls, _peer) = connector
@@ -102,7 +112,7 @@ pub async fn request(
     let mut builder = hyper::Request::builder()
         .method(method)
         .uri(path)
-        .header("host", INTERNAL_ADDR);
+        .header("host", addr.as_str());
     for (name, value) in headers {
         builder = builder.header(*name, *value);
     }

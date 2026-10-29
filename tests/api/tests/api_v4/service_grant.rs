@@ -18,7 +18,12 @@
 //! management API and prove that a grant can not be redeemed, nor its
 //! grantee service identity assumed, through the public interface.
 
+use std::time::Duration;
+
+use std::panic::AssertUnwindSafe;
+
 use eyre::{Result, eyre};
+use futures_util::FutureExt;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use tracing_test::traced_test;
@@ -43,6 +48,7 @@ struct Fixture {
     user_name: String,
     user_id: String,
     client_id: String,
+    provider_id: String,
 }
 
 fn bail<T>(what: &str, status: StatusCode, body: &Value) -> Result<T> {
@@ -164,10 +170,47 @@ async fn fixture_with_svid(svid: Option<&str>) -> Result<Fixture> {
         user_name,
         user_id,
         client_id: client.client_id,
+        provider_id,
     })
 }
 
 impl Fixture {
+    /// Delete the client. A client's `spiffe_ids` may not overlap another's
+    /// and the harness SVIDs are fixed, so a client left behind blocks every
+    /// later run against the same (persistent) deployment with a `409`.
+    async fn cleanup(&self) -> Result<()> {
+        let (status, body) = admin_call(
+            reqwest::Method::DELETE,
+            &format!("v4/oauth2/{}/clients/{}", self.domain_id, self.provider_id),
+            None,
+        )
+        .await?;
+        if !status.is_success() {
+            return bail("client deletion", status, &body);
+        }
+        Ok(())
+    }
+
+    /// Run `body`, then delete the client whether it returned, failed or
+    /// panicked (a failed assertion panics, which would skip a plain
+    /// `cleanup()` call after the body).
+    async fn guarded(&self, body: impl Future<Output = Result<()>>) -> Result<()> {
+        let outcome = AssertUnwindSafe(body).catch_unwind().await;
+        let cleaned = self.cleanup().await;
+        match outcome {
+            Ok(res) => {
+                cleaned?;
+                res
+            }
+            Err(panic) => {
+                if let Err(e) = cleaned {
+                    tracing::error!("client cleanup after a failed test failed: {e}");
+                }
+                std::panic::resume_unwind(panic)
+            }
+        }
+    }
+
     /// The fixture user, password-authenticated and project-scoped.
     async fn user(&self) -> Result<TestClient> {
         let mut tc = TestClient::new()?;
@@ -588,10 +631,11 @@ async fn test_internal_interface_refuses_clients_without_svid() -> Result<()> {
     // fails, so no request reaches the token endpoint, whatever the client
     // presents in it.
     // The listener is up: a refusal below is the handshake, not a closed port.
-    std::net::TcpStream::connect("127.0.0.1:8215")?;
+    let addr = std::env::var("KEYSTONE_INTERNAL_ADDR").unwrap_or_else(|_| "127.0.0.1:8215".into());
+    std::net::TcpStream::connect(&addr)?;
     for scheme in ["https", "http"] {
         let rsp = http_client()
-            .post(format!("{scheme}://127.0.0.1:8215/v4/oauth2/default/token"))
+            .post(format!("{scheme}://{addr}/v4/oauth2/default/token"))
             .form(&[("grant_type", GRANT_TYPE), ("grant_id", "x")])
             .send()
             .await;
@@ -604,58 +648,61 @@ async fn test_internal_interface_refuses_clients_without_svid() -> Result<()> {
 #[traced_test]
 async fn test_grant_can_be_redeemed_with_svid_on_internal_interface() -> Result<()> {
     let f = fixture_with_svid(Some(REDEEM_SVID)).await?;
-    let owner = f.user().await?;
-    let id = f.create_grant(&owner).await?;
-    let path = format!("/v4/oauth2/{}/token", f.domain_id);
-    let form = [
-        ("grant_type", GRANT_TYPE),
-        ("grant_id", id.as_str()),
-        ("client_id", f.client_id.as_str()),
-    ];
+    f.guarded(async {
+        let owner = f.user().await?;
+        let id = f.create_grant(&owner).await?;
+        let path = format!("/v4/oauth2/{}/token", f.domain_id);
+        let form = [
+            ("grant_type", GRANT_TYPE),
+            ("grant_id", id.as_str()),
+            ("client_id", f.client_id.as_str()),
+        ];
 
-    // The grantee's real X.509-SVID, from the SPIRE agent, over mTLS.
-    let (status, body) = post_form(REDEEM_SVID, &path, &form).await?;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let token = body["access_token"]
-        .as_str()
-        .ok_or_else(|| eyre!("no access_token in {body}"))?;
+        // The grantee's real X.509-SVID, from the SPIRE agent, over mTLS.
+        let (status, body) = post_form(REDEEM_SVID, &path, &form).await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let token = body["access_token"]
+            .as_str()
+            .ok_or_else(|| eyre!("no access_token in {body}"))?;
 
-    // The token is issued to the grantor, acted for by the SVID.
-    let payload = token
-        .split('.')
-        .nth(1)
-        .ok_or_else(|| eyre!("access token is not a JWT"))?;
-    let claims: Value =
-        serde_json::from_slice(&data_encoding::BASE64URL_NOPAD.decode(payload.as_bytes())?)?;
-    assert_eq!(claims["sub"], f.user_id.as_str(), "{claims}");
-    assert_eq!(claims["act"]["sub"], REDEEM_SVID, "{claims}");
-    assert_eq!(claims["act"]["sub_type"], "spiffe", "{claims}");
+        // The token is issued to the grantor, acted for by the SVID.
+        let payload = token
+            .split('.')
+            .nth(1)
+            .ok_or_else(|| eyre!("access token is not a JWT"))?;
+        let claims: Value =
+            serde_json::from_slice(&data_encoding::BASE64URL_NOPAD.decode(payload.as_bytes())?)?;
+        assert_eq!(claims["sub"], f.user_id.as_str(), "{claims}");
+        assert_eq!(claims["act"]["sub"], REDEEM_SVID, "{claims}");
+        assert_eq!(claims["act"]["sub_type"], "spiffe", "{claims}");
 
-    // A grant is a standing delegation: it redeems again, and records it.
-    let (status, body) = post_form(REDEEM_SVID, &path, &form).await?;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let rsp = owner
-        .client
-        .get(owner.base_url.join(&format!("v4/service-grants/{id}"))?)
-        .send()
-        .await?;
-    let shown: Value = rsp.json().await?;
-    assert!(
-        !shown["service_grant"]["last_redeemed_at"].is_null(),
-        "{shown}"
-    );
+        // A grant is a standing delegation: it redeems again, and records it.
+        let (status, body) = post_form(REDEEM_SVID, &path, &form).await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let rsp = owner
+            .client
+            .get(owner.base_url.join(&format!("v4/service-grants/{id}"))?)
+            .send()
+            .await?;
+        let shown: Value = rsp.json().await?;
+        assert!(
+            !shown["service_grant"]["last_redeemed_at"].is_null(),
+            "{shown}"
+        );
 
-    // Revoking it ends redemption.
-    let rsp = owner
-        .client
-        .delete(owner.base_url.join(&format!("v4/service-grants/{id}"))?)
-        .send()
-        .await?;
-    assert!(rsp.status().is_success(), "{}", rsp.status());
-    let (status, body) = post_form(REDEEM_SVID, &path, &form).await?;
-    assert!(!status.is_success(), "revoked grant redeemed: {body}");
-    assert!(body["access_token"].is_null(), "{body}");
-    Ok(())
+        // Revoking it ends redemption.
+        let rsp = owner
+            .client
+            .delete(owner.base_url.join(&format!("v4/service-grants/{id}"))?)
+            .send()
+            .await?;
+        assert!(rsp.status().is_success(), "{}", rsp.status());
+        let (status, body) = post_form(REDEEM_SVID, &path, &form).await?;
+        assert!(!status.is_success(), "revoked grant redeemed: {body}");
+        assert!(body["access_token"].is_null(), "{body}");
+        Ok(())
+    })
+    .await
 }
 
 #[tokio::test]
@@ -740,87 +787,147 @@ fn access_token_of(body: &Value) -> Result<&str> {
 #[traced_test]
 async fn test_on_behalf_of_exchange_and_reexchange_over_mtls() -> Result<()> {
     let f = fixture_with_svid(Some(OBO_SVID)).await?;
-    let user = f.user().await?;
-    let user_token = user
-        .token
-        .as_ref()
-        .map(secrecy::ExposeSecret::expose_secret)
-        .ok_or_else(|| eyre!("user is not authenticated"))?;
+    f.guarded(async {
+        let user = f.user().await?;
+        let user_token = user
+            .token
+            .as_ref()
+            .map(secrecy::ExposeSecret::expose_secret)
+            .ok_or_else(|| eyre!("user is not authenticated"))?;
 
-    let (status, body) = exchange(&f, OBO_SVID, user_token, KEYSTONE_TOKEN).await?;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let hop = access_token_of(&body)?.to_string();
-    let payload = hop
-        .split('.')
-        .nth(1)
-        .ok_or_else(|| eyre!("access token is not a JWT"))?;
-    let claims: Value =
-        serde_json::from_slice(&data_encoding::BASE64URL_NOPAD.decode(payload.as_bytes())?)?;
-    assert_eq!(claims["sub"], f.user_id.as_str(), "{claims}");
-    assert_eq!(claims["act"]["sub"], OBO_SVID, "{claims}");
-    assert_eq!(claims["delegation_context"]["auth_method"], "on_behalf_of");
+        let (status, body) = exchange(&f, OBO_SVID, user_token, KEYSTONE_TOKEN).await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let hop = access_token_of(&body)?.to_string();
+        let payload = hop
+            .split('.')
+            .nth(1)
+            .ok_or_else(|| eyre!("access token is not a JWT"))?;
+        let claims: Value =
+            serde_json::from_slice(&data_encoding::BASE64URL_NOPAD.decode(payload.as_bytes())?)?;
+        assert_eq!(claims["sub"], f.user_id.as_str(), "{claims}");
+        assert_eq!(claims["act"]["sub"], OBO_SVID, "{claims}");
+        assert_eq!(claims["delegation_context"]["auth_method"], "on_behalf_of");
 
-    // The service renews the token, and only the service: another SVID can
-    // not exchange it, and the client is not authenticated by the token.
-    let (status, body) = exchange(&f, OBO_SVID, &hop, ACCESS_TOKEN).await?;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, body) = exchange(&f, FOREIGN_SVID, &hop, ACCESS_TOKEN).await?;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
-    assert!(body["access_token"].is_null(), "{body}");
-    Ok(())
+        // The service renews the token, and only the service: another SVID can
+        // not exchange it, and the client is not authenticated by the token.
+        let (status, body) = exchange(&f, OBO_SVID, &hop, ACCESS_TOKEN).await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = exchange(&f, FOREIGN_SVID, &hop, ACCESS_TOKEN).await?;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        assert!(body["access_token"].is_null(), "{body}");
+        Ok(())
+    })
+    .await
 }
 
 #[tokio::test]
 #[traced_test]
 async fn test_delegated_bearer_is_accepted_only_with_the_actors_svid() -> Result<()> {
     let f = fixture_with_svid(Some(BEARER_SVID)).await?;
-    let user = f.user().await?;
-    let user_token = user
-        .token
-        .as_ref()
-        .map(secrecy::ExposeSecret::expose_secret)
-        .ok_or_else(|| eyre!("user is not authenticated"))?;
-    let (status, body) = exchange(&f, BEARER_SVID, user_token, KEYSTONE_TOKEN).await?;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let hop = access_token_of(&body)?.to_string();
+    f.guarded(async {
+        let user = f.user().await?;
+        let user_token = user
+            .token
+            .as_ref()
+            .map(secrecy::ExposeSecret::expose_secret)
+            .ok_or_else(|| eyre!("user is not authenticated"))?;
+        let (status, body) = exchange(&f, BEARER_SVID, user_token, KEYSTONE_TOKEN).await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let hop = access_token_of(&body)?.to_string();
 
-    // The actor's SVID plus its token: Keystone authenticates the request
-    // (any answer but `401`).
-    let status = get_with_bearer(BEARER_SVID, &hop).await?;
-    assert_ne!(status, StatusCode::UNAUTHORIZED);
+        // The actor's SVID plus its token: Keystone authenticates the request
+        // (any answer but `401`).
+        let status = get_with_bearer(BEARER_SVID, &hop).await?;
+        assert_ne!(status, StatusCode::UNAUTHORIZED);
 
-    // Another service's SVID is no proof for the token: `401`, and no
-    // fallback to that SVID's own identity.
-    let status = get_with_bearer(FOREIGN_SVID, &hop).await?;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+        // Another service's SVID is no proof for the token: `401`, and no
+        // fallback to that SVID's own identity.
+        let status = get_with_bearer(FOREIGN_SVID, &hop).await?;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
 
-    // A service grant token is bound the same way.
-    let id = f.create_grant(&user).await?;
-    let (status, body) = post_form(
-        BEARER_SVID,
-        &format!("/v4/oauth2/{}/token", f.domain_id),
-        &[
-            ("grant_type", GRANT_TYPE),
-            ("grant_id", &id),
-            ("client_id", &f.client_id),
-        ],
-    )
-    .await?;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let grant_token = access_token_of(&body)?.to_string();
-    let status = get_with_bearer(BEARER_SVID, &grant_token).await?;
-    assert_ne!(status, StatusCode::UNAUTHORIZED);
-    let status = get_with_bearer(FOREIGN_SVID, &grant_token).await?;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-
-    // Revoking the grant stops the token at once.
-    let rsp = user
-        .client
-        .delete(user.base_url.join(&format!("v4/service-grants/{id}"))?)
-        .send()
+        // A service grant token is bound the same way.
+        let id = f.create_grant(&user).await?;
+        let (status, body) = post_form(
+            BEARER_SVID,
+            &format!("/v4/oauth2/{}/token", f.domain_id),
+            &[
+                ("grant_type", GRANT_TYPE),
+                ("grant_id", &id),
+                ("client_id", &f.client_id),
+            ],
+        )
         .await?;
-    assert!(rsp.status().is_success(), "{}", rsp.status());
-    let status = get_with_bearer(BEARER_SVID, &grant_token).await?;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let grant_token = access_token_of(&body)?.to_string();
+        let status = get_with_bearer(BEARER_SVID, &grant_token).await?;
+        assert_ne!(status, StatusCode::UNAUTHORIZED);
+        let status = get_with_bearer(FOREIGN_SVID, &grant_token).await?;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        // Revoking the grant stops the token at once.
+        let rsp = user
+            .client
+            .delete(user.base_url.join(&format!("v4/service-grants/{id}"))?)
+            .send()
+            .await?;
+        assert!(rsp.status().is_success(), "{}", rsp.status());
+        let status = get_with_bearer(BEARER_SVID, &grant_token).await?;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        Ok(())
+    })
+    .await
+}
+
+/// Deleting a domain deletes its clients: nothing can list them afterwards,
+/// and their `spiffe_ids` would block every other client from the identity.
+#[tokio::test]
+#[traced_test]
+async fn test_domain_deletion_releases_the_spiffe_ids_of_its_clients() -> Result<()> {
+    // Not one of the harness SVIDs: the identity only has to be unclaimed.
+    let svid = format!(
+        "spiffe://example.org/service/it-orphan-{}/host/h1",
+        Uuid::new_v4().simple()
+    );
+    let register = |domain_id: String| {
+        let svid = svid.clone();
+        async move {
+            create_client_raw(
+                &domain_id,
+                json!({
+                    "provider_id": format!("svc-{}", Uuid::new_v4().simple()),
+                    "confidential": false,
+                    "grant_types": [],
+                    "allowed_scopes": ["openstack:api"],
+                    "token_endpoint_auth_method": "tls_client_auth",
+                    "require_pkce": false,
+                    "redirect_uris": [],
+                    "post_logout_redirect_uris": [],
+                    "spiffe_ids": [svid],
+                }),
+            )
+            .await
+        }
+    };
+
+    let first = create_ready_domain("sg").await?;
+    let (status, body) = register(first.clone()).await?;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    let second = create_ready_domain("sg").await?;
+    let (status, body) = register(second.clone()).await?;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+
+    delete_domain(&first).await?;
+
+    // The hook runs asynchronously.
+    let mut last = (status, body);
+    for _ in 0..40 {
+        last = register(second.clone()).await?;
+        if last.0 == StatusCode::CREATED {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert_eq!(last.0, StatusCode::CREATED, "{}", last.1);
     Ok(())
 }

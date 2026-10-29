@@ -9054,6 +9054,7 @@ dependencies = [
  "data-encoding",
  "derive_builder",
  "eyre",
+ "futures-util",
  "hmac 0.13.0",
  "http",
  "http-body-util",
