@@ -34,7 +34,12 @@
 
 mod backend;
 mod der;
+mod keygen;
 mod keys;
+
+pub use keygen::{
+    GeneratedKey, KeyKind, KeygenError, generate, p256_point_from_spki, rsa_pkcs1_from_spki,
+};
 
 use jsonwebtoken::crypto::{CryptoProvider, KeyUtils};
 

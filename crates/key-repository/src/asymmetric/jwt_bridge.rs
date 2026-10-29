@@ -25,9 +25,7 @@
 //! `/token` signer), so the conversion lives here rather than in any one
 //! driver crate.
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey};
-use pkcs8::DecodePublicKey as _;
-use rsa::pkcs1::{EncodeRsaPrivateKey, EncodeRsaPublicKey};
-use rsa::pkcs8::{DecodePrivateKey as _, DecodePublicKey as RsaDecodePublicKey};
+use openstack_keystone_jwt_crypto::{p256_point_from_spki, rsa_pkcs1_from_spki};
 use secrecy::ExposeSecret;
 
 use crate::error::KeyRepositoryError;
@@ -46,51 +44,25 @@ pub fn jwt_algorithm(algorithm: SigningAlgorithm) -> Algorithm {
 /// Build a `jsonwebtoken` [`EncodingKey`] from stored [`KeyMaterial`].
 pub fn to_encoding_key(material: &KeyMaterial) -> Result<EncodingKey, KeyRepositoryError> {
     openstack_keystone_jwt_crypto::install();
-    match material.algorithm {
-        // jsonwebtoken's rust_crypto ECDSA signer loads its EncodingKey
-        // content directly via `SigningKey::from_pkcs8_der`, the same
-        // format we already store — no conversion needed.
-        SigningAlgorithm::Es256 => Ok(EncodingKey::from_ec_der(
-            material.private_key_der.expose_secret(),
-        )),
-        // jsonwebtoken's rust_crypto RSA signer loads via
-        // `RsaPrivateKey::from_pkcs1_der`, but we store PKCS#8 — convert.
-        SigningAlgorithm::Rs256 => {
-            let private_key =
-                rsa::RsaPrivateKey::from_pkcs8_der(material.private_key_der.expose_secret())
-                    .map_err(|e| KeyRepositoryError::Crypto(format!("RSA private key: {e}")))?;
-            let pkcs1_der = private_key
-                .to_pkcs1_der()
-                .map_err(|e| KeyRepositoryError::Crypto(format!("RSA private key: {e}")))?;
-            Ok(EncodingKey::from_rsa_der(pkcs1_der.as_bytes()))
-        }
-    }
+    // The provider loads the stored PKCS#8 as is.
+    let der = material.private_key_der.expose_secret();
+    Ok(match material.algorithm {
+        SigningAlgorithm::Es256 => EncodingKey::from_ec_der(der),
+        SigningAlgorithm::Rs256 => EncodingKey::from_rsa_der(der),
+    })
 }
 
-/// Build a `jsonwebtoken` [`DecodingKey`] from stored [`KeyMaterial`].
 pub fn to_decoding_key(material: &KeyMaterial) -> Result<DecodingKey, KeyRepositoryError> {
     openstack_keystone_jwt_crypto::install();
+    // The provider verifies against the raw EC point and the PKCS#1 RSA key,
+    // while we store SPKI DER.
     match material.algorithm {
-        // jsonwebtoken's rust_crypto ECDSA verifier loads via
-        // `VerifyingKey::from_sec1_bytes` (the raw EC point), but we store
-        // SPKI DER — parse then re-encode as a raw SEC1 point.
-        SigningAlgorithm::Es256 => {
-            let verifying_key =
-                p256::ecdsa::VerifyingKey::from_public_key_der(&material.public_key_der)
-                    .map_err(|e| KeyRepositoryError::Crypto(format!("EC public key: {e}")))?;
-            let sec1_point = verifying_key.to_sec1_point(false);
-            Ok(DecodingKey::from_ec_der(sec1_point.as_bytes()))
-        }
-        // jsonwebtoken's rust_crypto RSA verifier loads via
-        // `RsaPublicKey::from_pkcs1_der`, but we store SPKI DER — convert.
-        SigningAlgorithm::Rs256 => {
-            let public_key = rsa::RsaPublicKey::from_public_key_der(&material.public_key_der)
-                .map_err(|e| KeyRepositoryError::Crypto(format!("RSA public key: {e}")))?;
-            let pkcs1_der = public_key
-                .to_pkcs1_der()
-                .map_err(|e| KeyRepositoryError::Crypto(format!("RSA public key: {e}")))?;
-            Ok(DecodingKey::from_rsa_der(pkcs1_der.as_bytes()))
-        }
+        SigningAlgorithm::Es256 => p256_point_from_spki(&material.public_key_der)
+            .map(DecodingKey::from_ec_der)
+            .ok_or_else(|| KeyRepositoryError::Crypto("EC public key: not a P-256 SPKI".into())),
+        SigningAlgorithm::Rs256 => rsa_pkcs1_from_spki(&material.public_key_der)
+            .map(DecodingKey::from_rsa_der)
+            .ok_or_else(|| KeyRepositoryError::Crypto("RSA public key: not an SPKI".into())),
     }
 }
 

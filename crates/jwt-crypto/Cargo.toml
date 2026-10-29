@@ -11,10 +11,13 @@ homepage.workspace = true
 exclude.workspace = true
 
 [features]
-default = ["ring"]
+default = ["ring", "rsa-keygen"]
 # JWS primitives through `ring`. Unused, but still compiled, when `fips` is
 # also enabled.
 ring = ["dep:ring"]
+# RSA key generation through the `rsa` crate, since `ring` cannot generate RSA
+# keys. Not needed with `fips`, where AWS-LC generates them.
+rsa-keygen = ["dep:rsa"]
 # JWS primitives through the FIPS 140-3 validated AWS-LC module. Takes
 # precedence over `ring`.
 fips = ["dep:aws-lc-rs", "aws-lc-rs/fips"]
@@ -23,6 +26,9 @@ fips = ["dep:aws-lc-rs", "aws-lc-rs/fips"]
 aws-lc-rs = { workspace = true, optional = true }
 jsonwebtoken.workspace = true
 ring = { workspace = true, optional = true }
+rsa = { workspace = true, optional = true }
+thiserror.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 ring.workspace = true

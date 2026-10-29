@@ -63,12 +63,8 @@ fn pkcs1(der: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     seq.is_empty().then(|| (unsigned(n), unsigned(e)))
 }
 
-/// Split a PKCS#1 `RSAPublicKey` or an SPKI `SubjectPublicKeyInfo` carrying
-/// one into big-endian `(n, e)`.
-pub(crate) fn rsa_public_components(der: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    if let Some(components) = pkcs1(der) {
-        return Some(components);
-    }
+/// The content of the BIT STRING of an SPKI, without the unused-bits byte.
+pub(crate) fn spki_key_bits(der: &[u8]) -> Option<&[u8]> {
     let (spki, rest) = read(der, 0x30)?;
     if !rest.is_empty() {
         return None;
@@ -80,7 +76,13 @@ pub(crate) fn rsa_public_components(der: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     }
     // The first content byte counts unused bits, always 0 for a key.
     match bits.split_first() {
-        Some((0, inner)) => pkcs1(inner),
+        Some((0, inner)) => Some(inner),
         _ => None,
     }
+}
+
+/// Split a PKCS#1 `RSAPublicKey` or an SPKI `SubjectPublicKeyInfo` carrying
+/// one into big-endian `(n, e)`.
+pub(crate) fn rsa_public_components(der: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+    pkcs1(der).or_else(|| pkcs1(spki_key_bits(der)?))
 }
