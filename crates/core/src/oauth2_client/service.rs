@@ -438,6 +438,9 @@ fn internal_trust_domains(config: &Config) -> Vec<String> {
 }
 
 /// First of `candidates` overlapping a pattern of a different live client.
+///
+/// The message names the holder: a client whose domain is gone is invisible
+/// to the per-domain listing, so this is the only way to find it to delete it.
 fn find_spiffe_conflict(
     candidates: &[String],
     existing: &[OAuth2ClientResource],
@@ -446,14 +449,18 @@ fn find_spiffe_conflict(
     existing
         .iter()
         .filter(|c| own != Some((c.domain_id.as_str(), c.provider_id.as_str())))
-        .flat_map(|c| c.spiffe_ids.iter())
-        .find_map(|theirs| {
-            candidates
-                .iter()
-                .find(|mine| spiffe_id_patterns_overlap(mine, theirs))
-                .map(|mine| {
-                    format!("spiffe_ids pattern `{mine}` overlaps `{theirs}` of another client")
-                })
+        .find_map(|c| {
+            c.spiffe_ids.iter().find_map(|theirs| {
+                candidates
+                    .iter()
+                    .find(|mine| spiffe_id_patterns_overlap(mine, theirs))
+                    .map(|mine| {
+                        format!(
+                            "spiffe_ids pattern `{mine}` overlaps `{theirs}` of client `{}` in domain `{}`",
+                            c.provider_id, c.domain_id
+                        )
+                    })
+            })
         })
 }
 
@@ -1287,6 +1294,24 @@ mod tests {
             service.create(&ctx, sample_service_create(), false).await,
             Err(Oauth2ClientProviderError::Conflict(_))
         ));
+    }
+
+    #[test]
+    fn test_spiffe_conflict_names_the_holder() {
+        let mut other = sample_resource_from(sample_service_create());
+        other.domain_id = "gone-domain".into();
+        other.provider_id = "stale".into();
+        other.spiffe_ids = vec!["spiffe://cloud.example/ns/nova/sa/compute".into()];
+        let msg = find_spiffe_conflict(
+            &["spiffe://cloud.example/ns/nova/sa/*".into()],
+            &[other],
+            None,
+        )
+        .unwrap_or_default();
+        assert!(
+            msg.contains("`stale`") && msg.contains("`gone-domain`"),
+            "{msg}"
+        );
     }
 
     #[tokio::test]
