@@ -1,0 +1,20 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.0](https://github.com/openstack-experimental/keystone/releases/tag/openstack-keystone-password-hashing-v0.1.0) - 2026-10-30
+
+### Added
+
+- *(oauth2)* Add DPoP binding data model ([#1576](https://github.com/openstack-experimental/keystone/pull/1576))
+- *(fips)* Further improve fips support ([#1544](https://github.com/openstack-experimental/keystone/pull/1544))
+
+### Other
+
+- Fix clippy lints across workspace ([#1361](https://github.com/openstack-experimental/keystone/pull/1361))
+- Extract password hashing into own crate ([#1055](https://github.com/openstack-experimental/keystone/pull/1055))
