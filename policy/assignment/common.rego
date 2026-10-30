@@ -93,3 +93,88 @@ all_filters_match_scope if {
 is_scoped_to_token_domain if {
 	input.target.assignment.domain_id == input.credentials.domain_id
 }
+
+# description: current domain scope matches the target domain and the role
+# belongs to the same domain (or is global).
+# For grant/check/list: in input.target.
+# For revoke: may be in input.existing.
+domain_role_domain_matches if {
+	input.target.domain.id != null
+	input.credentials.domain_id == input.target.domain.id
+	identity.own_role_or_global_role
+}
+
+domain_role_domain_matches if {
+	input.existing.domain.id != null
+	input.credentials.domain_id == input.existing.domain.id
+	identity.own_role_or_global_role
+}
+
+# description: current domain scope matches the domain of the target domain,
+# the user and the role (or it is a global role).
+domain_user_role_domain_matches if {
+	input.target.user.domain_id != null
+	input.credentials.domain_id == input.target.user.domain_id
+	domain_role_domain_matches
+}
+
+domain_user_role_domain_matches if {
+	input.existing.user.domain_id != null
+	input.credentials.domain_id == input.existing.user.domain_id
+	domain_role_domain_matches
+}
+
+# description: current domain scope matches the domain of the target domain,
+# the group and the role (or it is a global role).
+domain_group_role_domain_matches if {
+	input.target.group.domain_id != null
+	input.credentials.domain_id == input.target.group.domain_id
+	domain_role_domain_matches
+}
+
+domain_group_role_domain_matches if {
+	input.existing.group.domain_id != null
+	input.credentials.domain_id == input.existing.group.domain_id
+	domain_role_domain_matches
+}
+
+# description: current domain scope matches the domain of the target project,
+# the group and the role (or it is a global role).
+project_group_role_domain_matches if {
+	input.target.group.domain_id != null
+	input.credentials.domain_id == input.target.group.domain_id
+	project_role_domain_matches
+}
+
+project_group_role_domain_matches if {
+	input.existing.group.domain_id != null
+	input.credentials.domain_id == input.existing.group.domain_id
+	project_role_domain_matches
+}
+
+# description: list requests carry no role; the current domain scope must
+# match the domain of the target domain and the user.
+domain_user_domain_matches if {
+	input.target.domain.id != null
+	input.credentials.domain_id == input.target.domain.id
+	input.target.user.domain_id != null
+	input.credentials.domain_id == input.target.user.domain_id
+}
+
+# description: list requests carry no role; the current domain scope must
+# match the domain of the target domain and the group.
+domain_group_domain_matches if {
+	input.target.domain.id != null
+	input.credentials.domain_id == input.target.domain.id
+	input.target.group.domain_id != null
+	input.credentials.domain_id == input.target.group.domain_id
+}
+
+# description: list requests carry no role; the current domain scope must
+# match the domain of the target project and the group.
+project_group_domain_matches if {
+	input.target.project.domain_id != null
+	input.credentials.domain_id == input.target.project.domain_id
+	input.target.group.domain_id != null
+	input.credentials.domain_id == input.target.group.domain_id
+}

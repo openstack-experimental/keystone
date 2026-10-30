@@ -26,6 +26,7 @@ mod api_v4 {
     mod observability;
     mod role;
     mod role_assignment;
+    mod role_assignment_actor_scope;
     mod scim_realm;
     mod service_grant;
     mod token_restriction;

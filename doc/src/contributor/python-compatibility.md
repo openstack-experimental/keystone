@@ -44,7 +44,8 @@ regressions.
 | Project tags | `/v3/projects/{project_id}/tags`, `tags`/`tags-any`/`not-tags`/`not-tags-any` filters of `GET /v3/projects` | Done — read allowed for the project's own scope, write needs admin or domain manager; tags are unique case-insensitively and the filters ignore case, so behaviour does not depend on the database collation |
 | Application credentials (v3.10) | `/v3/users/{user_id}/application_credentials` | Missing |
 | Access rules (v3.13) | `/v3/users/{user_id}/access_rules` | Missing |
-| System role assignments | `/v3/system/users/{user_id}/roles`, `.../roles/{role_id}` | Partial — user grants (`GET`/`HEAD`/`PUT`/`DELETE`) implemented; the `/v3/system/groups/{group_id}/roles*` variants are missing |
+| System role assignments | `/v3/system/users/{user_id}/roles*`, `/v3/system/groups/{group_id}/roles*` | Done — `GET`/`HEAD`/`PUT`/`DELETE` for users and groups |
+| Domain and project role assignments | `/v3/domains/{domain_id}/users/{user_id}/roles*`, `/v3/domains/{domain_id}/groups/{group_id}/roles*`, `/v3/projects/{project_id}/users/{user_id}/roles*`, `/v3/projects/{project_id}/groups/{group_id}/roles*` | Done — `GET`/`HEAD`/`PUT`/`DELETE` for user and group grants (no `OS-INHERIT` variants) |
 | Project hierarchy | `/v3/projects/{project_id}/parents`, `.../subtree` | Missing |
 | OS-INHERIT role inference list | `/v3/role_inferences` | Done |
 | OS-TRUST | `/v3/OS-TRUST/trusts` | Partial — create/get/list/delete; no `PATCH` (python has none either). Missing `/{id}/roles` sub-resource and response `links.self` (#1082) |
