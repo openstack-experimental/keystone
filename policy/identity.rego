@@ -175,3 +175,14 @@ is_system_admin if {
 	"admin" in input.credentials.roles
 	input.credentials.system == "all"
 }
+
+# Roles a domain manager is allowed to delegate (mirrors the Python Keystone
+# `domain_managed_target_role` rule): only manager, member and reader.
+# For grant/revoke the role is in input.target.role (or input.existing.role).
+domain_managed_target_role if {
+	input.target.role.name in {"manager", "member", "reader"}
+}
+
+domain_managed_target_role if {
+	input.existing.role.name in {"manager", "member", "reader"}
+}

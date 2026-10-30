@@ -11,20 +11,13 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-use utoipa_axum::{router::OpenApiRouter, routes};
+//! # Domain group role assignments API
+use utoipa_axum::router::OpenApiRouter;
 
 use crate::keystone::ServiceState;
 
-pub mod types;
-
-mod list;
-mod project;
-mod system;
+mod role;
 
 pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
-    OpenApiRouter::new()
-        .routes(routes!(list::list))
-        .merge(project::openapi_router())
-        .merge(system::openapi_router())
+    OpenApiRouter::new().merge(role::openapi_router())
 }

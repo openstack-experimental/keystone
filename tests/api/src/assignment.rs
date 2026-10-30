@@ -843,6 +843,66 @@ pub mod v4 {
         .await?)
     }
 
+    fn actor_role_path(scope: &str, scope_id: &str, actor: &str, actor_id: &str) -> String {
+        format!("{scope}s/{scope_id}/{actor}s/{actor_id}/roles")
+    }
+
+    /// `PUT /v4/{scope}s/{scope_id}/{actor}s/{actor_id}/roles/{role_id}` for
+    /// `scope` in `domain|project` and `actor` in `user|group`.
+    pub async fn grant_actor_role_v4(
+        client: &Arc<AsyncOpenStack>,
+        scope: &str,
+        scope_id: &str,
+        actor: &str,
+        actor_id: &str,
+        role_id: &str,
+    ) -> Result<()> {
+        let path = actor_role_path(scope, scope_id, actor, actor_id);
+        ignore_v4(client, http::Method::PUT, format!("{path}/{role_id}")).await
+    }
+
+    /// `HEAD /v4/{scope}s/{scope_id}/{actor}s/{actor_id}/roles/{role_id}`.
+    pub async fn check_actor_role_v4(
+        client: &Arc<AsyncOpenStack>,
+        scope: &str,
+        scope_id: &str,
+        actor: &str,
+        actor_id: &str,
+        role_id: &str,
+    ) -> Result<()> {
+        let path = actor_role_path(scope, scope_id, actor, actor_id);
+        ignore_v4(client, http::Method::HEAD, format!("{path}/{role_id}")).await
+    }
+
+    /// `DELETE /v4/{scope}s/{scope_id}/{actor}s/{actor_id}/roles/{role_id}`.
+    pub async fn revoke_actor_role_v4(
+        client: &Arc<AsyncOpenStack>,
+        scope: &str,
+        scope_id: &str,
+        actor: &str,
+        actor_id: &str,
+        role_id: &str,
+    ) -> Result<()> {
+        let path = actor_role_path(scope, scope_id, actor, actor_id);
+        ignore_v4(client, http::Method::DELETE, format!("{path}/{role_id}")).await
+    }
+
+    /// `GET /v4/{scope}s/{scope_id}/{actor}s/{actor_id}/roles`.
+    pub async fn list_actor_roles_v4(
+        client: &Arc<AsyncOpenStack>,
+        scope: &str,
+        scope_id: &str,
+        actor: &str,
+        actor_id: &str,
+    ) -> Result<Vec<Role>> {
+        Ok(RoleAssignmentV4ListRequest {
+            endpoint: actor_role_path(scope, scope_id, actor, actor_id),
+            response_key: "roles",
+        }
+        .query_async(client.as_ref())
+        .await?)
+    }
+
     /// `GET /v4/role_assignments`.
     pub async fn list_role_assignments_v4(client: &Arc<AsyncOpenStack>) -> Result<Vec<Assignment>> {
         Ok(RoleAssignmentV4ListRequest {
