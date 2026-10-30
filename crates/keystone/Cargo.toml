@@ -111,7 +111,7 @@ tracing-subscriber.workspace = true
 url = { workspace = true, features = ["serde"] }
 utoipa = { workspace = true, features = ["axum_extras", "yaml"] }
 utoipa-axum.workspace = true
-utoipa-swagger-ui = { workspace = true, features = ["axum", "vendored"] }
+utoipa-swagger-ui = { workspace = true, optional = true, features = ["axum", "vendored"] }
 uuid = { workspace = true, features = ["v4"] }
 validator = { workspace = true, features = ["derive"] }
 
@@ -159,6 +159,9 @@ fips = [
   "openstack-keystone-distributed-storage/fips",
   "cadf/fips",
 ]
+# Embedded Swagger UI served at `/swagger-ui`. Off by default; the OpenAPI
+# document at `/api-docs/openapi.json` is always served.
+swagger-ui = ["dep:utoipa-swagger-ui"]
 openfga = ["dep:openstack-keystone-assignment-driver-openfga"]
 # RFC 5424 syslog audit sink (`[audit] sink = { type = "syslog", .. }`).
 audit-syslog = ["cadf/syslog"]

@@ -34,6 +34,7 @@ use tower_http::{
     trace::{DefaultOnRequest, TraceLayer},
 };
 use tracing::{Level, info, info_span};
+#[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
 
@@ -93,7 +94,7 @@ pub async fn build(
     let span_options = options_from_config(&*state.config_manager.config.read().await);
     app = apply_middleware(app, state, span_options);
     let (app, http_metrics) = attach_http_metrics(app, state).await;
-    Ok((finalize(app, openapi), http_metrics))
+    Ok((finalize(app, openapi)?, http_metrics))
 }
 
 /// Gate the OAuth2 provider routes (`/v4/oauth2/{domain_id}/...`).
@@ -280,11 +281,28 @@ async fn attach_http_metrics(
 
 /// Wrap the assembled app in `NormalizePathLayer` and mount Swagger UI
 /// outside that boundary (see the module and [`build`] docs for why).
-fn finalize(app: Router, openapi: utoipa::openapi::OpenApi) -> Router {
+fn finalize(app: Router, openapi: utoipa::openapi::OpenApi) -> Result<Router, Report> {
     let normalized_app = NormalizePathLayer::trim_trailing_slash().layer(app);
-    Router::new()
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi))
-        .fallback_service(normalized_app)
+    #[cfg(feature = "swagger-ui")]
+    {
+        Ok(Router::new()
+            .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi))
+            .fallback_service(normalized_app))
+    }
+    #[cfg(not(feature = "swagger-ui"))]
+    {
+        // Serialize once; `Bytes` clones are reference-counted.
+        let body = axum::body::Bytes::from(serde_json::to_vec(&openapi)?);
+        Ok(Router::new()
+            .route(
+                "/api-docs/openapi.json",
+                axum::routing::get(move || {
+                    let body = body.clone();
+                    async move { ([(http::header::CONTENT_TYPE, "application/json")], body) }
+                }),
+            )
+            .fallback_service(normalized_app))
+    }
 }
 
 /// Apply the public-interface reverse-proxy header rewrite layer to `app`

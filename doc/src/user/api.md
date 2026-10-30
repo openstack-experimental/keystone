@@ -15,8 +15,8 @@ Keystone-NG handles a request. See [Compatibility](../getting-started/compatibil
 
 - [Swagger UI](../swagger-ui.html) provides the rendered API reference.
 - [OpenAPI YAML](../openapi.yaml) is the generated specification.
-- A running server exposes Swagger UI at `/swagger-ui/` and JSON at
-  `/api-docs/openapi.json`.
+- A running server exposes JSON at `/api-docs/openapi.json`, and Swagger UI at
+  `/swagger-ui/` when built with the `swagger-ui` cargo feature (off by default).
 
 The generated specification is authoritative for request fields, response
 fields, and status codes.

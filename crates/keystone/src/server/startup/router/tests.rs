@@ -36,6 +36,7 @@ async fn build_test_router(cfg: crate::config::Config) -> (Router, Option<Arc<Ht
 // "/swagger-ui" -> "/swagger-ui/" redirect into an infinite loop. `build`
 // keeps SwaggerUi outside the normalized service, so a direct request to
 // "/swagger-ui/" must resolve without another redirect.
+#[cfg(feature = "swagger-ui")]
 #[tokio::test]
 async fn build_router_serves_swagger_ui_without_redirect_loop() {
     let tmp = tempfile::tempdir().unwrap();
@@ -56,6 +57,33 @@ async fn build_router_serves_swagger_ui_without_redirect_loop() {
         http::StatusCode::OK,
         "expected swagger-ui to serve directly, not redirect (utoipa#1467 regression)"
     );
+}
+
+// The OpenAPI document is served with or without the `swagger-ui` feature.
+#[tokio::test]
+async fn build_router_serves_openapi_json() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, _http_metrics) = build_test_router(test_config(tmp.path().to_path_buf())).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api-docs/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), http::StatusCode::OK);
+    assert_eq!(
+        response.headers().get(http::header::CONTENT_TYPE).unwrap(),
+        "application/json"
+    );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let doc: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(doc.get("openapi").is_some(), "missing `openapi` version");
+    assert!(doc.get("paths").is_some(), "missing `paths`");
 }
 
 // Issue #734: a route registered without a trailing slash must still resolve
