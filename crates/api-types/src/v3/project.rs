@@ -255,6 +255,79 @@ pub struct ProjectResponse {
     pub project: Project,
 }
 
+/// Parameters controlling the hierarchy data returned together with a single
+/// project.
+///
+/// Every flag is considered set when the query parameter is present (with an
+/// empty value or any value other than `false` or `0`).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+pub struct ProjectShowParameters {
+    /// Return the list of the project parents (from the closest to the root).
+    /// Mutually exclusive with `parents_as_ids`.
+    pub parents_as_list: Option<String>,
+
+    /// Return the parents of the project as a nested object of the project
+    /// IDs. Mutually exclusive with `parents_as_list`.
+    pub parents_as_ids: Option<String>,
+
+    /// Return the list of all project descendants. Mutually exclusive with
+    /// `subtree_as_ids`.
+    pub subtree_as_list: Option<String>,
+
+    /// Return the descendants of the project as a nested object of the
+    /// project IDs. Mutually exclusive with `subtree_as_list`.
+    pub subtree_as_ids: Option<String>,
+}
+
+/// Single entry of the project hierarchy list.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ProjectHierarchyItem {
+    /// Project object.
+    pub project: Project,
+}
+
+/// Project relatives (parents or subtree).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(untagged)]
+pub enum ProjectHierarchy {
+    /// Flat list of the projects.
+    List(Vec<ProjectHierarchyItem>),
+
+    /// Nested object of the project IDs where leaves are `null`.
+    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
+    Ids(serde_json::Value),
+}
+
+/// Project with the optional hierarchy information.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ProjectWithHierarchy {
+    /// Project attributes.
+    #[serde(flatten)]
+    pub project: Project,
+
+    /// Parents of the project when requested with `parents_as_list` or
+    /// `parents_as_ids`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parents: Option<ProjectHierarchy>,
+
+    /// Descendants of the project when requested with `subtree_as_list` or
+    /// `subtree_as_ids`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtree: Option<ProjectHierarchy>,
+}
+
+/// Single project response with the optional hierarchy information.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ProjectHierarchyResponse {
+    /// Project object.
+    pub project: ProjectWithHierarchy,
+}
+
 /// New project creation request.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

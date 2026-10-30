@@ -45,7 +45,7 @@ regressions.
 | Application credentials (v3.10) | `/v3/users/{user_id}/application_credentials` | Missing |
 | Access rules (v3.13) | `/v3/users/{user_id}/access_rules` | Missing |
 | System role assignments | `/v3/system/users/{user_id}/roles`, `.../roles/{role_id}` | Partial — user grants (`GET`/`HEAD`/`PUT`/`DELETE`) implemented; the `/v3/system/groups/{group_id}/roles*` variants are missing |
-| Project hierarchy | `/v3/projects/{project_id}/parents`, `.../subtree` | Missing |
+| Project hierarchy | `GET /v3/projects/{project_id}?parents_as_list`, `parents_as_ids`, `subtree_as_list`, `subtree_as_ids` | Done — python keystone exposes the hierarchy as query parameters of the project show call (there are no `/parents` or `/subtree` URLs). Relatives are filtered with the per-project `show` policy. `DELETE ?cascade=true` is not yet implemented |
 | OS-INHERIT role inference list | `/v3/role_inferences` | Done |
 | OS-TRUST | `/v3/OS-TRUST/trusts` | Partial — create/get/list/delete; no `PATCH` (python has none either). Missing `/{id}/roles` sub-resource and response `links.self` (#1082) |
 | OAuth2 | `/v3/OS-OAUTH2/*` | Missing |

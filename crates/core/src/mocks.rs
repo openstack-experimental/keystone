@@ -1861,6 +1861,12 @@ mod resource {
                 domain_id: &'a str,
             ) -> Result<Option<Project>, ResourceProviderError>;
 
+            async fn get_project_subtree<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
+
             async fn list_domains<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
