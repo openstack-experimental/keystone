@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use validator::Validate;
 
 use crate::error::BuilderError;
@@ -69,6 +69,12 @@ pub struct Project {
     #[builder(default)]
     #[validate(length(min = 1, max = 64))]
     pub parent_id: Option<String>,
+
+    /// The tags of the project.
+    #[builder(default)]
+    #[serde(default)]
+    #[validate(custom(function = "validate_project_tags"))]
+    pub tags: Vec<String>,
 }
 
 /// New project data.
@@ -134,6 +140,11 @@ pub struct ProjectCreate {
     #[builder(default)]
     #[validate(length(min = 1, max = 64))]
     pub parent_id: Option<String>,
+
+    /// The tags of the project.
+    #[builder(default)]
+    #[validate(custom(function = "validate_project_tags"))]
+    pub tags: Vec<String>,
 }
 
 /// Project update data.
@@ -149,21 +160,70 @@ pub struct ProjectUpdate {
     #[builder(default)]
     pub enabled: Option<bool>,
 
-    /// New name. `None` = unchanged.
-    #[builder(default)]
-    #[validate(length(min = 1, max = 255))]
-    pub name: Option<String>,
-
     /// Additional project properties. The provider merges this into the
     /// existing `extra` before persisting; an empty map means unchanged.
     #[builder(default)]
     pub extra: HashMap<String, Value>,
+
+    /// New name. `None` = unchanged.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 255))]
+    pub name: Option<String>,
 
     /// The resource options for the project. `None` means unchanged; a field
     /// left `None` within `Some(ProjectOptions { .. })` also means unchanged.
     #[builder(default)]
     #[validate(nested)]
     pub options: Option<ProjectOptions>,
+
+    /// The new set of tags replacing the existing ones. `None` means
+    /// unchanged.
+    #[builder(default)]
+    #[validate(custom(function = "validate_project_tags"))]
+    pub tags: Option<Vec<String>>,
+}
+
+/// Maximum number of tags a single project may have.
+pub const MAX_PROJECT_TAGS: usize = 80;
+
+/// Maximum length of a single project tag.
+pub const MAX_PROJECT_TAG_LENGTH: usize = 255;
+
+/// Validate a single project tag.
+///
+/// Mirrors Python Keystone: the tag must be 1..=255 characters long and must
+/// not contain a `/` or a `,`.
+pub fn validate_project_tag(tag: &str) -> Result<(), validator::ValidationError> {
+    if tag.is_empty() || tag.chars().count() > MAX_PROJECT_TAG_LENGTH {
+        return Err(validator::ValidationError::new("project_tag_length"));
+    }
+    if tag.contains(['/', ',']) {
+        return Err(validator::ValidationError::new("project_tag_chars"));
+    }
+    Ok(())
+}
+
+/// Validate a set of project tags.
+///
+/// Every tag must be valid, the tags must be unique and there must be no more
+/// than [`MAX_PROJECT_TAGS`] of them.
+///
+/// Uniqueness is case-insensitive (`Foo` and `foo` are the same tag) so the
+/// outcome does not depend on the collation of the database: MySQL/MariaDB
+/// columns are typically case-insensitive while PostgreSQL and SQLite are
+/// case-sensitive.
+pub fn validate_project_tags(tags: &[String]) -> Result<(), validator::ValidationError> {
+    if tags.len() > MAX_PROJECT_TAGS {
+        return Err(validator::ValidationError::new("project_tag_count"));
+    }
+    let mut seen = HashSet::with_capacity(tags.len());
+    for tag in tags {
+        validate_project_tag(tag)?;
+        if !seen.insert(tag.to_lowercase()) {
+            return Err(validator::ValidationError::new("project_tag_duplicate"));
+        }
+    }
+    Ok(())
 }
 
 /// Resource options for a project.
@@ -190,6 +250,10 @@ pub struct ProjectListParameters {
     #[validate(length(max = 64))]
     pub domain_id: Option<String>,
 
+    /// Filter projects by the `enabled` flag.
+    #[builder(default)]
+    pub enabled: Option<bool>,
+
     /// Filter projects by the id attribute. Items are treated as `IN[]`.
     #[builder(default)]
     #[validate(length(min = 1, max = 64))]
@@ -200,11 +264,45 @@ pub struct ProjectListParameters {
     #[validate(length(max = 255))]
     pub name: Option<String>,
 
-    /// Filter projects by the `enabled` flag.
+    /// Exclude projects carrying all of the tags.
     #[builder(default)]
-    pub enabled: Option<bool>,
+    pub not_tags: Option<BTreeSet<String>>,
+
+    /// Exclude projects carrying at least one of the tags.
+    #[builder(default)]
+    pub not_tags_any: Option<BTreeSet<String>>,
 
     /// Pagination controls (limit/marker/page_reverse).
     #[builder(default)]
     pub pagination: crate::ListPagination,
+
+    /// Return only projects carrying all of the tags.
+    #[builder(default)]
+    pub tags: Option<BTreeSet<String>>,
+
+    /// Return only projects carrying at least one of the tags.
+    #[builder(default)]
+    pub tags_any: Option<BTreeSet<String>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_project_tags() {
+        assert!(validate_project_tags(&[]).is_ok());
+        assert!(validate_project_tags(&["a".into(), "b c".into()]).is_ok());
+        assert!(validate_project_tags(&["".into()]).is_err());
+        assert!(validate_project_tags(&["a/b".into()]).is_err());
+        assert!(validate_project_tags(&["a,b".into()]).is_err());
+        assert!(validate_project_tags(&["a".repeat(MAX_PROJECT_TAG_LENGTH)]).is_ok());
+        assert!(validate_project_tags(&["a".repeat(MAX_PROJECT_TAG_LENGTH + 1)]).is_err());
+        assert!(validate_project_tags(&["a".into(), "a".into()]).is_err());
+        assert!(validate_project_tags(&["Foo".into(), "foo".into()]).is_err());
+        assert!(validate_project_tags(&["Foo".into(), "bar".into()]).is_ok());
+        let many: Vec<String> = (0..=MAX_PROJECT_TAGS).map(|i| i.to_string()).collect();
+        assert!(validate_project_tags(&many).is_err());
+        assert!(validate_project_tags(&many[..MAX_PROJECT_TAGS]).is_ok());
+    }
 }

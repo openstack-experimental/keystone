@@ -644,6 +644,7 @@ mod tests {
     fn project_scope_is_never_domain_scoped() {
         let vsc = vsc_with_scope(ScopeInfo::Project {
             project: openstack_keystone_core_types::resource::Project {
+                tags: Default::default(),
                 id: "project-1".to_string(),
                 domain_id: "domain-1".to_string(),
                 name: String::new(),

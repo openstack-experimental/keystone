@@ -10,6 +10,8 @@ import data.identity
 #   domain_id: string (optional)  Filter projects by domain ID.
 #   ids:       string (optional)  Filter projects by ID.
 #   name:      string (optional)  Filter projects by name.
+#   tags, tags-any, not-tags, not-tags-any: string (optional)
+#              Comma-separated tag filters.
 #
 # The `input.existing` is null
 #

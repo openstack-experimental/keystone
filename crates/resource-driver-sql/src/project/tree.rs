@@ -47,7 +47,11 @@ pub async fn get_project_parents<I: AsRef<str>>(
         if let Some(p) = &project
             && pid != id.as_ref()
         {
-            res.push(p.clone().try_into()?);
+            let mut parent: Project = p.clone().try_into()?;
+            if !p.is_domain {
+                parent.tags = crate::project_tag::list_by_project_id(db, &p.id).await?;
+            }
+            res.push(parent);
         }
         project_id = project.and_then(|project| project.parent_id);
     }
@@ -87,13 +91,20 @@ mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_mock("3", Some("2"))]])
             .append_query_results([vec![get_mock("2", Some("1"))]])
+            .append_query_results([vec![crate::entity::project_tag::Model {
+                project_id: "2".into(),
+                name: "tag".into(),
+            }]])
             .append_query_results([vec![get_mock("1", Some("domain_id"))]])
+            .append_query_results([Vec::<crate::entity::project_tag::Model>::new()])
             .append_query_results([vec![get_mock("domain_id", None::<&str>)]])
+            .append_query_results([Vec::<crate::entity::project_tag::Model>::new()])
             .into_connection();
         assert_eq!(
             get_project_parents(&db, "3").await.unwrap().unwrap(),
             vec![
                 Project {
+                    tags: vec!["tag".to_string()],
                     id: "2".into(),
                     parent_id: Some("1".into()),
                     name: "project_name".into(),
@@ -105,6 +116,7 @@ mod tests {
                     options: Default::default(),
                 },
                 Project {
+                    tags: Default::default(),
                     id: "1".into(),
                     parent_id: Some("domain_id".into()),
                     name: "project_name".into(),
@@ -116,6 +128,7 @@ mod tests {
                     options: Default::default(),
                 },
                 Project {
+                    tags: Default::default(),
                     id: "domain_id".into(),
                     parent_id: None,
                     name: "project_name".into(),
@@ -144,13 +157,28 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
+                    r#"SELECT "project_tag"."project_id", "project_tag"."name" FROM "project_tag" WHERE "project_tag"."project_id" = $1 ORDER BY "project_tag"."name" ASC"#,
+                    ["2".into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
                     r#"SELECT "project"."id", "project"."name", "project"."extra", "project"."description", "project"."enabled", "project"."domain_id", "project"."parent_id", "project"."is_domain" FROM "project" WHERE "project"."id" = $1 LIMIT $2"#,
                     ["1".into(), 1u64.into()]
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
+                    r#"SELECT "project_tag"."project_id", "project_tag"."name" FROM "project_tag" WHERE "project_tag"."project_id" = $1 ORDER BY "project_tag"."name" ASC"#,
+                    ["1".into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
                     r#"SELECT "project"."id", "project"."name", "project"."extra", "project"."description", "project"."enabled", "project"."domain_id", "project"."parent_id", "project"."is_domain" FROM "project" WHERE "project"."id" = $1 LIMIT $2"#,
                     ["domain_id".into(), 1u64.into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "project_tag"."project_id", "project_tag"."name" FROM "project_tag" WHERE "project_tag"."project_id" = $1 ORDER BY "project_tag"."name" ASC"#,
+                    ["domain_id".into()]
                 ),
             ]
         );

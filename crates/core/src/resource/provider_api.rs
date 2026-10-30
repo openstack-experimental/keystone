@@ -22,19 +22,6 @@ use crate::resource::ResourceProviderError;
 /// Resource API.
 #[async_trait]
 pub trait ResourceApi: Send + Sync {
-    /// Check whether the domain is enabled.
-    ///
-    /// * `state` - The current service state.
-    /// * `domain_id` - The ID of the domain.
-    ///
-    /// A `Result` containing a `bool` indicating whether the domain is enabled,
-    /// or an `Error`.
-    async fn get_domain_enabled<'a>(
-        &self,
-        ctx: &ExecutionContext<'a>,
-        domain_id: &'a str,
-    ) -> Result<bool, ResourceProviderError>;
-
     /// Create a new domain.
     ///
     /// * `state` - The current service state.
@@ -59,33 +46,17 @@ pub trait ResourceApi: Send + Sync {
         project: ProjectCreate,
     ) -> Result<Project, ResourceProviderError>;
 
-    /// Update a domain.
+    /// Add a single tag to a project. Adding an existing tag is a no-op.
     ///
-    /// * `state` - The current service state.
-    /// * `domain_id` - The ID of the domain to update.
-    /// * `domain` - The fields to change.
-    ///
-    /// A `Result` containing the updated `Domain`, or an `Error`.
-    async fn update_domain<'a>(
-        &self,
-        ctx: &ExecutionContext<'a>,
-        domain_id: &'a str,
-        domain: DomainUpdate,
-    ) -> Result<Domain, ResourceProviderError>;
-
-    /// Update a project.
-    ///
-    /// * `state` - The current service state.
-    /// * `project_id` - The ID of the project to update.
-    /// * `project` - The fields to change.
-    ///
-    /// A `Result` containing the updated `Project`, or an `Error`.
-    async fn update_project<'a>(
+    /// * `ctx` - The execution context.
+    /// * `project_id` - The ID of the project.
+    /// * `tag` - The tag to add.
+    async fn create_project_tag<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
         project_id: &'a str,
-        project: ProjectUpdate,
-    ) -> Result<Project, ResourceProviderError>;
+        tag: &'a str,
+    ) -> Result<(), ResourceProviderError>;
 
     /// Delete a domain by the ID.
     ///
@@ -111,6 +82,34 @@ pub trait ResourceApi: Send + Sync {
         id: &'a str,
     ) -> Result<(), ResourceProviderError>;
 
+    /// Delete a single tag from a project.
+    ///
+    /// * `ctx` - The execution context.
+    /// * `project_id` - The ID of the project.
+    /// * `tag` - The tag to delete.
+    ///
+    /// `ProjectTagNotFound` is returned when the project does not carry the
+    /// tag.
+    async fn delete_project_tag<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+        tag: &'a str,
+    ) -> Result<(), ResourceProviderError>;
+
+    /// Find domain by the `name`.
+    ///
+    /// * `state` - The current service state.
+    /// * `domain_name` - The name of the domain.
+    ///
+    /// A `Result` containing an `Option` with the `Domain` if found, or an
+    /// `Error`.
+    async fn find_domain_by_name<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_name: &'a str,
+    ) -> Result<Option<Domain>, ResourceProviderError>;
+
     /// Get a domain by the `id`.
     ///
     /// * `state` - The current service state.
@@ -123,6 +122,19 @@ pub trait ResourceApi: Send + Sync {
         ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
     ) -> Result<Option<Domain>, ResourceProviderError>;
+
+    /// Check whether the domain is enabled.
+    ///
+    /// * `state` - The current service state.
+    /// * `domain_id` - The ID of the domain.
+    ///
+    /// A `Result` containing a `bool` indicating whether the domain is enabled,
+    /// or an `Error`.
+    async fn get_domain_enabled<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+    ) -> Result<bool, ResourceProviderError>;
 
     /// Get a project by the `id`.
     ///
@@ -165,19 +177,6 @@ pub trait ResourceApi: Send + Sync {
         project_id: &'a str,
     ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
 
-    /// Find domain by the `name`.
-    ///
-    /// * `state` - The current service state.
-    /// * `domain_name` - The name of the domain.
-    ///
-    /// A `Result` containing an `Option` with the `Domain` if found, or an
-    /// `Error`.
-    async fn find_domain_by_name<'a>(
-        &self,
-        ctx: &ExecutionContext<'a>,
-        domain_name: &'a str,
-    ) -> Result<Option<Domain>, ResourceProviderError>;
-
     /// List domains.
     ///
     /// * `state` - The current service state.
@@ -190,6 +189,19 @@ pub trait ResourceApi: Send + Sync {
         params: &DomainListParameters,
     ) -> Result<Vec<Domain>, ResourceProviderError>;
 
+    /// List the tags of a project.
+    ///
+    /// * `ctx` - The execution context.
+    /// * `project_id` - The ID of the project.
+    ///
+    /// A `Result` containing the sorted tags, or an `Error`
+    /// (`ProjectNotFound` when the project does not exist).
+    async fn list_project_tags<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+    ) -> Result<Vec<String>, ResourceProviderError>;
+
     /// List projects.
     ///
     /// * `state` - The current service state.
@@ -201,4 +213,46 @@ pub trait ResourceApi: Send + Sync {
         ctx: &ExecutionContext<'a>,
         params: &ProjectListParameters,
     ) -> Result<Vec<Project>, ResourceProviderError>;
+
+    /// Replace all tags of a project. An empty set removes all tags.
+    ///
+    /// * `ctx` - The execution context.
+    /// * `project_id` - The ID of the project.
+    /// * `tags` - The new set of tags.
+    ///
+    /// A `Result` containing the resulting sorted tags, or an `Error`.
+    async fn replace_project_tags<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+        tags: Vec<String>,
+    ) -> Result<Vec<String>, ResourceProviderError>;
+
+    /// Update a domain.
+    ///
+    /// * `state` - The current service state.
+    /// * `domain_id` - The ID of the domain to update.
+    /// * `domain` - The fields to change.
+    ///
+    /// A `Result` containing the updated `Domain`, or an `Error`.
+    async fn update_domain<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+        domain: DomainUpdate,
+    ) -> Result<Domain, ResourceProviderError>;
+
+    /// Update a project.
+    ///
+    /// * `state` - The current service state.
+    /// * `project_id` - The ID of the project to update.
+    /// * `project` - The fields to change.
+    ///
+    /// A `Result` containing the updated `Project`, or an `Error`.
+    async fn update_project<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+        project: ProjectUpdate,
+    ) -> Result<Project, ResourceProviderError>;
 }

@@ -16,4 +16,5 @@ mod create;
 mod delete;
 mod get;
 mod list;
+mod tags;
 mod update;

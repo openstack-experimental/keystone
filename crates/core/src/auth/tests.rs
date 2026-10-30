@@ -72,6 +72,7 @@ fn make_user_identity(user_id: impl Into<String>) -> PrincipalInfo {
 fn make_project(pid: impl Into<String>) -> Project {
     let pid = pid.into();
     Project {
+        tags: Default::default(),
         id: pid.clone(),
         domain_id: "d1".to_string(),
         enabled: true,
@@ -186,6 +187,7 @@ fn disabled_domain_scope(did: impl Into<String>) -> ScopeInfo {
 fn disabled_project_scope(pid: impl Into<String>) -> ScopeInfo {
     ScopeInfo::Project {
         project: Project {
+            tags: Default::default(),
             id: pid.into(),
             domain_id: "d1".to_string(),
             enabled: false,
@@ -210,6 +212,7 @@ fn disabled_project_scope(pid: impl Into<String>) -> ScopeInfo {
 fn disabled_project_domain_scope(pid: impl Into<String>) -> ScopeInfo {
     ScopeInfo::Project {
         project: Project {
+            tags: Default::default(),
             id: pid.into(),
             domain_id: "d1".to_string(),
             enabled: true,
@@ -253,6 +256,7 @@ fn disabled_trust_scope(
             roles,
         },
         project: Project {
+            tags: Default::default(),
             id: project.to_string(),
             domain_id: "d1".to_string(),
             enabled: false,
@@ -296,6 +300,7 @@ fn disabled_trust_project_domain_scope(
             roles,
         },
         project: Project {
+            tags: Default::default(),
             id: project.to_string(),
             domain_id: "d1".to_string(),
             enabled: true,

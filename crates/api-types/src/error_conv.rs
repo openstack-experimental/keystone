@@ -422,7 +422,12 @@ impl From<ResourceProviderError> for KeystoneApiError {
                 resource: "project".into(),
                 identifier: x,
             },
+            ResourceProviderError::ProjectTagNotFound { project_id, tag } => Self::NotFound {
+                resource: "project tag".into(),
+                identifier: format!("{project_id}/{tag}"),
+            },
             ResourceProviderError::InvalidProjectDomain(x) => Self::BadRequest(x),
+            ref err @ ResourceProviderError::Validation { .. } => Self::BadRequest(err.to_string()),
             err @ (ResourceProviderError::Immutable(..)
             | ResourceProviderError::DomainEnabled(..)) => Self::forbidden(err),
             other => Self::InternalError(other.to_string()),

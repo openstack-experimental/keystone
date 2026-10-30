@@ -23,21 +23,6 @@ use crate::resource::ResourceProviderError;
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait ResourceBackend: Send + Sync {
-    /// Get `enabled` field of the domain.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `domain_id`: The ID of the domain.
-    ///
-    /// # Returns
-    /// - `Result<bool, ResourceProviderError>` - Whether the domain is enabled
-    ///   or an error.
-    async fn get_domain_enabled<'a>(
-        &self,
-        state: &ServiceState,
-        domain_id: &'a str,
-    ) -> Result<bool, ResourceProviderError>;
-
     /// Create a new domain.
     ///
     /// # Parameters
@@ -68,39 +53,18 @@ pub trait ResourceBackend: Send + Sync {
         project: ProjectCreate,
     ) -> Result<Project, ResourceProviderError>;
 
-    /// Update a domain.
+    /// Add a single tag to a project. Adding an existing tag is a no-op.
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `domain_id`: The ID of the domain to update.
-    /// - `domain`: The fields to change.
-    ///
-    /// # Returns
-    /// - `Result<Domain, ResourceProviderError>` - The updated `Domain` or an
-    ///   error.
-    async fn update_domain<'a>(
-        &self,
-        state: &ServiceState,
-        domain_id: &'a str,
-        domain: DomainUpdate,
-    ) -> Result<Domain, ResourceProviderError>;
-
-    /// Update a project.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `project_id`: The ID of the project to update.
-    /// - `project`: The fields to change.
-    ///
-    /// # Returns
-    /// - `Result<Project, ResourceProviderError>` - The updated `Project` or an
-    ///   error.
-    async fn update_project<'a>(
+    /// - `project_id`: The ID of the project.
+    /// - `tag`: The tag to add.
+    async fn create_project_tag<'a>(
         &self,
         state: &ServiceState,
         project_id: &'a str,
-        project: ProjectUpdate,
-    ) -> Result<Project, ResourceProviderError>;
+        tag: &'a str,
+    ) -> Result<(), ResourceProviderError>;
 
     /// Delete a domain by the ID.
     ///
@@ -132,6 +96,22 @@ pub trait ResourceBackend: Send + Sync {
         id: &'a str,
     ) -> Result<(), ResourceProviderError>;
 
+    /// Delete a single tag from a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    /// - `tag`: The tag to delete.
+    ///
+    /// # Returns
+    /// - `ProjectTagNotFound` when the project does not carry the tag.
+    async fn delete_project_tag<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        tag: &'a str,
+    ) -> Result<(), ResourceProviderError>;
+
     /// Get a single domain by ID.
     ///
     /// # Parameters
@@ -161,6 +141,21 @@ pub trait ResourceBackend: Send + Sync {
         state: &ServiceState,
         domain_name: &'a str,
     ) -> Result<Option<Domain>, ResourceProviderError>;
+
+    /// Get `enabled` field of the domain.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `domain_id`: The ID of the domain.
+    ///
+    /// # Returns
+    /// - `Result<bool, ResourceProviderError>` - Whether the domain is enabled
+    ///   or an error.
+    async fn get_domain_enabled<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+    ) -> Result<bool, ResourceProviderError>;
 
     /// Get a single project by ID.
     ///
@@ -224,6 +219,21 @@ pub trait ResourceBackend: Send + Sync {
         params: &DomainListParameters,
     ) -> Result<Vec<Domain>, ResourceProviderError>;
 
+    /// List the tags of a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    ///
+    /// # Returns
+    /// - `Result<Vec<String>, ResourceProviderError>` - The sorted tags or an
+    ///   error (`ProjectNotFound` when the project does not exist).
+    async fn list_project_tags<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Vec<String>, ResourceProviderError>;
+
     /// List projects.
     ///
     /// # Parameters
@@ -238,4 +248,55 @@ pub trait ResourceBackend: Send + Sync {
         state: &ServiceState,
         params: &ProjectListParameters,
     ) -> Result<Vec<Project>, ResourceProviderError>;
+
+    /// Replace all tags of a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    /// - `tags`: The new set of tags. An empty set removes all tags.
+    ///
+    /// # Returns
+    /// - `Result<Vec<String>, ResourceProviderError>` - The resulting sorted
+    ///   tags or an error.
+    async fn replace_project_tags<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        tags: Vec<String>,
+    ) -> Result<Vec<String>, ResourceProviderError>;
+
+    /// Update a domain.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `domain_id`: The ID of the domain to update.
+    /// - `domain`: The fields to change.
+    ///
+    /// # Returns
+    /// - `Result<Domain, ResourceProviderError>` - The updated `Domain` or an
+    ///   error.
+    async fn update_domain<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        domain: DomainUpdate,
+    ) -> Result<Domain, ResourceProviderError>;
+
+    /// Update a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project to update.
+    /// - `project`: The fields to change.
+    ///
+    /// # Returns
+    /// - `Result<Project, ResourceProviderError>` - The updated `Project` or an
+    ///   error.
+    async fn update_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        project: ProjectUpdate,
+    ) -> Result<Project, ResourceProviderError>;
 }

@@ -183,6 +183,7 @@ mod tests {
             .returning(|_exec, _| {
                 Ok(vec![
                     ProviderProject {
+                        tags: Default::default(),
                         description: None,
                         domain_id: "did".into(),
                         enabled: true,
@@ -194,6 +195,7 @@ mod tests {
                         options: Default::default(),
                     },
                     ProviderProject {
+                        tags: Default::default(),
                         description: None,
                         domain_id: "did".into(),
                         enabled: true,

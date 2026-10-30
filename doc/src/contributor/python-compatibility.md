@@ -41,7 +41,7 @@ regressions.
 | Policies (legacy blob store) | `/v3/policies` (CRUD) | Done (#1035) — tempest verified, see below |
 | Unified limits | `/v3/registered_limits` (CRUD, batch create), `/v3/limits` (CRUD, batch create), `/v3/limits/model` | Done (#1091) |
 | Group membership | `GET /v3/groups/{group_id}/users`, `HEAD`/`PUT`/`DELETE /v3/groups/{group_id}/users/{user_id}` | Done — SQL and LDAP (read-only) drivers; the list filters by `name`, `domain_id`, `enabled`, `unique_id` (no `password_expires_at`) |
-| Project tags | `/v3/projects/{project_id}/tags` | Missing |
+| Project tags | `/v3/projects/{project_id}/tags`, `tags`/`tags-any`/`not-tags`/`not-tags-any` filters of `GET /v3/projects` | Done — read allowed for the project's own scope, write needs admin or domain manager; tags are unique case-insensitively and the filters ignore case, so behaviour does not depend on the database collation |
 | Application credentials (v3.10) | `/v3/users/{user_id}/application_credentials` | Missing |
 | Access rules (v3.13) | `/v3/users/{user_id}/access_rules` | Missing |
 | System role assignments | `/v3/system/users/{user_id}/roles`, `.../roles/{role_id}` | Partial — user grants (`GET`/`HEAD`/`PUT`/`DELETE`) implemented; the `/v3/system/groups/{group_id}/roles*` variants are missing |

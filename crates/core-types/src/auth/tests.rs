@@ -68,6 +68,7 @@ fn make_principal(uid: &str) -> PrincipalInfo {
 
 fn make_project() -> Project {
     Project {
+        tags: Default::default(),
         id: "pid".into(),
         domain_id: "did".into(),
         enabled: true,
@@ -327,6 +328,7 @@ fn make_trust_with_roles(roles: Option<Vec<RoleRef>>) -> SecurityContext {
             scope: ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
                 trust: make_trust("uid"),
                 project: Project {
+                    tags: Default::default(),
                     id: "project_id".into(),
                     domain_id: "domain_id".into(),
                     enabled: true,

@@ -46,6 +46,7 @@ pub async fn get_project<I: AsRef<str>>(
         Some(model) => {
             let mut project: Project = model.try_into()?;
             project.options = crate::project_option::list_by_project_id(db, &project.id).await?;
+            project.tags = crate::project_tag::list_by_project_id(db, &project.id).await?;
             Ok(Some(project))
         }
         None => Ok(None),
@@ -80,6 +81,7 @@ pub async fn get_project_by_name<N: AsRef<str>, D: AsRef<str>>(
         Some(model) => {
             let mut project: Project = model.try_into()?;
             project.options = crate::project_option::list_by_project_id(db, &project.id).await?;
+            project.tags = crate::project_tag::list_by_project_id(db, &project.id).await?;
             Ok(Some(project))
         }
         None => Ok(None),
@@ -103,10 +105,15 @@ mod tests {
                 option_id: "IMMU".into(),
                 option_value: Some("true".into()),
             }]])
+            .append_query_results([vec![crate::entity::project_tag::Model {
+                project_id: "1".into(),
+                name: "a".into(),
+            }]])
             .into_connection();
 
         let project = get_project(&db, "1").await.unwrap().unwrap();
         assert_eq!(project.options.immutable, Some(true));
+        assert_eq!(project.tags, vec!["a".to_string()]);
     }
 
     #[tokio::test]
