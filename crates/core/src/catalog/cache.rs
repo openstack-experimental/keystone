@@ -15,7 +15,7 @@
 //!
 //! The assembled service catalog is embedded into every token response, is
 //! small and changes rarely. [`CatalogCache`] keeps the result of
-//! `get_catalog` in memory for a bounded time (`[catalog] cache_ttl`).
+//! `get_catalog` in memory for a bounded time (`[catalog] cache_time`, when `[catalog] caching` is enabled).
 //!
 //! Local mutations call [`CatalogCache::invalidate`], so changes made through
 //! this process are visible immediately. Changes made elsewhere (other

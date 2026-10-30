@@ -50,7 +50,11 @@ impl CatalogService {
         let backend_driver = plugin_manager
             .get_catalog_backend(config.catalog.driver.clone())?
             .clone();
-        let cache = CatalogCache::new(Duration::from_secs(config.catalog.cache_ttl));
+        let cache = CatalogCache::new(if config.catalog.caching {
+            Duration::from_secs(config.catalog.cache_time)
+        } else {
+            Duration::ZERO
+        });
         Ok(Self {
             backend_driver,
             cache,
