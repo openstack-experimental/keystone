@@ -104,6 +104,7 @@ mod tests {
         let mut resource_mock = MockResourceProvider::default();
         resource_mock.expect_create_project().returning(|_, _| {
             Ok(ProviderProject {
+                tags: Default::default(),
                 description: Some("A new project".into()),
                 domain_id: "did".into(),
                 enabled: true,
@@ -153,6 +154,7 @@ mod tests {
         let res: ProjectResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(
             Project {
+                tags: Default::default(),
                 description: Some("A new project".into()),
                 domain_id: "did".into(),
                 enabled: true,

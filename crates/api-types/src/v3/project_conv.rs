@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Project API types.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use openstack_keystone_core_types::resource as provider_types;
 
@@ -74,6 +74,7 @@ impl From<provider_types::Project> for api_types::Project {
             name: value.name,
             options: opts.immutable.is_some().then_some(opts),
             parent_id: value.parent_id,
+            tags: value.tags,
         }
     }
 }
@@ -90,6 +91,7 @@ impl From<api_types::ProjectCreate> for provider_types::ProjectCreate {
             name: value.name,
             options: value.options.map(Into::into),
             parent_id: value.parent_id,
+            tags: value.tags,
         }
     }
 }
@@ -103,6 +105,7 @@ impl From<api_types::ProjectUpdateRequest> for provider_types::ProjectUpdate {
             extra: project.extra,
             name: project.name,
             options: project.options.map(Into::into),
+            tags: project.tags,
         }
     }
 }
@@ -114,7 +117,16 @@ impl From<api_types::ProjectListParameters> for provider_types::ProjectListParam
             ids: value.ids.map(|s| HashSet::from([s])),
             name: value.name,
             enabled: value.enabled,
+            tags: parse_tag_filter(value.tags),
+            tags_any: parse_tag_filter(value.tags_any),
+            not_tags: parse_tag_filter(value.not_tags),
+            not_tags_any: parse_tag_filter(value.not_tags_any),
             pagination: Default::default(),
         }
     }
+}
+
+/// Split a comma-separated tag filter into a set of tags.
+fn parse_tag_filter(value: Option<String>) -> Option<BTreeSet<String>> {
+    value.map(|v| v.split(',').map(String::from).collect())
 }

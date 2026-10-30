@@ -1786,12 +1786,6 @@ mod resource {
 
         #[async_trait]
         impl ResourceApi for ResourceProvider {
-            async fn get_domain_enabled<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                domain_id: &'a str,
-            ) -> Result<bool, ResourceProviderError>;
-
             async fn create_domain<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -1804,19 +1798,18 @@ mod resource {
                 project: ProjectCreate,
             ) -> Result<Project, ResourceProviderError>;
 
-            async fn update_domain<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                domain_id: &'a str,
-                domain: DomainUpdate,
-            ) -> Result<Domain, ResourceProviderError>;
-
-            async fn update_project<'a>(
+            async fn get_project_parents<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
                 project_id: &'a str,
-                project: ProjectUpdate,
-            ) -> Result<Project, ResourceProviderError>;
+            ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
+
+            async fn create_project_tag<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                tag: &'a str,
+            ) -> Result<(), ResourceProviderError>;
 
             async fn delete_domain<'a>(
                 &self,
@@ -1830,17 +1823,30 @@ mod resource {
                 id: &'a str,
             ) -> Result<(), ResourceProviderError>;
 
-            async fn get_domain<'a>(
+            async fn delete_project_tag<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
-                domain_id: &'a str,
-            ) -> Result<Option<Domain>, ResourceProviderError>;
+                project_id: &'a str,
+                tag: &'a str,
+            ) -> Result<(), ResourceProviderError>;
 
             async fn find_domain_by_name<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
                 domain_name: &'a str,
             ) -> Result<Option<Domain>, ResourceProviderError>;
+
+            async fn get_domain<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+            ) -> Result<Option<Domain>, ResourceProviderError>;
+
+            async fn get_domain_enabled<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+            ) -> Result<bool, ResourceProviderError>;
 
             async fn get_project<'a>(
                 &self,
@@ -1855,12 +1861,6 @@ mod resource {
                 domain_id: &'a str,
             ) -> Result<Option<Project>, ResourceProviderError>;
 
-            async fn get_project_parents<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                project_id: &'a str,
-            ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
-
             async fn list_domains<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -1872,6 +1872,33 @@ mod resource {
                 ctx: &ExecutionContext<'a>,
                 params: &ProjectListParameters,
             ) -> Result<Vec<Project>, ResourceProviderError>;
+
+            async fn list_project_tags<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<Vec<String>, ResourceProviderError>;
+
+            async fn replace_project_tags<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                tags: Vec<String>,
+            ) -> Result<Vec<String>, ResourceProviderError>;
+
+            async fn update_domain<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                domain: DomainUpdate,
+            ) -> Result<Domain, ResourceProviderError>;
+
+            async fn update_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                project: ProjectUpdate,
+            ) -> Result<Project, ResourceProviderError>;
         }
     }
 }

@@ -16,8 +16,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sea_orm::{DatabaseConnection, Schema};
+use sea_orm::{DatabaseConnection, Schema, TransactionTrait};
 
+use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::resource::{ResourceProviderError, backend::ResourceBackend};
@@ -30,6 +31,7 @@ mod domain;
 pub mod entity;
 mod project;
 mod project_option;
+mod project_tag;
 
 #[derive(Default)]
 pub struct SqlBackend {}
@@ -105,7 +107,17 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         project: ProjectCreate,
     ) -> Result<Project, ResourceProviderError> {
-        Ok(project::create(&state.db.connection(), project).await?)
+        let txn = state
+            .db
+            .connection()
+            .begin()
+            .await
+            .context("starting the project create transaction")?;
+        let created = project::create(&txn, project).await?;
+        txn.commit()
+            .await
+            .context("committing the project create transaction")?;
+        Ok(created)
     }
 
     /// Update domain.
@@ -143,7 +155,17 @@ impl ResourceBackend for SqlBackend {
         project_id: &'a str,
         project: ProjectUpdate,
     ) -> Result<Project, ResourceProviderError> {
-        Ok(project::update(&state.db.connection(), project_id, project).await?)
+        let txn = state
+            .db
+            .connection()
+            .begin()
+            .await
+            .context("starting the project update transaction")?;
+        let updated = project::update(&txn, project_id, project).await?;
+        txn.commit()
+            .await
+            .context("committing the project update transaction")?;
+        Ok(updated)
     }
 
     /// Delete domain by the ID.
@@ -268,6 +290,100 @@ impl ResourceBackend for SqlBackend {
         project_id: &'a str,
     ) -> Result<Option<Vec<Project>>, ResourceProviderError> {
         Ok(project::get_project_parents(&state.db.connection(), project_id).await?)
+    }
+
+    /// List the tags of a project.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `project_id`: ID of the project.
+    ///
+    /// # Returns
+    /// The sorted tags of the project.
+    #[tracing::instrument(name = "driver.sql.resource.list_project_tags", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn list_project_tags<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Vec<String>, ResourceProviderError> {
+        let db = state.db.connection();
+        project_tag::ensure_project_exists(&db, project_id).await?;
+        project_tag::list_by_project_id(&db, project_id).await
+    }
+
+    /// Replace all tags of a project.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `project_id`: ID of the project.
+    /// - `tags`: The new set of tags.
+    ///
+    /// # Returns
+    /// The resulting sorted tags.
+    #[tracing::instrument(name = "driver.sql.resource.replace_project_tags", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn replace_project_tags<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        mut tags: Vec<String>,
+    ) -> Result<Vec<String>, ResourceProviderError> {
+        project_tag::ensure_project_exists(&state.db.connection(), project_id).await?;
+        let txn = state
+            .db
+            .connection()
+            .begin()
+            .await
+            .context("starting the project tags transaction")?;
+        project_tag::replace(&txn, project_id, &tags).await?;
+        txn.commit()
+            .await
+            .context("committing the project tags transaction")?;
+        tags.sort();
+        Ok(tags)
+    }
+
+    /// Add a single tag to a project.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `project_id`: ID of the project.
+    /// - `tag`: The tag to add.
+    #[tracing::instrument(name = "driver.sql.resource.create_project_tag", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn create_project_tag<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        tag: &'a str,
+    ) -> Result<(), ResourceProviderError> {
+        let db = state.db.connection();
+        project_tag::ensure_project_exists(&db, project_id).await?;
+        let txn = db
+            .begin()
+            .await
+            .context("starting the project tag transaction")?;
+        project_tag::create(&txn, project_id, tag).await?;
+        txn.commit()
+            .await
+            .context("committing the project tag transaction")?;
+        Ok(())
+    }
+
+    /// Delete a single tag from a project.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `project_id`: ID of the project.
+    /// - `tag`: The tag to delete.
+    #[tracing::instrument(name = "driver.sql.resource.delete_project_tag", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn delete_project_tag<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        tag: &'a str,
+    ) -> Result<(), ResourceProviderError> {
+        let db = state.db.connection();
+        project_tag::ensure_project_exists(&db, project_id).await?;
+        project_tag::delete(&db, project_id, tag).await
     }
 
     /// List domains.

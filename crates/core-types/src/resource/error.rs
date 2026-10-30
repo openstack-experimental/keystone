@@ -123,6 +123,15 @@ pub enum ResourceProviderError {
     #[error("project {0} not found")]
     ProjectNotFound(String),
 
+    /// Project tag not found.
+    #[error("tag {tag} of the project {project_id} not found")]
+    ProjectTagNotFound {
+        /// The project ID.
+        project_id: String,
+        /// The tag.
+        tag: String,
+    },
+
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the resource provider")]
     UnsupportedDriver(String),

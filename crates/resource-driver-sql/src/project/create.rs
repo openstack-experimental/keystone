@@ -21,6 +21,7 @@ use openstack_keystone_core_types::resource::{Project, ProjectCreate};
 
 use crate::entity::project as db_project;
 use crate::project_option;
+use crate::project_tag;
 
 /// Create a new project.
 ///
@@ -35,6 +36,8 @@ where
     C: ConnectionTrait,
 {
     let options = project.options.clone().unwrap_or_default();
+    let mut tags = project.tags.clone();
+    tags.sort();
     let mut created: Project = TryInto::<db_project::ActiveModel>::try_into(project)?
         .insert(db)
         .await
@@ -42,6 +45,8 @@ where
         .try_into()?;
     project_option::upsert(db, created.id.clone(), &options).await?;
     created.options = options;
+    project_tag::insert_all(db, &created.id, &tags).await?;
+    created.tags = tags;
     Ok(created)
 }
 
@@ -60,6 +65,7 @@ mod tests {
             .into_connection();
 
         let req = ProjectCreate {
+            tags: Default::default(),
             description: Some("description".into()),
             domain_id: Some("foo_domain".into()),
             enabled: true,
@@ -109,6 +115,7 @@ mod tests {
             .into_connection();
 
         let req = ProjectCreate {
+            tags: Default::default(),
             description: None,
             domain_id: Some("foo_domain".into()),
             enabled: true,

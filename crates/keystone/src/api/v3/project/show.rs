@@ -161,6 +161,7 @@ mod tests {
         let res: ApiProjectResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(
             ApiProject {
+                tags: Default::default(),
                 description: None,
                 domain_id: "did".into(),
                 enabled: true,

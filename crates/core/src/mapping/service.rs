@@ -159,6 +159,7 @@ fn derive_authz_info(authorizations: &[Authorization]) -> Option<AuthzInfo> {
                 domain_id: project_domain_id.clone(),
                 extra: Default::default(),
                 options: Default::default(),
+                tags: Default::default(),
             };
             let domain = Domain {
                 id: project_domain_id.clone(),

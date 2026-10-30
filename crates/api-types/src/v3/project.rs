@@ -116,6 +116,11 @@ pub struct Project {
     #[serde(default)]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub parent_id: Option<String>,
+
+    /// The tags of the project.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// Project resource options.
@@ -218,6 +223,12 @@ pub struct ProjectCreate {
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
+
+    /// The tags of the project. A tag must be 1 to 255 characters long, must
+    /// not contain `/` or `,` and a project can have up to 80 tags.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 #[cfg(feature = "builder")]
@@ -294,6 +305,12 @@ pub struct ProjectUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(nested))]
     pub options: Option<ProjectOptions>,
+
+    /// The new set of tags replacing the existing ones. Omit to keep the
+    /// tags unchanged.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 /// Project update request.
@@ -334,6 +351,14 @@ pub struct ProjectList {
     pub links: Option<Vec<Link>>,
 }
 
+/// Project tags.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ProjectTags {
+    /// The list of tags.
+    pub tags: Vec<String>,
+}
+
 /// Project list parameters.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
@@ -354,6 +379,57 @@ pub struct ProjectListParameters {
     /// Filter projects by the `enabled` flag.
     #[serde(default, deserialize_with = "crate::deserialize_lenient_bool_opt")]
     pub enabled: Option<bool>,
+
+    /// Comma-separated tags. Return only projects carrying all of them.
+    #[cfg_attr(
+        feature = "validate",
+        validate(custom(function = "validate_tag_filter"))
+    )]
+    pub tags: Option<String>,
+
+    /// Comma-separated tags. Return only projects carrying at least one of
+    /// them.
+    #[serde(rename = "tags-any")]
+    #[cfg_attr(
+        feature = "validate",
+        validate(custom(function = "validate_tag_filter"))
+    )]
+    pub tags_any: Option<String>,
+
+    /// Comma-separated tags. Exclude projects carrying all of them.
+    #[serde(rename = "not-tags")]
+    #[cfg_attr(
+        feature = "validate",
+        validate(custom(function = "validate_tag_filter"))
+    )]
+    pub not_tags: Option<String>,
+
+    /// Comma-separated tags. Exclude projects carrying at least one of them.
+    #[serde(rename = "not-tags-any")]
+    #[cfg_attr(
+        feature = "validate",
+        validate(custom(function = "validate_tag_filter"))
+    )]
+    pub not_tags_any: Option<String>,
+}
+
+/// Maximum number of tags in one tag filter. Matches the number of tags a
+/// project can carry; each item adds a sub-query to the list query.
+#[cfg(feature = "validate")]
+const MAX_TAG_FILTER_ITEMS: usize = 80;
+
+/// Validate a comma-separated tag filter: at most [`MAX_TAG_FILTER_ITEMS`]
+/// items, each 1 to 255 characters long.
+#[cfg(feature = "validate")]
+fn validate_tag_filter(value: &str) -> Result<(), validator::ValidationError> {
+    let mut count = 0;
+    for tag in value.split(',') {
+        count += 1;
+        if count > MAX_TAG_FILTER_ITEMS || !(1..=255).contains(&tag.chars().count()) {
+            return Err(validator::ValidationError::new("tag_filter"));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -362,6 +438,21 @@ mod tests {
     use super::*;
     #[cfg(feature = "builder")]
     use crate::error::BuilderError;
+
+    #[cfg(feature = "validate")]
+    #[test]
+    fn test_validate_tag_filter() {
+        use super::validate_tag_filter;
+        assert!(validate_tag_filter("a").is_ok());
+        assert!(validate_tag_filter("a,b").is_ok());
+        assert!(validate_tag_filter("").is_err());
+        assert!(validate_tag_filter("a,,b").is_err());
+        assert!(validate_tag_filter(&"a".repeat(256)).is_err());
+        let ok = (0..80).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+        assert!(validate_tag_filter(&ok).is_ok());
+        let too_many = (0..81).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+        assert!(validate_tag_filter(&too_many).is_err());
+    }
 
     #[cfg(feature = "builder")]
     #[test]

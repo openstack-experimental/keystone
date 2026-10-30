@@ -215,6 +215,7 @@ fn derive_scope_from_authorizations(
                     options: Default::default(),
                 };
                 let project = Project {
+                    tags: Default::default(),
                     id: project_id.clone(),
                     domain_id: project_domain_id.clone(),
                     name: String::new(),

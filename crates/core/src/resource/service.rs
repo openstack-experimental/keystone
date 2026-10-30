@@ -300,26 +300,6 @@ impl ResourceService {
 
 #[async_trait]
 impl ResourceApi for ResourceService {
-    /// Check whether the domain is enabled.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `domain_id`: The ID of the domain.
-    ///
-    /// # Returns
-    /// - `Result<bool, ResourceProviderError>` - Whether the domain is enabled
-    ///   or an error.
-    #[tracing::instrument(name = "provider.resource.get_domain_enabled", level = "debug", skip_all, fields(domain_id = %domain_id))]
-    async fn get_domain_enabled<'a>(
-        &self,
-        ctx: &ExecutionContext<'a>,
-        domain_id: &'a str,
-    ) -> Result<bool, ResourceProviderError> {
-        self.backend_driver
-            .get_domain_enabled(ctx.state(), domain_id)
-            .await
-    }
-
     /// Create a new domain.
     ///
     /// # Parameters
@@ -402,83 +382,38 @@ impl ResourceApi for ResourceService {
         Ok(project)
     }
 
-    /// Update a domain.
+    /// Add a single tag to a project.
     ///
     /// # Parameters
-    /// - `state`: The current service state.
-    /// - `domain_id`: The ID of the domain to update.
-    /// - `domain`: The fields to change.
-    ///
-    /// # Returns
-    /// - `Result<Domain, ResourceProviderError>` - The updated `Domain` or an
-    ///   error.
-    #[tracing::instrument(name = "provider.resource.update_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
-    async fn update_domain<'a>(
-        &self,
-        ctx: &ExecutionContext<'a>,
-        domain_id: &'a str,
-        domain: DomainUpdate,
-    ) -> Result<Domain, ResourceProviderError> {
-        domain.validate()?;
-        self.check_domain_mutable(ctx, domain_id, domain.options.as_ref())
-            .await?;
-        // Disabling gets its own operation so subscribers (the OAuth2
-        // session hook) can revoke what the domain's users hold.
-        let operation = if domain.enabled == Some(false) {
-            Operation::Disable
-        } else {
-            Operation::Update
-        };
-        let domain = crate::audited_if_ctx! {
-            ctx: ctx,
-            event: Event::new(
-                operation,
-                EventPayload::Domain { id: domain_id.to_string() },
-            ),
-            operation: async {
-                self.backend_driver.update_domain(ctx.state(), domain_id, domain).await
-            },
-            on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
-        }?;
-
-        cache_set(DOMAIN_CACHE_NS, domain_id, domain.clone());
-        Ok(domain)
-    }
-
-    /// Update a project.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `project_id`: The ID of the project to update.
-    /// - `project`: The fields to change.
-    ///
-    /// # Returns
-    /// - `Result<Project, ResourceProviderError>` - The updated `Project` or an
-    ///   error.
-    #[tracing::instrument(name = "provider.resource.update_project", level = "debug", skip_all, fields(project_id = %project_id))]
-    async fn update_project<'a>(
+    /// - `ctx`: The execution context.
+    /// - `project_id`: The ID of the project.
+    /// - `tag`: The tag to add.
+    #[tracing::instrument(name = "provider.resource.create_project_tag", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn create_project_tag<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
         project_id: &'a str,
-        project: ProjectUpdate,
-    ) -> Result<Project, ResourceProviderError> {
-        project.validate()?;
-        self.check_project_mutable(ctx, project_id, project.options.as_ref())
-            .await?;
-        let project = crate::audited_if_ctx! {
+        tag: &'a str,
+    ) -> Result<(), ResourceProviderError> {
+        validate_project_tag(tag).map_err(|e| {
+            let mut errors = validator::ValidationErrors::new();
+            errors.add("tag", e);
+            errors
+        })?;
+        self.check_project_mutable(ctx, project_id, None).await?;
+        crate::audited_if_ctx! {
             ctx: ctx,
             event: Event::new(
                 Operation::Update,
                 EventPayload::Project { id: project_id.to_string() },
             ),
             operation: async {
-                self.backend_driver.update_project(ctx.state(), project_id, project).await
+                self.backend_driver.create_project_tag(ctx.state(), project_id, tag).await
             },
             on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
         }?;
-
-        cache_set(PROJECT_CACHE_NS, project_id, project.clone());
-        Ok(project)
+        cache_remove(PROJECT_CACHE_NS, project_id);
+        Ok(())
     }
 
     /// Delete a domain by the ID.
@@ -576,6 +511,59 @@ impl ResourceApi for ResourceService {
         Ok(())
     }
 
+    /// Delete a single tag from a project.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `project_id`: The ID of the project.
+    /// - `tag`: The tag to delete.
+    #[tracing::instrument(name = "provider.resource.delete_project_tag", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn delete_project_tag<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+        tag: &'a str,
+    ) -> Result<(), ResourceProviderError> {
+        self.check_project_mutable(ctx, project_id, None).await?;
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Update,
+                EventPayload::Project { id: project_id.to_string() },
+            ),
+            operation: async {
+                self.backend_driver.delete_project_tag(ctx.state(), project_id, tag).await
+            },
+            on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
+        }?;
+        cache_remove(PROJECT_CACHE_NS, project_id);
+        Ok(())
+    }
+
+    /// Find a single domain by its name.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `domain_name`: The name of the domain.
+    ///
+    /// # Returns
+    /// - A `Result` containing an `Option` with the `Domain` if found, or an
+    ///   `Error`.
+    #[tracing::instrument(
+        name = "provider.resource.find_domain_by_name",
+        level = "debug",
+        skip_all
+    )]
+    async fn find_domain_by_name<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_name: &'a str,
+    ) -> Result<Option<Domain>, ResourceProviderError> {
+        self.backend_driver
+            .get_domain_by_name(ctx.state(), domain_name)
+            .await
+    }
+
     /// Get a single domain.
     ///
     /// # Parameters
@@ -602,6 +590,26 @@ impl ResourceApi for ResourceService {
             cache_set(DOMAIN_CACHE_NS, domain_id, domain.clone());
         }
         Ok(domain)
+    }
+
+    /// Check whether the domain is enabled.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `domain_id`: The ID of the domain.
+    ///
+    /// # Returns
+    /// - `Result<bool, ResourceProviderError>` - Whether the domain is enabled
+    ///   or an error.
+    #[tracing::instrument(name = "provider.resource.get_domain_enabled", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn get_domain_enabled<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+    ) -> Result<bool, ResourceProviderError> {
+        self.backend_driver
+            .get_domain_enabled(ctx.state(), domain_id)
+            .await
     }
 
     /// Get a single project.
@@ -682,30 +690,6 @@ impl ResourceApi for ResourceService {
         Ok(parents)
     }
 
-    /// Find a single domain by its name.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `domain_name`: The name of the domain.
-    ///
-    /// # Returns
-    /// - A `Result` containing an `Option` with the `Domain` if found, or an
-    ///   `Error`.
-    #[tracing::instrument(
-        name = "provider.resource.find_domain_by_name",
-        level = "debug",
-        skip_all
-    )]
-    async fn find_domain_by_name<'a>(
-        &self,
-        ctx: &ExecutionContext<'a>,
-        domain_name: &'a str,
-    ) -> Result<Option<Domain>, ResourceProviderError> {
-        self.backend_driver
-            .get_domain_by_name(ctx.state(), domain_name)
-            .await
-    }
-
     /// List domains.
     ///
     /// # Parameters
@@ -724,6 +708,25 @@ impl ResourceApi for ResourceService {
         self.backend_driver.list_domains(ctx.state(), params).await
     }
 
+    /// List the tags of a project.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `project_id`: The ID of the project.
+    ///
+    /// # Returns
+    /// - The sorted tags, or `ProjectNotFound`.
+    #[tracing::instrument(name = "provider.resource.list_project_tags", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn list_project_tags<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+    ) -> Result<Vec<String>, ResourceProviderError> {
+        self.backend_driver
+            .list_project_tags(ctx.state(), project_id)
+            .await
+    }
+
     /// List projects.
     ///
     /// # Parameters
@@ -740,6 +743,122 @@ impl ResourceApi for ResourceService {
         params: &ProjectListParameters,
     ) -> Result<Vec<Project>, ResourceProviderError> {
         self.backend_driver.list_projects(ctx.state(), params).await
+    }
+
+    /// Replace all tags of a project.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `project_id`: The ID of the project.
+    /// - `tags`: The new set of tags.
+    ///
+    /// # Returns
+    /// - The resulting sorted tags, or an error.
+    #[tracing::instrument(name = "provider.resource.replace_project_tags", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn replace_project_tags<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+        tags: Vec<String>,
+    ) -> Result<Vec<String>, ResourceProviderError> {
+        validate_project_tags(&tags).map_err(|e| {
+            let mut errors = validator::ValidationErrors::new();
+            errors.add("tags", e);
+            errors
+        })?;
+        self.check_project_mutable(ctx, project_id, None).await?;
+        let tags = crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Update,
+                EventPayload::Project { id: project_id.to_string() },
+            ),
+            operation: async {
+                self.backend_driver.replace_project_tags(ctx.state(), project_id, tags).await
+            },
+            on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
+        }?;
+        cache_remove(PROJECT_CACHE_NS, project_id);
+        Ok(tags)
+    }
+
+    /// Update a domain.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `domain_id`: The ID of the domain to update.
+    /// - `domain`: The fields to change.
+    ///
+    /// # Returns
+    /// - `Result<Domain, ResourceProviderError>` - The updated `Domain` or an
+    ///   error.
+    #[tracing::instrument(name = "provider.resource.update_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn update_domain<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+        domain: DomainUpdate,
+    ) -> Result<Domain, ResourceProviderError> {
+        domain.validate()?;
+        self.check_domain_mutable(ctx, domain_id, domain.options.as_ref())
+            .await?;
+        // Disabling gets its own operation so subscribers (the OAuth2
+        // session hook) can revoke what the domain's users hold.
+        let operation = if domain.enabled == Some(false) {
+            Operation::Disable
+        } else {
+            Operation::Update
+        };
+        let domain = crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                operation,
+                EventPayload::Domain { id: domain_id.to_string() },
+            ),
+            operation: async {
+                self.backend_driver.update_domain(ctx.state(), domain_id, domain).await
+            },
+            on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
+        }?;
+
+        cache_set(DOMAIN_CACHE_NS, domain_id, domain.clone());
+        Ok(domain)
+    }
+
+    /// Update a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project to update.
+    /// - `project`: The fields to change.
+    ///
+    /// # Returns
+    /// - `Result<Project, ResourceProviderError>` - The updated `Project` or an
+    ///   error.
+    #[tracing::instrument(name = "provider.resource.update_project", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn update_project<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+        project: ProjectUpdate,
+    ) -> Result<Project, ResourceProviderError> {
+        project.validate()?;
+        self.check_project_mutable(ctx, project_id, project.options.as_ref())
+            .await?;
+        let project = crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Update,
+                EventPayload::Project { id: project_id.to_string() },
+            ),
+            operation: async {
+                self.backend_driver.update_project(ctx.state(), project_id, project).await
+            },
+            on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
+        }?;
+
+        cache_set(PROJECT_CACHE_NS, project_id, project.clone());
+        Ok(project)
     }
 }
 
@@ -1227,6 +1346,7 @@ mod tests {
 
     fn base_project_create() -> ProjectCreate {
         ProjectCreate {
+            tags: Default::default(),
             description: None,
             domain_id: None,
             enabled: true,
@@ -1469,6 +1589,51 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ResourceProviderError::Immutable(id) if id == "pid"));
+    }
+
+    #[tokio::test]
+    async fn test_replace_project_tags_blocked_when_immutable() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project()
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(Some(make_immutable_project("pid", "did"))));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let err = provider
+            .replace_project_tags(&ExecutionContext::internal(&state), "pid", vec!["a".into()])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ResourceProviderError::Immutable(id) if id == "pid"));
+    }
+
+    #[tokio::test]
+    async fn test_replace_project_tags_rejects_invalid_tags() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let provider = ResourceService {
+            backend_driver: Arc::new(MockResourceBackend::default()),
+        };
+
+        for tags in [
+            vec!["a/b".to_string()],
+            vec!["a,b".to_string()],
+            vec![String::new()],
+            vec!["x".to_string(), "x".to_string()],
+        ] {
+            let err = provider
+                .replace_project_tags(&ExecutionContext::internal(&state), "pid", tags)
+                .await
+                .unwrap_err();
+            assert!(matches!(err, ResourceProviderError::Validation { .. }));
+        }
+        let err = provider
+            .create_project_tag(&ExecutionContext::internal(&state), "pid", "a,b")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ResourceProviderError::Validation { .. }));
     }
 
     #[tokio::test]

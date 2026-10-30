@@ -742,6 +742,7 @@ mod tests {
             extra: HashMap::new(),
             links: None,
             options: None,
+            tags: Vec::new(),
         }
     }
 

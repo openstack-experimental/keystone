@@ -16,3 +16,4 @@ mod domain;
 mod domain_authorization;
 mod project;
 mod project_authorization;
+mod project_tag;

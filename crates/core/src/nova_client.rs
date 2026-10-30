@@ -128,6 +128,7 @@ pub async fn mint_nova_admin_token(
                 domain_id: String::new(),
                 extra: Default::default(),
                 options: Default::default(),
+                tags: Default::default(),
             };
             let project_domain = openstack_keystone_core_types::resource::Domain {
                 id: String::new(),

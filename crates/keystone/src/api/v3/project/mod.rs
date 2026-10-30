@@ -21,6 +21,7 @@ mod create;
 mod delete;
 mod list;
 mod show;
+mod tag;
 pub mod types;
 mod update;
 
@@ -52,4 +53,5 @@ pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(delete::remove))
         .routes(routes!(list::list))
         .routes(routes!(show::show, update::update))
+        .merge(tag::openapi_router())
 }

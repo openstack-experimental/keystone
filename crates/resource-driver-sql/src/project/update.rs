@@ -75,6 +75,10 @@ where
         crate::project_option::upsert(db, project_id, &opts).await?;
     }
     updated.options = crate::project_option::list_by_project_id(db, project_id).await?;
+    if let Some(tags) = project.tags {
+        crate::project_tag::replace(db, project_id, &tags).await?;
+    }
+    updated.tags = crate::project_tag::list_by_project_id(db, project_id).await?;
 
     Ok(updated)
 }
@@ -91,9 +95,11 @@ mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_project_mock("1")], vec![get_project_mock("1")]])
             .append_query_results([Vec::<crate::entity::project_option::Model>::new()])
+            .append_query_results([Vec::<crate::entity::project_tag::Model>::new()])
             .into_connection();
 
         let req = ProjectUpdate {
+            tags: Default::default(),
             name: Some("new_name".into()),
             enabled: Some(false),
             description: None,
@@ -111,6 +117,7 @@ mod tests {
             .into_connection();
 
         let req = ProjectUpdate {
+            tags: Default::default(),
             name: Some("new_name".into()),
             enabled: None,
             description: None,
@@ -140,9 +147,11 @@ mod tests {
                 option_id: "IMMU".into(),
                 option_value: Some("true".into()),
             }]])
+            .append_query_results([Vec::<crate::entity::project_tag::Model>::new()])
             .into_connection();
 
         let req = ProjectUpdate {
+            tags: Default::default(),
             name: None,
             enabled: None,
             description: None,
@@ -153,5 +162,28 @@ mod tests {
         };
         let result = update(&db, "1", req).await.unwrap();
         assert_eq!(result.options.immutable, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_update_replaces_tags() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_project_mock("1")], vec![get_project_mock("1")]])
+            .append_query_results([Vec::<crate::entity::project_option::Model>::new()])
+            .append_query_results([vec![crate::entity::project_tag::Model {
+                project_id: "1".into(),
+                name: "a".into(),
+            }]])
+            .append_exec_results([sea_orm::MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
+            .into_connection();
+
+        let req = ProjectUpdate {
+            tags: Some(Vec::new()),
+            ..Default::default()
+        };
+        let result = update(&db, "1", req).await.unwrap();
+        assert_eq!(result.tags, vec!["a".to_string()]);
     }
 }

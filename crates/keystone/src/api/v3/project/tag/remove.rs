@@ -1,0 +1,227 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+//! # Delete a project tag API
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
+use serde_json::json;
+
+use crate::api::auth::Auth;
+use crate::api::error::KeystoneApiError;
+use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
+
+/// Delete a project tag.
+#[utoipa::path(
+    delete,
+    path = "/{project_id}/tags/{tag}",
+    params(),
+    responses(
+        (status = 204, description = "Tag deleted"),
+        (status = 404, description = "Project not found", example = json!(KeystoneApiError::NotFound{resource: "project".into(), identifier: "id = 1".into()}))
+    ),
+    tag="projects"
+)]
+#[tracing::instrument(name = "api::v3::project::tag::remove", level = "debug", skip(state))]
+pub(super) async fn remove(
+    Auth(user_auth): Auth,
+    Path((project_id, tag)): Path<(String, String)>,
+    State(state): State<ServiceState>,
+) -> Result<impl IntoResponse, KeystoneApiError> {
+    let ctx = ExecutionContext::from_auth(&state, &user_auth);
+    let current = state
+        .provider
+        .get_resource_provider()
+        .get_project(&ctx, &project_id)
+        .await?;
+
+    state
+        .policy_enforcer
+        .enforce(
+            "identity/resource/project/tag/delete",
+            &user_auth,
+            json!({"tag": &tag}),
+            Some(json!({"project": current})),
+        )
+        .await?;
+    if current.is_none() {
+        return Err(KeystoneApiError::NotFound {
+            resource: "project".to_string(),
+            identifier: project_id,
+        });
+    }
+    state
+        .provider
+        .get_resource_provider()
+        .delete_project_tag(&ctx, &project_id, &tag)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode, header},
+    };
+    use tower::ServiceExt;
+    use tower_http::trace::TraceLayer;
+
+    use openstack_keystone_core_types::resource::Project as ProviderProject;
+
+    use super::super::openapi_router;
+    use crate::api::tests::{
+        get_capturing_state, get_mocked_state, policy_contract, test_fixture_scoped,
+    };
+    use crate::provider::Provider;
+    use crate::resource::MockResourceProvider;
+
+    fn existing_project() -> ProviderProject {
+        ProviderProject {
+            id: "foo".into(),
+            domain_id: "did".into(),
+            enabled: true,
+            ..Default::default()
+        }
+    }
+
+    fn request(with_auth: bool) -> Request<Body> {
+        let mut builder = Request::builder()
+            .method("DELETE")
+            .uri("/foo/tags/a")
+            .header(header::CONTENT_TYPE, "application/json");
+        if with_auth {
+            builder = builder.extension(test_fixture_scoped());
+        }
+        builder.body(Body::from("")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_remove() {
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_project()
+            .withf(|_, id: &'_ str| id == "foo")
+            .returning(|_, _| Ok(Some(existing_project())));
+        resource_mock
+            .expect_delete_project_tag()
+            .withf(|_, id: &'_ str, tag: &'_ str| id == "foo" && tag == "a")
+            .returning(|_, _, _| Ok(()));
+
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_resource(resource_mock),
+            true,
+            None,
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api.as_service().oneshot(request(true)).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn test_remove_project_not_found() {
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_project()
+            .withf(|_, id: &'_ str| id == "foo")
+            .returning(|_, _| Ok(None));
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_resource(resource_mock),
+            true,
+            None,
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api.as_service().oneshot(request(true)).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_remove_forbidden() {
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_project()
+            .withf(|_, id: &'_ str| id == "foo")
+            .returning(|_, _| Ok(Some(existing_project())));
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_resource(resource_mock),
+            false,
+            None,
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api.as_service().oneshot(request(true)).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_remove_unauthorized() {
+        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api.as_service().oneshot(request(false)).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_remove_policy_input() {
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_project()
+            .withf(|_, id: &'_ str| id == "foo")
+            .returning(|_, _| Ok(Some(existing_project())));
+        resource_mock
+            .expect_delete_project_tag()
+            .withf(|_, id: &'_ str, tag: &'_ str| id == "foo" && tag == "a")
+            .returning(|_, _, _| Ok(()));
+
+        let (state, policy) =
+            get_capturing_state(Provider::mocked_builder().mock_resource(resource_mock)).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api.as_service().oneshot(request(true)).await.unwrap();
+        assert!(response.status().is_success());
+
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 1);
+        let call = &calls[0];
+        assert_eq!(call.policy_name, "identity/resource/project/tag/delete");
+        policy_contract::assert_object_keys(&call.target, &["tag"]);
+        policy_contract::assert_no_secrets(&call.target);
+        policy_contract::assert_existing_presence(&call.existing, true);
+        let existing = call.existing.as_ref().unwrap();
+        policy_contract::assert_object_keys(existing, &["project"]);
+        policy_contract::assert_no_secrets(existing);
+    }
+}

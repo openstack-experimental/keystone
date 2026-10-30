@@ -123,6 +123,7 @@ mod tests {
             .withf(|_, _: &ProjectListParameters| true)
             .returning(|_, _| {
                 Ok(vec![ProviderProject {
+                    tags: Default::default(),
                     description: None,
                     domain_id: "did".into(),
                     enabled: true,
@@ -263,6 +264,7 @@ mod tests {
             .returning(|_, _| {
                 Ok(vec![
                     ProviderProject {
+                        tags: Default::default(),
                         domain_id: "did".into(),
                         enabled: true,
                         extra: std::collections::HashMap::new(),
@@ -274,6 +276,7 @@ mod tests {
                         options: Default::default(),
                     },
                     ProviderProject {
+                        tags: Default::default(),
                         domain_id: "did".into(),
                         enabled: true,
                         extra: std::collections::HashMap::new(),
@@ -329,6 +332,7 @@ mod tests {
             .withf(|_, qp: &ProjectListParameters| qp.pagination.limit == Some(1))
             .returning(|_, _| {
                 Ok(vec![ProviderProject {
+                    tags: Default::default(),
                     domain_id: "did".into(),
                     enabled: true,
                     extra: std::collections::HashMap::new(),

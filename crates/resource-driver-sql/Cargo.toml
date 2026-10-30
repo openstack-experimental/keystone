@@ -19,6 +19,7 @@ sea-orm = { workspace = true, features = ["macros"] }
 serde_json.workspace = true
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
+validator.workspace = true
 
 [dev-dependencies]
 openstack-keystone-core = { workspace = true, features = ["mock"] }
