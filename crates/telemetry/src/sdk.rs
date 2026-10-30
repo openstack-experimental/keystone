@@ -341,14 +341,14 @@ mod grpc {
     use crate::config::TelemetrySettings;
 
     /// Endpoint plus the TLS config it needs. An `https` endpoint gets the
-    /// webpki roots; `insecure` forces plaintext (as in `oslo.middleware`),
-    /// by connecting over `http` instead.
+    /// system native roots; `insecure` forces plaintext (as in
+    /// `oslo.middleware`), by connecting over `http` instead.
     pub(super) fn endpoint(settings: &TelemetrySettings) -> (String, Option<ClientTlsConfig>) {
         let url = &settings.endpoint;
         let base = url.as_str().trim_end_matches('/').to_string();
         match (url.scheme(), settings.insecure) {
             ("https", true) => (base.replacen("https://", "http://", 1), None),
-            ("https", false) => (base, Some(ClientTlsConfig::new().with_webpki_roots())),
+            ("https", false) => (base, Some(ClientTlsConfig::new().with_native_roots())),
             _ => (base, None),
         }
     }

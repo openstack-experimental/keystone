@@ -28,7 +28,7 @@ otlp-grpc = [
   "sdk",
   "opentelemetry-otlp/grpc-tonic",
   "opentelemetry-otlp/tls-provider-agnostic",
-  "opentelemetry-otlp/tls-webpki-roots",
+  "opentelemetry-otlp/tls-roots",
 ]
 # Internal: the OTLP exporters, the tracing bridge and the trace signal. The
 # metrics SDK is not behind a feature: `/metrics` is rendered from it in every
