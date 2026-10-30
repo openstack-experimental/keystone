@@ -14,6 +14,7 @@
 //! # Catalog provider
 use async_trait::async_trait;
 use std::sync::Arc;
+use std::time::Duration;
 use validator::Validate;
 
 use openstack_keystone_config::Config;
@@ -21,12 +22,15 @@ use openstack_keystone_core_types::catalog::*;
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 
 use crate::auth::ExecutionContext;
+use crate::catalog::cache::CatalogCache;
 use crate::catalog::{CatalogApi, CatalogProviderError, backend::CatalogBackend};
 use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 
 pub struct CatalogService {
     backend_driver: Arc<dyn CatalogBackend>,
+    /// Cache of the assembled catalog (`get_catalog`).
+    cache: CatalogCache,
 }
 
 impl CatalogService {
@@ -46,7 +50,11 @@ impl CatalogService {
         let backend_driver = plugin_manager
             .get_catalog_backend(config.catalog.driver.clone())?
             .clone();
-        Ok(Self { backend_driver })
+        let cache = CatalogCache::new(Duration::from_secs(config.catalog.cache_ttl));
+        Ok(Self {
+            backend_driver,
+            cache,
+        })
     }
 }
 
@@ -250,6 +258,7 @@ impl CatalogApi for CatalogService {
             endpoint
         };
 
+        self.cache.invalidate().await;
         Ok(endpoint)
     }
 
@@ -411,6 +420,7 @@ impl CatalogApi for CatalogService {
             service
         };
 
+        self.cache.invalidate().await;
         Ok(service)
     }
 
@@ -456,6 +466,7 @@ impl CatalogApi for CatalogService {
                 .await;
         }
 
+        self.cache.invalidate().await;
         Ok(())
     }
 
@@ -587,6 +598,7 @@ impl CatalogApi for CatalogService {
                 .await;
         }
 
+        self.cache.invalidate().await;
         Ok(())
     }
 
@@ -605,7 +617,13 @@ impl CatalogApi for CatalogService {
         exec: &ExecutionContext<'a>,
         enabled: bool,
     ) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError> {
-        self.backend_driver.get_catalog(exec.state(), enabled).await
+        let catalog = self
+            .cache
+            .get_or_load(enabled, || {
+                self.backend_driver.get_catalog(exec.state(), enabled)
+            })
+            .await?;
+        Ok(catalog.as_ref().clone())
     }
 
     /// Get single endpoint by ID.
@@ -965,6 +983,7 @@ impl CatalogApi for CatalogService {
                 .await;
             updated
         };
+        self.cache.invalidate().await;
         Ok(updated)
     }
 
@@ -1114,6 +1133,7 @@ impl CatalogApi for CatalogService {
                 .await;
             updated
         };
+        self.cache.invalidate().await;
         Ok(updated)
     }
 }

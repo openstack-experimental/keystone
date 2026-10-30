@@ -80,7 +80,7 @@ See [Fernet tokens](../admin/tokens/fernet.md) and
 | `[api_policy]` | `enable`, `opa_base_url`, `opa_policies_path` |
 | `[identity]` | `driver`, `caching`, `default_domain_id`, `max_password_length`, `password_hashing_algorithm`, `password_hash_rounds`, `user_options_id_name_mapping` |
 | `[assignment]` | `driver` |
-| `[catalog]` | `driver` |
+| `[catalog]` | `driver`, `list_limit`, `cache_ttl` |
 | `[resource]` | `driver` |
 | `[role]` | `driver` |
 | `[limit]` | `driver`, `list_limit`, `enforcement_model` |
