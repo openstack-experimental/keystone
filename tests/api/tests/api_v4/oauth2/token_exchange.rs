@@ -37,6 +37,7 @@ async fn exchange_client(domain_id: &str, grants: Value) -> Result<BrowserClient
         json!({
             "confidential": true,
             "grant_types": grants,
+            "allowed_scopes": ["openstack:api"],
             "token_endpoint_auth_method": "client_secret_basic",
             "require_pkce": false,
             "redirect_uris": [],
@@ -87,6 +88,22 @@ async fn exchange(
 #[tokio::test]
 #[traced_test]
 async fn test_token_exchange_success() -> Result<()> {
+    assert_successful_exchange(SUBJECT_TOKEN_TYPE).await
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_token_exchange_success_with_jwt_type() -> Result<()> {
+    assert_successful_exchange("urn:ietf:params:oauth:token-type:jwt").await
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_token_exchange_success_with_keystone_type() -> Result<()> {
+    assert_successful_exchange("urn:openstack:params:oauth:token-type:keystone").await
+}
+
+async fn assert_successful_exchange(subject_type: &str) -> Result<()> {
     let f = fixture().await?;
     let (status, body) = exchange(
         &f.domain_id,
@@ -94,12 +111,14 @@ async fn test_token_exchange_success() -> Result<()> {
         None,
         &[
             ("subject_token", &f.subject_token),
-            ("subject_token_type", SUBJECT_TOKEN_TYPE),
+            ("subject_token_type", subject_type),
         ],
     )
     .await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["token_type"], "Bearer");
+    assert_eq!(body["issued_token_type"], SUBJECT_TOKEN_TYPE);
+    assert_eq!(body["scope"], "openstack:api");
     assert!(body["expires_in"].as_i64().is_some_and(|e| e > 0), "{body}");
     let access = body["access_token"]
         .as_str()
@@ -113,6 +132,49 @@ async fn test_token_exchange_success() -> Result<()> {
     );
     assert!(claims["sub"].is_string(), "{claims}");
     assert!(claims["exp"].is_i64(), "{claims}");
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_token_exchange_requires_subject_token_type() -> Result<()> {
+    let f = fixture().await?;
+    let (status, body) = exchange(
+        &f.domain_id,
+        &f.client,
+        None,
+        &[("subject_token", &f.subject_token)],
+    )
+    .await?;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "invalid_request");
+    assert_eq!(
+        body["error_description"],
+        "missing required parameter: subject_token_type"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_token_exchange_rejects_unsupported_subject_token_type() -> Result<()> {
+    let f = fixture().await?;
+    let (status, body) = exchange(
+        &f.domain_id,
+        &f.client,
+        None,
+        &[
+            ("subject_token", &f.subject_token),
+            ("subject_token_type", "urn:example:token-type:unsupported"),
+        ],
+    )
+    .await?;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "invalid_request");
+    assert_eq!(
+        body["error_description"],
+        "subject_token_type `urn:example:token-type:unsupported` is not supported"
+    );
     Ok(())
 }
 
@@ -134,11 +196,14 @@ async fn test_token_exchange_rejects_garbage_subject_token() -> Result<()> {
         &f.domain_id,
         &f.client,
         None,
-        &[("subject_token", "not-a-token")],
+        &[
+            ("subject_token", "not-a-token"),
+            ("subject_token_type", SUBJECT_TOKEN_TYPE),
+        ],
     )
     .await?;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["error"], "invalid_grant");
+    assert_eq!(body["error"], "invalid_request");
     Ok(())
 }
 
@@ -149,10 +214,18 @@ async fn test_token_exchange_rejects_non_delegated_subject_token() -> Result<()>
     // A plain password-scoped token carries no exchangeable delegation.
     let (_, username, project_id) = project_role_user(&f.domain_id, "member").await?;
     let plain = project_token(&f.domain_id, &username, &project_id).await?;
-    let (status, body) =
-        exchange(&f.domain_id, &f.client, None, &[("subject_token", &plain)]).await?;
+    let (status, body) = exchange(
+        &f.domain_id,
+        &f.client,
+        None,
+        &[
+            ("subject_token", &plain),
+            ("subject_token_type", SUBJECT_TOKEN_TYPE),
+        ],
+    )
+    .await?;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["error"], "invalid_grant");
+    assert_eq!(body["error"], "invalid_request");
     Ok(())
 }
 
@@ -164,7 +237,10 @@ async fn test_token_exchange_wrong_secret_is_invalid_client() -> Result<()> {
         &f.domain_id,
         &f.client,
         Some("wrong-secret"),
-        &[("subject_token", &f.subject_token)],
+        &[
+            ("subject_token", &f.subject_token),
+            ("subject_token_type", SUBJECT_TOKEN_TYPE),
+        ],
     )
     .await?;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
@@ -181,7 +257,10 @@ async fn test_token_exchange_requires_grant_on_client() -> Result<()> {
         &f.domain_id,
         &client,
         None,
-        &[("subject_token", &f.subject_token)],
+        &[
+            ("subject_token", &f.subject_token),
+            ("subject_token_type", SUBJECT_TOKEN_TYPE),
+        ],
     )
     .await?;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -199,11 +278,14 @@ async fn test_token_exchange_subject_token_of_other_domain_is_rejected() -> Resu
         &f.domain_id,
         &f.client,
         None,
-        &[("subject_token", &foreign_subject)],
+        &[
+            ("subject_token", &foreign_subject),
+            ("subject_token_type", SUBJECT_TOKEN_TYPE),
+        ],
     )
     .await?;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["error"], "invalid_grant");
+    assert_eq!(body["error"], "invalid_request");
     Ok(())
 }
 
@@ -217,12 +299,70 @@ async fn test_token_exchange_unknown_audience_is_invalid_target() -> Result<()> 
         None,
         &[
             ("subject_token", &f.subject_token),
+            ("subject_token_type", SUBJECT_TOKEN_TYPE),
             ("audience", "no-such-service-type"),
         ],
     )
     .await?;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"], "invalid_target");
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_token_exchange_rejects_unsupported_rfc8693_parameters() -> Result<()> {
+    let f = fixture().await?;
+    for (name, value, code) in [
+        ("requested_token_type", "", "invalid_request"),
+        (
+            "requested_token_type",
+            "urn:ietf:params:oauth:token-type:jwt",
+            "invalid_request",
+        ),
+        ("actor_token", "", "invalid_request"),
+        ("actor_token", "actor", "invalid_request"),
+        (
+            "actor_token_type",
+            "urn:ietf:params:oauth:token-type:jwt",
+            "invalid_request",
+        ),
+        ("resource", "https://service.example", "invalid_target"),
+        ("scope", "openid", "invalid_scope"),
+        ("subject_token_type", "", "invalid_request"),
+    ] {
+        let mut form = vec![("subject_token", f.subject_token.as_str())];
+        if name != "subject_token_type" {
+            form.push(("subject_token_type", SUBJECT_TOKEN_TYPE));
+        }
+        form.push((name, value));
+        let (status, body) = exchange(&f.domain_id, &f.client, None, &form).await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {body}");
+        assert_eq!(body["error"], code, "{name}: {body}");
+        assert!(body.get("access_token").is_none(), "{body}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_token_exchange_accepts_requested_output_type_and_scope() -> Result<()> {
+    let f = fixture().await?;
+    let (status, body) = exchange(
+        &f.domain_id,
+        &f.client,
+        None,
+        &[
+            ("subject_token", &f.subject_token),
+            ("subject_token_type", SUBJECT_TOKEN_TYPE),
+            ("requested_token_type", SUBJECT_TOKEN_TYPE),
+            ("scope", "openstack:api"),
+        ],
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["issued_token_type"], SUBJECT_TOKEN_TYPE);
+    assert_eq!(body["scope"], "openstack:api");
     Ok(())
 }
 

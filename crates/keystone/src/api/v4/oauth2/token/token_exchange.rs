@@ -34,6 +34,8 @@ use super::common::*;
 use super::{Oauth2TokenError, TokenForm, TokenResponse};
 use crate::api::v4::oauth2::well_known::base_url;
 
+use super::exchange_request::{ACCESS_TOKEN_TYPE, validate_exchange_request};
+
 /// RFC 8693 Token Exchange grant (ADR 0026 §12 "v2 shape", implemented as
 /// the follow-up amendment the ADR itself defers this grant's concrete
 /// shape to). Trades an existing Keystone-native delegated credential
@@ -56,11 +58,6 @@ pub(super) async fn handle_token_exchange_grant(
             "missing required parameter: client_id",
         ));
     };
-    let Some(subject_token) = form.subject_token.clone() else {
-        return Err(Oauth2TokenError::invalid_request(
-            "missing required parameter: subject_token",
-        ));
-    };
 
     // Step 1 (ADR 0026 §7.A): pre-hash rate limit, inherited by every
     // `/token` sub-path, before any lookup or subject_token validation.
@@ -71,6 +68,14 @@ pub(super) async fn handle_token_exchange_grant(
             .max(1);
         return Err(Oauth2TokenError::too_many_requests(retry_after));
     }
+
+    let Some(subject_token) = form.subject_token.clone().filter(|token| !token.is_empty()) else {
+        return Err(Oauth2TokenError::invalid_request(
+            "missing required parameter: subject_token",
+        ));
+    };
+
+    let scope = validate_exchange_request(form)?;
 
     let client = authenticate_client(
         state,
@@ -83,6 +88,12 @@ pub(super) async fn handle_token_exchange_grant(
     if !client.grant_types.contains(&GrantType::TokenExchange) {
         return Err(Oauth2TokenError::unauthorized_client(
             "client is not authorized to use the token-exchange grant",
+        ));
+    }
+
+    if form.scope.is_some() && !client.allowed_scopes.contains(&scope) {
+        return Err(Oauth2TokenError::invalid_scope(
+            "requested scope exceeds the client's allowed_scopes",
         ));
     }
 
@@ -103,19 +114,14 @@ pub(super) async fn handle_token_exchange_grant(
     let (vsc, delegation_context, credential_expires_at) =
         openstack_keystone_core::oauth2_client::validate_subject_token(state, &subject_token)
             .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "oauth2 token exchange subject_token rejected");
-                Oauth2TokenError::invalid_grant(
-                    "subject_token is invalid, expired, or carries no exchangeable delegation",
-                )
-            })?;
+            .map_err(exchange_error)?;
 
     // The Keystone-native tokens this grant accepts carry no confirmation
     // claim. A subject token that does is a sender-constrained token whose
     // proof (`ath` over the subject token) this grant cannot check, so it is
     // refused rather than traded for an unbound token (ADR 0043 §4).
     if subject_token_carries_cnf(&subject_token) {
-        return Err(Oauth2TokenError::invalid_grant(
+        return Err(Oauth2TokenError::invalid_request(
             "a DPoP-bound subject_token cannot be exchanged",
         ));
     }
@@ -139,34 +145,7 @@ pub(super) async fn handle_token_exchange_grant(
         now + access_lifetime,
         audience,
     )
-    .map_err(|e| {
-        use openstack_keystone_core::oauth2_client::TokenExchangeError;
-
-        match e {
-            TokenExchangeError::CrossDomainSubjectToken => {
-                tracing::warn!(error = %e, "subject_token's scope belongs to a different domain than this token endpoint");
-                Oauth2TokenError::invalid_grant(
-                    "subject_token's scope belongs to a different domain than this token endpoint",
-                )
-            }
-            TokenExchangeError::MissingSubjectTokenExpiry => {
-                tracing::warn!(error = %e, "subject_token is missing an expiry claim");
-                Oauth2TokenError::invalid_grant(
-                    "subject_token is missing an expiry claim, cannot be exchanged",
-                )
-            }
-            TokenExchangeError::CredentialChainExpired => {
-                tracing::warn!(error = %e, "subject_token or application credential chain is already expired or expires too soon");
-                Oauth2TokenError::invalid_grant(
-                    "subject_token or application credential expiry does not permit token exchange",
-                )
-            }
-            _ => {
-                tracing::error!(error = %e, "unexpected error occurred during token exchange");
-                Oauth2TokenError::internal("token issuance failed")
-            }
-        }
-    })?;
+    .map_err(exchange_error)?;
     let token_type = super::dpop::token_type(confirmation.as_ref());
     claims.cnf = confirmation;
     let access_token = sign_jwt(state, domain_id, &claims).await?;
@@ -182,14 +161,60 @@ pub(super) async fn handle_token_exchange_grant(
     );
 
     let response = TokenResponse {
+        issued_token_type: Some(ACCESS_TOKEN_TYPE),
         access_token,
         token_type,
         expires_in: claims.exp - now,
-        scope: "openstack:api".to_string(),
+        scope,
         id_token: None,
         refresh_token: None,
     };
     Ok((StatusCode::OK, Json(response)).into_response())
+}
+
+/// RFC 8693 §2.2.2: invalid subjects use invalid_request; provider failures
+/// are server errors rather than evidence of invalid credentials.
+fn exchange_error(
+    error: openstack_keystone_core::oauth2_client::TokenExchangeError,
+) -> Oauth2TokenError {
+    use openstack_keystone_core::oauth2_client::TokenExchangeError;
+    use openstack_keystone_core_types::token::TokenProviderError;
+
+    tracing::warn!(error = %error, "oauth2 token exchange rejected");
+    match error {
+        TokenExchangeError::InvalidSubjectToken(
+            TokenProviderError::Driver { .. }
+            | TokenProviderError::ApplicationCredentialProvider { .. }
+            | TokenProviderError::AssignmentProvider { .. }
+            | TokenProviderError::IdentityProvider(_)
+            | TokenProviderError::ResourceProvider(_)
+            | TokenProviderError::RevokeProvider(_)
+            | TokenProviderError::RoleProvider { .. }
+            | TokenProviderError::TrustProvider(_)
+            | TokenProviderError::StructBuilder(_)
+            | TokenProviderError::ExpiryCalculation
+            | TokenProviderError::UnsupportedDriver(_)
+            | TokenProviderError::UnsupportedTRDriver(_),
+        ) => Oauth2TokenError::internal("subject_token validation failed"),
+        TokenExchangeError::CrossDomainSubjectToken => Oauth2TokenError::invalid_request(
+            "subject_token's scope belongs to a different domain than this token endpoint",
+        ),
+        TokenExchangeError::MissingSubjectTokenExpiry => Oauth2TokenError::invalid_request(
+            "subject_token is missing an expiry claim, cannot be exchanged",
+        ),
+        TokenExchangeError::CredentialChainExpired => Oauth2TokenError::invalid_request(
+            "subject_token or application credential expiry does not permit token exchange",
+        ),
+        TokenExchangeError::InvalidSubjectToken(_)
+        | TokenExchangeError::NoAuthorization
+        | TokenExchangeError::NoDelegationProject
+        | TokenExchangeError::NotAUserPrincipal
+        | TokenExchangeError::NotDelegated(_)
+        | TokenExchangeError::UnsupportedDelegation(_) => Oauth2TokenError::invalid_request(
+            "subject_token is invalid, expired, or carries no exchangeable delegation",
+        ),
+        _ => Oauth2TokenError::internal("token issuance failed"),
+    }
 }
 
 /// Whether `token` is a JWT whose payload has a `cnf` claim, or one whose
@@ -231,6 +256,11 @@ pub(super) async fn requested_audience(
     if requested.len() > MAX_AUDIENCE_VALUES {
         return Err(Oauth2TokenError::invalid_target("too many audience values"));
     }
+    if requested.iter().any(String::is_empty) {
+        return Err(Oauth2TokenError::invalid_target(
+            "audience must not be empty",
+        ));
+    }
     let exec = ExecutionContext::internal(state);
     let known: HashSet<String> = state
         .provider
@@ -247,11 +277,6 @@ pub(super) async fn requested_audience(
         .collect();
     let mut service_types: Vec<&str> = Vec::new();
     for value in requested {
-        if value.is_empty() {
-            return Err(Oauth2TokenError::invalid_target(
-                "audience must not be empty",
-            ));
-        }
         if !known.contains(value) {
             return Err(Oauth2TokenError::invalid_target(format!(
                 "audience `{value}` is not a known service type"
@@ -330,7 +355,7 @@ mod tests {
 
         api.as_service()
             .oneshot(request(
-                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token",
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token",
             ))
             .await
             .unwrap()
@@ -479,6 +504,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_token_exchange_success_issues_signed_jwt_with_app_cred_delegation() {
+        assert_successful_exchange("urn:ietf:params:oauth:token-type:jwt").await;
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_accepts_access_token_subject_type() {
+        assert_successful_exchange(super::ACCESS_TOKEN_TYPE).await;
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_accepts_keystone_subject_type() {
+        assert_successful_exchange(super::super::exchange_request::KEYSTONE_TOKEN_TYPE).await;
+    }
+
+    async fn assert_successful_exchange(subject_type: &str) {
         let now = chrono::Utc::now();
         let app_cred_expires_at = now + chrono::Duration::seconds(120);
         let subject_expires_at = now + chrono::Duration::seconds(300);
@@ -512,14 +551,16 @@ mod tests {
 
         let response = api
             .as_service()
-            .oneshot(request(
-                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token",
-            ))
+            .oneshot(request(&format!(
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token&subject_token_type={subject_type}",
+            )))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let body = json_body(response).await;
         assert_eq!(body["token_type"], "Bearer");
+        assert_eq!(body["issued_token_type"], super::ACCESS_TOKEN_TYPE);
+        assert_eq!(body["scope"], "openstack:api");
         let access_token = body["access_token"].as_str().unwrap();
         let token_parts: Vec<_> = access_token.split('.').collect();
         assert_eq!(token_parts.len(), 3);
@@ -543,9 +584,17 @@ mod tests {
     /// Run a token-exchange request with `extra` appended to the form body and
     /// a catalog that knows exactly the `compute` and `network` services.
     async fn exchange_with(extra: &str) -> axum::response::Response {
+        exchange_with_client_scopes(extra, vec!["openstack:api".to_string()]).await
+    }
+
+    async fn exchange_with_client_scopes(
+        extra: &str,
+        scopes: Vec<String>,
+    ) -> axum::response::Response {
         use openstack_keystone_core_types::catalog::Service;
 
-        let client = token_exchange_client().await;
+        let mut client = token_exchange_client().await;
+        client.allowed_scopes = scopes;
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
             .expect_effective_dpop_mode()
@@ -582,10 +631,164 @@ mod tests {
             .with_state(state);
         api.as_service()
             .oneshot(request(&format!(
-                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token{extra}"
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt{extra}"
             )))
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_accepts_requested_access_token_type_and_scope() {
+        let response = exchange_with("&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&scope=openstack%3Aapi").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["issued_token_type"], super::ACCESS_TOKEN_TYPE);
+        assert_eq!(body["scope"], "openstack:api");
+        let claims = jwt_payload(body["access_token"].as_str().unwrap());
+        assert_eq!(claims["project_id"], "project-1");
+        assert_eq!(claims["roles"], serde_json::json!(["member"]));
+    }
+
+    async fn assert_rejected_parameters(extra: &str, code: &str) {
+        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api.as_service().oneshot(request(&format!(
+            "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token{extra}"
+        ))).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{extra}");
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let body = json_body(response).await;
+        assert_eq!(body["error"], code, "{extra}: {body}");
+        assert!(body.get("access_token").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_rejects_unsupported_requested_token_types() {
+        for value in [
+            "",
+            "urn:ietf:params:oauth:token-type:jwt",
+            "urn:example:unknown",
+        ] {
+            assert_rejected_parameters(
+                &format!("&requested_token_type={value}"),
+                "invalid_request",
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_rejects_actor_token() {
+        for value in ["", "actor"] {
+            assert_rejected_parameters(&format!("&actor_token={value}"), "invalid_request").await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_rejects_actor_token_type() {
+        for value in ["", "urn:ietf:params:oauth:token-type:jwt"] {
+            assert_rejected_parameters(&format!("&actor_token_type={value}"), "invalid_request")
+                .await;
+        }
+        assert_rejected_parameters(
+            "&actor_token=actor&actor_token_type=urn:ietf:params:oauth:token-type:jwt",
+            "invalid_request",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_rejects_resource_even_if_empty_or_repeated() {
+        for extra in [
+            "&resource=",
+            "&resource=https%3A%2F%2Fservice.example",
+            "&resource=a&resource=b",
+        ] {
+            assert_rejected_parameters(extra, "invalid_target").await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_rejects_unsupported_scope_without_issuing_token() {
+        for extra in [
+            "&scope=",
+            "&scope=openid",
+            "&scope=openstack%3Aapi%20admin",
+            "&scope=openstack%3Aapi%09",
+        ] {
+            assert_rejected_parameters(extra, "invalid_scope").await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_rejects_empty_audience() {
+        let response = exchange_with("&audience=").await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_target");
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_explicit_scope_must_be_allowed_for_client() {
+        let response = exchange_with_client_scopes("&scope=openstack:api", vec![]).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid_scope");
+        assert!(body.get("access_token").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_distinguishes_invalid_subject_from_provider_failure() {
+        use openstack_keystone_core_types::token::TokenProviderError;
+        for (kind, status, code) in [
+            ("expired", StatusCode::BAD_REQUEST, "invalid_request"),
+            ("revoked", StatusCode::BAD_REQUEST, "invalid_request"),
+            (
+                "provider",
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "server_error",
+            ),
+        ] {
+            let client = token_exchange_client().await;
+            let mut clients = MockOauth2ClientProvider::default();
+            clients
+                .expect_effective_dpop_mode()
+                .returning(|_, _, _| Ok(openstack_keystone_config::DpopMode::Disabled));
+            clients
+                .expect_get_by_client_id()
+                .returning(move |_, _| Ok(Some(client.clone())));
+            let mut tokens = crate::token::MockTokenProvider::default();
+            tokens
+                .expect_validate_to_context()
+                .times(1)
+                .returning(move |_, _, _, _| {
+                    Err(match kind {
+                        "expired" => TokenProviderError::Expired,
+                        "revoked" => TokenProviderError::TokenRevoked,
+                        _ => TokenProviderError::Driver {
+                            source: Box::new(std::io::Error::other("test backend unavailable")),
+                        },
+                    })
+                });
+            let state = get_mocked_state(
+                Provider::mocked_builder()
+                    .mock_oauth2_client(clients)
+                    .mock_token(tokens),
+                true,
+                None,
+            )
+            .await;
+            let mut api = openapi_router().with_state(state);
+            let response = api.as_service().oneshot(request(
+                "grant_type=urn:ietf:params:oauth:grant-type:token-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=subject&subject_token_type=urn:ietf:params:oauth:token-type:access_token"
+            )).await.unwrap();
+            assert_eq!(response.status(), status, "{kind}");
+            let body = json_body(response).await;
+            assert_eq!(body["error"], code, "{kind}: {body}");
+            assert!(body.get("access_token").is_none());
+            assert!(!body.to_string().contains("test backend unavailable"));
+        }
     }
 
     #[tokio::test]
@@ -667,13 +870,17 @@ mod tests {
         let response = api
             .as_service()
             .oneshot(request(
-                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token",
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt",
             ))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = json_body(response).await;
-        assert_eq!(body["error"], "invalid_grant");
+        assert_eq!(body["error"], "invalid_request");
+        assert_eq!(
+            body["error_description"],
+            "subject_token is invalid, expired, or carries no exchangeable delegation"
+        );
     }
 
     #[tokio::test]
@@ -692,6 +899,127 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(json_body(response).await["error"], "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_empty_subject_token_is_invalid_request() {
+        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+        let mut api = openapi_router().with_state(state);
+        let response = api.as_service().oneshot(request(
+            "grant_type=urn:ietf:params:oauth:grant-type:token-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=&subject_token_type=urn:ietf:params:oauth:token-type:access_token"
+        )).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid_request");
+        assert_eq!(
+            body["error_description"],
+            "missing required parameter: subject_token"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_missing_subject_token_type_is_invalid_request() {
+        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request(
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token",
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid_request");
+        assert_eq!(
+            body["error_description"],
+            "missing required parameter: subject_token_type"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_empty_subject_token_type_is_invalid_request() {
+        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request(
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token&subject_token_type=",
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid_request");
+        assert_eq!(
+            body["error_description"],
+            "subject_token_type `` is not supported"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_rate_limit_precedes_subject_token_type_validation() {
+        let mut config = openstack_keystone_config::Config::default();
+        config.oauth2.token_rate_limit_burst_size = 1;
+        config.oauth2.token_rate_limit_replenish_per_minute = 1;
+        config.oauth2.allow_host_header_issuer = true;
+        config.mapping.cluster_salt = Some("token-exchange-rate-limit-test".to_string().into());
+        let state = openstack_keystone_core::api::tests::get_mocked_state_with_config(
+            Provider::mocked_builder(),
+            true,
+            None,
+            config,
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let form = "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token&subject_token_type=";
+
+        // The invalid type must still consume the client's single burst token.
+        let first = api.as_service().oneshot(request(form)).await.unwrap();
+        assert_eq!(first.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(first).await["error"], "invalid_request");
+
+        let second = api.as_service().oneshot(request(form)).await.unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(second.headers().contains_key("retry-after"));
+        assert_eq!(
+            json_body(second).await["error_description"],
+            "rate limit exceeded"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_unsupported_subject_token_type_is_invalid_request() {
+        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request(
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aunsupported",
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid_request");
+        assert_eq!(
+            body["error_description"],
+            "subject_token_type `urn:ietf:params:oauth:token-type:unsupported` is not supported"
+        );
     }
 
     #[tokio::test]
@@ -716,7 +1044,7 @@ mod tests {
         let response = api
             .as_service()
             .oneshot(request(
-                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=x",
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=x&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt",
             ))
             .await
             .unwrap();
@@ -771,12 +1099,17 @@ mod tests {
         let response = api
             .as_service()
             .oneshot(request(
-                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=a-password-authenticated-token",
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=a-password-authenticated-token&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt",
             ))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        assert_eq!(json_body(response).await["error"], "invalid_grant");
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid_request");
+        assert_eq!(
+            body["error_description"],
+            "subject_token is invalid, expired, or carries no exchangeable delegation"
+        );
     }
 
     #[tokio::test]
@@ -790,7 +1123,11 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = json_body(response).await;
-        assert_eq!(body["error"], "invalid_grant");
+        assert_eq!(body["error"], "invalid_request");
+        assert_eq!(
+            body["error_description"],
+            "subject_token or application credential expiry does not permit token exchange"
+        );
     }
 
     #[tokio::test]
@@ -803,7 +1140,11 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = json_body(response).await;
-        assert_eq!(body["error"], "invalid_grant");
+        assert_eq!(body["error"], "invalid_request");
+        assert_eq!(
+            body["error_description"],
+            "subject_token or application credential expiry does not permit token exchange"
+        );
     }
 
     #[tokio::test]
@@ -818,11 +1159,15 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = json_body(response).await;
-        assert_eq!(body["error"], "invalid_grant");
+        assert_eq!(body["error"], "invalid_request");
+        assert_eq!(
+            body["error_description"],
+            "subject_token or application credential expiry does not permit token exchange"
+        );
     }
 
     const TOKEN_URL: &str = "http://localhost/v4/oauth2/domain-1/token";
-    const EXCHANGE_FORM: &str = "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=";
+    const EXCHANGE_FORM: &str = "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&subject_token=";
 
     /// A state with DPoP mode `mode` where `validate_to_context` may run
     /// `validations` times.
@@ -972,7 +1317,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        assert_eq!(json_body(response).await["error"], "invalid_grant");
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid_request");
+        assert_eq!(
+            body["error_description"],
+            "a DPoP-bound subject_token cannot be exchanged"
+        );
     }
 
     #[test]

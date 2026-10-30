@@ -37,14 +37,10 @@ use crate::audit::{
 use crate::keystone::ServiceState;
 
 use super::common::{client_credentials_from_request, rate_limit_key, sign_jwt};
+use super::exchange_request::{ACCESS_TOKEN_TYPE, KEYSTONE_TOKEN_TYPE, validate_exchange_request};
 use super::token_exchange::requested_audience;
 use super::{Oauth2TokenError, TokenForm, TokenResponse};
 use crate::api::v4::oauth2::well_known::base_url;
-
-/// `subject_token_type` of a Keystone (Fernet or JWS) token.
-const KEYSTONE_TOKEN_TYPE: &str = "urn:openstack:params:oauth:token-type:keystone";
-/// `subject_token_type` of an access token this endpoint minted earlier.
-const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
 
 /// Exchange a user's token for a token of the calling service, naming the
 /// user as `sub` and the service as `act` (ADR 0036 §6).
@@ -117,11 +113,26 @@ async fn exchange(
         ));
     };
     let client_id = client_id.as_str();
+    // Step 1 (ADR 0026 §7.A): rate limit before any lookup, keyed on the
+    // presented identity.
+    if let Err(not_until) = state
+        .oauth2_token_rate_limiter
+        .check_key(&rate_limit_key("on_behalf_of", svid.as_str()))
+    {
+        let retry_after = not_until
+            .wait_time_from(state.oauth2_token_rate_limiter.clock().now())
+            .as_secs()
+            .max(1);
+        return Err(Oauth2TokenError::too_many_requests(retry_after));
+    }
+
     let Some(subject_token) = form.subject_token.as_deref().filter(|t| !t.is_empty()) else {
         return Err(Oauth2TokenError::invalid_request(
             "missing required parameter: subject_token",
         ));
     };
+
+    let scope = validate_exchange_request(form)?;
     let subject = match form.subject_token_type.as_deref() {
         Some(KEYSTONE_TOKEN_TYPE) => OnBehalfOfSubject::Keystone(subject_token),
         Some(ACCESS_TOKEN_TYPE) => OnBehalfOfSubject::Hop(subject_token),
@@ -136,19 +147,6 @@ async fn exchange(
             ));
         }
     };
-
-    // Step 1 (ADR 0026 §7.A): rate limit before any lookup, keyed on the
-    // presented identity.
-    if let Err(not_until) = state
-        .oauth2_token_rate_limiter
-        .check_key(&rate_limit_key("on_behalf_of", svid.as_str()))
-    {
-        let retry_after = not_until
-            .wait_time_from(state.oauth2_token_rate_limiter.clock().now())
-            .as_secs()
-            .max(1);
-        return Err(Oauth2TokenError::too_many_requests(retry_after));
-    }
 
     let base = base_url(state, headers).await;
     let issuer = format!("{base}/v4/oauth2/{domain_id}");
@@ -171,21 +169,11 @@ async fn exchange(
         exchange_error(e)
     })?;
 
-    // `scope` keeps its ADR 0026 §4 meaning and has no effect on roles.
-    let scope = match form.scope.as_deref() {
-        Some(scope) => {
-            if scope
-                .split_whitespace()
-                .any(|s| !exchanged.client.allowed_scopes.iter().any(|a| a == s))
-            {
-                return Err(Oauth2TokenError::invalid_scope(
-                    "requested scope exceeds the client's allowed_scopes",
-                ));
-            }
-            scope.to_string()
-        }
-        None => "openstack:api".to_string(),
-    };
+    if form.scope.is_some() && !exchanged.client.allowed_scopes.contains(&scope) {
+        return Err(Oauth2TokenError::invalid_scope(
+            "requested scope exceeds the client's allowed_scopes",
+        ));
+    }
     let audience = bound_audience(
         requested_audience(state, &form.audience).await?,
         form.audience.is_empty(),
@@ -198,7 +186,7 @@ async fn exchange(
     let access_lifetime = (i64::from(oauth2_cfg.access_token_lifetime_minutes) * 60)
         .min(exchanged.valid_until.timestamp() - now);
     if access_lifetime <= 0 {
-        return Err(Oauth2TokenError::invalid_grant(
+        return Err(Oauth2TokenError::invalid_request(
             "the operation lifetime of the client is exhausted",
         ));
     }
@@ -241,6 +229,7 @@ async fn exchange(
     }
 
     let response = TokenResponse {
+        issued_token_type: Some(ACCESS_TOKEN_TYPE),
         access_token,
         token_type: "Bearer",
         expires_in: access_lifetime,
@@ -287,11 +276,11 @@ fn exchange_error(e: OnBehalfOfError) -> Oauth2TokenError {
         OnBehalfOfError::InvalidSubject
         | OnBehalfOfError::UnsupportedSubject(_)
         | OnBehalfOfError::CrossDomain
-        | OnBehalfOfError::Authentication(_) => Oauth2TokenError::invalid_grant(
+        | OnBehalfOfError::Authentication(_) => Oauth2TokenError::invalid_request(
             "subject_token is invalid, expired, or cannot be exchanged",
         ),
         OnBehalfOfError::OperationExpired => {
-            Oauth2TokenError::invalid_grant("the operation lifetime of the client is exhausted")
+            Oauth2TokenError::invalid_request("the operation lifetime of the client is exhausted")
         }
         OnBehalfOfError::Provider(_) => Oauth2TokenError::internal("token issuance failed"),
     }
@@ -509,6 +498,8 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(headers["cache-control"], "no-store");
         assert!(body.get("refresh_token").is_none());
+        assert_eq!(body["issued_token_type"], super::ACCESS_TOKEN_TYPE);
+        assert_eq!(body["scope"], "openstack:api");
         let claims = jwt_claims(body["access_token"].as_str().unwrap());
         assert_eq!(claims["sub"], "user-1");
         assert_eq!(claims["client_id"], "client-1");
@@ -539,6 +530,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_exchange_validates_common_rfc8693_parameters() {
+        for (extra, code) in [
+            ("&requested_token_type=", "invalid_request"),
+            (
+                "&requested_token_type=urn:ietf:params:oauth:token-type:jwt",
+                "invalid_request",
+            ),
+            ("&actor_token=", "invalid_request"),
+            ("&actor_token=actor", "invalid_request"),
+            ("&actor_token_type=", "invalid_request"),
+            (
+                "&actor_token_type=urn:ietf:params:oauth:token-type:jwt",
+                "invalid_request",
+            ),
+            ("&resource=", "invalid_target"),
+            ("&resource=a&resource=b", "invalid_target"),
+            ("&scope=", "invalid_scope"),
+            ("&scope=openid", "invalid_scope"),
+            ("&audience=", "invalid_target"),
+        ] {
+            let response = exchange(
+                &format!("{BODY}{extra}"),
+                Interface::Internal,
+                Some(SVID),
+                false,
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{extra}");
+            let body = json_body(response).await;
+            assert_eq!(body["error"], code, "{extra}: {body}");
+            assert!(body.get("access_token").is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_exchange_accepts_requested_access_token_type_and_scope() {
+        let response = exchange(
+            &format!("{BODY}&requested_token_type=urn:ietf:params:oauth:token-type:access_token&scope=openstack:api"),
+            Interface::Internal, Some(SVID), false,
+        ).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["issued_token_type"], super::ACCESS_TOKEN_TYPE);
+        assert_eq!(body["scope"], "openstack:api");
+    }
+
+    #[tokio::test]
     async fn test_exchange_rejects_other_svid() {
         let response = exchange(
             BODY,
@@ -563,9 +601,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_exchange_of_revoked_token_is_invalid_grant() {
+    async fn test_exchange_of_revoked_token_is_invalid_request() {
         let response = exchange(BODY, Interface::Internal, Some(SVID), true).await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        assert_eq!(json_body(response).await["error"], "invalid_grant");
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid_request");
+        assert_eq!(
+            body["error_description"],
+            "subject_token is invalid, expired, or cannot be exchanged"
+        );
     }
 }
