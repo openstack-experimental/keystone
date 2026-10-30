@@ -168,6 +168,7 @@ pub(super) async fn handle_service_grant_grant(
     );
 
     let response = TokenResponse {
+        issued_token_type: None,
         access_token,
         token_type: "Bearer",
         expires_in: access_lifetime,

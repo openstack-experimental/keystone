@@ -45,9 +45,10 @@ document and it will find `authorization_endpoint`, `token_endpoint`,
   **Not yet supported on the `authorization_code` and `device_code` grants:**
   requesting it there is rejected with `invalid_scope`. Use `client_credentials`
   or token exchange to obtain an OpenStack-capable token.
-- Omitting `scope` entirely defaults to the client's full `allowed_scopes` —
-  **except** `openstack:api` is never implied by omission; you must request it
-  explicitly every time.
+- Scope defaults depend on the grant. Human login and refresh never imply
+  `openstack:api`; it must be requested explicitly. `client_credentials`
+  defaults to the client's allowed scopes. Token exchange retains its existing
+  `openstack:api` default, as described below.
 
 ## Machine-to-machine: `client_credentials`
 
@@ -75,6 +76,60 @@ Response:
 Use `access_token` directly as `Authorization: Bearer <token>` against any
 OpenStack service running the native JWT middleware. No `id_token` is issued for
 this grant.
+
+## Token exchange (RFC 8693)
+
+A client enabled for `urn:ietf:params:oauth:grant-type:token-exchange` may
+exchange an existing delegated Keystone credential. Services authenticated by
+an SVID on the internal interface use the on-behalf-of path instead. Both paths
+apply the same request-envelope rules from [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html).
+Neither path creates additional delegation rights from request parameters.
+
+| Parameter | Supported behavior |
+| --- | --- |
+| `subject_token` | Required and non-empty. Existing token validation and delegation rules still apply. |
+| `subject_token_type` | Required. `urn:ietf:params:oauth:token-type:access_token` and `urn:openstack:params:oauth:token-type:keystone` identify supported native inputs. |
+| JWT subject type | The secret-authenticated path retains the `urn:ietf:params:oauth:token-type:jwt` compatibility arm for JWTs accepted by the native validator. This does not enable external-issuer JWT ingress; its mapping-engine dispatch is tracked in #1018. The SVID path retains its native-versus-hop dispatch. |
+| `requested_token_type` | Omit or use `urn:ietf:params:oauth:token-type:access_token`. Other values, including an empty value, return `invalid_request`. |
+| `scope` | Only `openstack:api` is implemented by exchange. Explicit requests must also be allowed by the client. Other values, including empty and mixed scopes, return `invalid_scope`; they are never silently ignored. Omission retains the existing `openstack:api` exchange default. OAuth scope does not select projects or grant extra roles. |
+| `audience` | Optional, repeatable service types from the catalog. Requests narrow the audience; unknown or empty values and excessive lists return `invalid_target`. On-behalf-of renewal also preserves the subject's audience boundary. |
+| `resource` | Not implemented. Any occurrence, including empty or repeated values, returns `invalid_target`. |
+| `actor_token`, `actor_token_type` | Not implemented as request parameters. Supplying either, even empty, returns `invalid_request`. SVID-based actor authentication remains part of the on-behalf-of flow. |
+
+For example, a secret-authenticated exchange uses this form body (values must
+be form-encoded by the client):
+
+```text
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+&client_id=<id>&client_secret=<secret>&subject_token=<token>
+&subject_token_type=urn:openstack:params:oauth:token-type:keystone
+&requested_token_type=urn:ietf:params:oauth:token-type:access_token
+&scope=openstack:api
+```
+
+Successful exchange responses include the RFC 8693 `issued_token_type`:
+
+```json
+{
+  "access_token": "eyJ...",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "token_type": "Bearer",
+  "expires_in": 120,
+  "scope": "openstack:api"
+}
+```
+
+DPoP-bound output uses `token_type: DPoP` and the same `issued_token_type`.
+Other grant responses omit `issued_token_type`.
+
+Malformed or unsupported request parameters use `invalid_request`, unsupported
+scope uses `invalid_scope`, and unsupported targets use `invalid_target`.
+Invalid/expired/revoked or policy-rejected subject credentials use
+`invalid_request` (RFC 8693 §2.2.2); client
+credentials and grant authorization use `invalid_client` and
+`unauthorized_client`. A provider failure is a server error, not evidence of an
+invalid subject token. Rate limiting runs before exchange parameter
+validation, and existing nonce and DPoP checks still apply.
 
 ## Human login: Authorization Code + PKCE
 

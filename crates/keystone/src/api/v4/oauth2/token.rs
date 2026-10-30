@@ -29,6 +29,7 @@ pub(super) use common::sign_jwt_typed;
 mod device_code;
 mod dpop;
 mod error;
+mod exchange_request;
 mod on_behalf_of;
 mod refresh_token;
 mod service_grant;
@@ -96,19 +97,20 @@ pub(super) struct TokenForm {
     /// token (Fernet or JWS) being exchanged.
     #[serde(default)]
     subject_token: Option<String>,
-    /// RFC 8693 Token Exchange grant only. Accepted but not branched on:
-    /// this repository's `TokenApi::validate_to_context` already decodes
-    /// either wire format transparently, so there is nothing for the value
-    /// to select between yet.
+    /// RFC 8693 subject type: access_token, Keystone-native, or native JWT.
     #[serde(default)]
-    #[allow(dead_code)]
     subject_token_type: Option<String>,
-    /// RFC 8693 Token Exchange grant only. Accepted but not branched on:
-    /// v1 always returns `urn:ietf:params:oauth:token-type:access_token`,
-    /// the only token type this grant mints.
+    /// RFC 8693 requested output type; only access_token is supported.
     #[serde(default)]
-    #[allow(dead_code)]
     requested_token_type: Option<String>,
+    /// Actor-token delegation is not implemented; reject even empty values.
+    #[serde(default)]
+    actor_token: Option<String>,
+    #[serde(default)]
+    actor_token_type: Option<String>,
+    /// Repeated RFC 8693 resources, extracted alongside audience below.
+    #[serde(skip)]
+    resource: Vec<String>,
     /// RFC 8628 `device_code` grant only (§3.4): the value returned by
     /// `/device_authorization`.
     #[serde(default)]
@@ -163,11 +165,13 @@ impl<S: Send + Sync> FromRequest<S> for TokenRequest {
         let pairs: Vec<(String, String)> = serde_urlencoded::from_bytes(&body).map_err(|_| {
             Oauth2TokenError::invalid_request("malformed form body").into_response()
         })?;
-        form.audience = pairs
-            .into_iter()
-            .filter(|(key, _)| key == "audience")
-            .map(|(_, value)| value)
-            .collect();
+        for (key, value) in pairs {
+            match key.as_str() {
+                "audience" => form.audience.push(value),
+                "resource" => form.resource.push(value),
+                _ => {}
+            }
+        }
         Ok(Self(form))
     }
 }
@@ -175,6 +179,9 @@ impl<S: Send + Sync> FromRequest<S> for TokenRequest {
 #[derive(Debug, Serialize)]
 struct TokenResponse {
     access_token: String,
+    /// Required for RFC 8693 exchanges, absent on other grants.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    issued_token_type: Option<&'static str>,
     token_type: &'static str,
     expires_in: i64,
     scope: String,

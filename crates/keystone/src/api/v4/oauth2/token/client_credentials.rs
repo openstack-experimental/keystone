@@ -226,6 +226,7 @@ pub(super) async fn handle_client_credentials_grant(
     );
 
     let response = TokenResponse {
+        issued_token_type: None,
         access_token,
         token_type,
         expires_in: lifetime_seconds,
@@ -484,6 +485,7 @@ mod tests {
         assert_eq!(response.headers()["pragma"], "no-cache");
         let body = json_body(response).await;
         assert_eq!(body["token_type"], "Bearer");
+        assert!(body.get("issued_token_type").is_none());
         let access_token = body["access_token"].as_str().unwrap();
         // Three dot-separated JWT segments, no signature validation here
         // (that belongs to the downstream middleware's own test suite).

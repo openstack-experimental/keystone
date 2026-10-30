@@ -197,7 +197,7 @@ impl Oauth2TokenError {
     pub(crate) fn internal(description: impl Into<String>) -> Self {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "invalid_request",
+            "server_error",
             description,
         )
     }

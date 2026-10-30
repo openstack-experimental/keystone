@@ -323,6 +323,7 @@ pub(super) async fn handle_device_code_grant(
     );
 
     let response = TokenResponse {
+        issued_token_type: None,
         access_token,
         token_type: super::dpop::token_type(confirmation.as_ref()),
         expires_in: access_lifetime,
