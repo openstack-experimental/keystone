@@ -69,6 +69,28 @@ pub struct IdentityProvider {
     #[serde(default)]
     pub password_hash_rounds: Option<usize>,
 
+    /// Number of threads of the dedicated password hashing pool.
+    ///
+    /// Password hashing is CPU bound. It runs on its own pool of OS threads,
+    /// separate from the async executor and from the shared blocking pool, so
+    /// that a burst of logins queues up behind the hashing threads instead of
+    /// competing with the rest of the service for CPU. Defaults to half of the
+    /// available parallelism (at least 1). Changes are applied on a
+    /// configuration reload without a restart; surplus threads exit after
+    /// they finish their current job.
+    #[serde(default)]
+    pub password_hashing_threads: Option<usize>,
+
+    /// Maximal number of password hashing jobs waiting for a free hashing
+    /// thread. Changes are applied on a configuration reload without a
+    /// restart; jobs that are already queued are never dropped by a shrink.
+    #[serde(default = "default_password_hashing_queue_size")]
+    pub password_hashing_queue_size: usize,
+
+    /// What to do with a password hashing job when the queue is full.
+    #[serde(default)]
+    pub password_hashing_queue_full: PasswordHashingQueueFull,
+
     /// User options id to name mapping.
     #[serde(default = "default_user_options_mapping")]
     pub user_options_id_name_mapping: HashMap<String, String>,
@@ -90,10 +112,26 @@ impl Default for IdentityProvider {
             max_password_length: default_max_password_length(),
             password_hashing_algorithm: PasswordHashingAlgo::Bcrypt,
             password_hash_rounds: None,
+            password_hashing_threads: None,
+            password_hashing_queue_size: default_password_hashing_queue_size(),
+            password_hashing_queue_full: PasswordHashingQueueFull::default(),
             user_options_id_name_mapping: default_user_options_mapping(),
             list_limit: ListLimitConfig::default(),
         }
     }
+}
+
+/// Behavior when the password hashing queue is full.
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PasswordHashingQueueFull {
+    /// Reject the request with `429 Too Many Requests`.
+    TooManyRequests,
+    /// Reject the request with `503 Service Unavailable`.
+    #[default]
+    ServiceUnavailable,
+    /// Wait for a free slot in the queue (unbounded waiting).
+    Wait,
 }
 
 /// Password hashing algorithm.
@@ -129,6 +167,10 @@ fn default_user_options_mapping() -> HashMap<String, String> {
     ])
 }
 
+fn default_password_hashing_queue_size() -> usize {
+    128
+}
+
 fn default_max_password_length() -> usize {
     4096
 }
@@ -139,4 +181,51 @@ fn default_domain_id() -> String {
 
 fn default_domain_config_dir() -> PathBuf {
     PathBuf::from("/etc/keystone/domains")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_password_hashing_pool_defaults() {
+        let cfg: IdentityProvider = serde_json::from_str("{}").unwrap();
+        assert_eq!(None, cfg.password_hashing_threads);
+        assert_eq!(128, cfg.password_hashing_queue_size);
+        assert_eq!(
+            PasswordHashingQueueFull::ServiceUnavailable,
+            cfg.password_hashing_queue_full
+        );
+    }
+
+    #[test]
+    fn test_password_hashing_queue_full_values() {
+        for (raw, expected) in [
+            (
+                "too_many_requests",
+                PasswordHashingQueueFull::TooManyRequests,
+            ),
+            (
+                "service_unavailable",
+                PasswordHashingQueueFull::ServiceUnavailable,
+            ),
+            ("wait", PasswordHashingQueueFull::Wait),
+        ] {
+            let cfg: IdentityProvider = serde_json::from_str(&format!(
+                r#"{{"password_hashing_threads": 3, "password_hashing_queue_size": 8, "password_hashing_queue_full": "{raw}"}}"#
+            ))
+            .unwrap();
+            assert_eq!(Some(3), cfg.password_hashing_threads);
+            assert_eq!(8, cfg.password_hashing_queue_size);
+            assert_eq!(expected, cfg.password_hashing_queue_full);
+        }
+    }
+
+    #[test]
+    fn test_password_hashing_queue_full_rejects_unknown() {
+        assert!(
+            serde_json::from_str::<IdentityProvider>(r#"{"password_hashing_queue_full": "drop"}"#)
+                .is_err()
+        );
+    }
 }

@@ -16,6 +16,7 @@ use secrecy::SecretString;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_password_hashing::PasswordHashError;
 
 use crate::entity::password as db_password;
 
@@ -52,20 +53,31 @@ where
             if i >= check_count {
                 break;
             }
-            if let Some(ref check_hash) = check_password.password_hash
-                && openstack_keystone_password_hashing::verify_password(
+            if let Some(ref check_hash) = check_password.password_hash {
+                match openstack_keystone_password_hashing::verify_password(
                     conf,
                     new_password,
                     check_hash,
                 )
                 .await
-                .is_ok_and(|x| x)
-            {
-                return Err(IdentityProviderError::SecurityCompliance(
-                    openstack_keystone_config::SecurityComplianceError::PasswordInvalid(
-                        "new password matches a previous password in history".to_string(),
-                    ),
-                ));
+                {
+                    Ok(true) => {
+                        return Err(IdentityProviderError::SecurityCompliance(
+                            openstack_keystone_config::SecurityComplianceError::PasswordInvalid(
+                                "new password matches a previous password in history".to_string(),
+                            ),
+                        ));
+                    }
+                    Ok(false) => {}
+                    // The check could not be done: failing open would silently
+                    // skip the password history requirement.
+                    Err(
+                        err @ (PasswordHashError::QueueFull { .. }
+                        | PasswordHashError::PoolUnavailable),
+                    ) => return Err(super::hash_error(err)),
+                    // A stored hash that cannot be verified cannot match.
+                    Err(_) => {}
+                }
             }
         }
     }

@@ -335,6 +335,9 @@ impl From<ApplicationCredentialProviderError> for KeystoneApiError {
                     retry_after: retry_after_secs,
                 }
             }
+            err @ ApplicationCredentialProviderError::PasswordHashingUnavailable => {
+                Self::ServiceUnavailable(err.to_string())
+            }
             ApplicationCredentialProviderError::ApplicationCredentialNotFound(x) => {
                 Self::NotFound {
                     resource: "application_credential".into(),
@@ -398,6 +401,11 @@ impl From<IdentityProviderError> for KeystoneApiError {
             IdentityProviderError::TooManyRequests { retry_after_secs } => Self::TooManyRequests {
                 retry_after: retry_after_secs,
             },
+            // The password hashing queue is full: transient overload, not a
+            // server fault.
+            err @ IdentityProviderError::PasswordHashingUnavailable => {
+                Self::ServiceUnavailable(err.to_string())
+            }
             // A write attempt against a read-only backend (e.g. the LDAP
             // identity driver, ADR-0027) is a permissions statement, not a
             // server fault.
@@ -1271,6 +1279,20 @@ mod tests {
                 .unwrap(),
             "7"
         );
+    }
+
+    /// A saturated password hashing pool is a transient overload: 503, not 500.
+    #[test]
+    fn password_hashing_unavailable_maps_to_503() {
+        let api_err: KeystoneApiError = IdentityProviderError::PasswordHashingUnavailable.into();
+        assert!(matches!(api_err, KeystoneApiError::ServiceUnavailable(_)));
+        let response = <KeystoneApiError as IntoResponse>::into_response(api_err);
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let api_err: KeystoneApiError =
+            ApplicationCredentialProviderError::PasswordHashingUnavailable.into();
+        let response = <KeystoneApiError as IntoResponse>::into_response(api_err);
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[test]

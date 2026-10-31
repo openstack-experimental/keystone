@@ -78,7 +78,7 @@ See [Fernet tokens](../admin/tokens/fernet.md) and
 | Section | Options |
 | --- | --- |
 | `[api_policy]` | `enable`, `opa_base_url`, `opa_policies_path` |
-| `[identity]` | `driver`, `caching`, `default_domain_id`, `max_password_length`, `password_hashing_algorithm`, `password_hash_rounds`, `user_options_id_name_mapping` |
+| `[identity]` | `driver`, `caching`, `default_domain_id`, `max_password_length`, `password_hashing_algorithm`, `password_hash_rounds`, `password_hashing_threads`, `password_hashing_queue_size`, `password_hashing_queue_full`, `user_options_id_name_mapping` |
 | `[assignment]` | `driver` |
 | `[catalog]` | `driver` |
 | `[resource]` | `driver` |
@@ -89,6 +89,36 @@ See [Fernet tokens](../admin/tokens/fernet.md) and
 | `[token_restriction]` | `driver` |
 
 OPA policy is enabled by default. See [API policy enforcement](../admin/policy.md).
+
+### Password hashing pool
+
+Hashing and verifying passwords (bcrypt, scrypt, PBKDF2) is CPU bound. It runs
+on a dedicated pool of OS threads with its own bounded queue, separate from the
+async executor and from the shared blocking pool. During a burst of logins
+only the password hashing requests wait in line; the rest of the service keeps
+its CPU share.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `password_hashing_threads` | half of the available CPUs (at least 1) | Number of hashing threads. |
+| `password_hashing_queue_size` | `128` | Jobs that can wait for a free hashing thread. |
+| `password_hashing_queue_full` | `service_unavailable` | What to do with a job when the queue is full: `service_unavailable` (HTTP 503), `too_many_requests` (HTTP 429 with `Retry-After`) or `wait` (wait for a free slot without a limit). |
+
+Sizes outside the supported range are clamped (1 to 1024 threads, 1 to
+1000000 queue slots) and a warning is logged. Size the queue so that it drains
+within a client timeout: with `T` threads and a hash time `h`, a full queue of
+`Q` jobs takes about `Q * h / T` seconds. A large queue turns overload into long
+response times instead of fast 503/429 rejections.
+
+All three options are applied by a configuration reload, no restart is needed.
+`password_hashing_queue_full` is read for every request. Running hashes and
+jobs that are already queued are never interrupted or dropped: surplus threads
+exit as soon as they finish their current job, and when the queue shrinks below the number of
+waiting jobs, the extra slots disappear as the waiting jobs start. A request rejected by
+a full queue never reaches the password check, so it does not count as a failed
+authentication attempt. With `wait` a long backlog turns into long response
+times; clients may give up while their job still sits in the queue (such jobs
+are skipped when they are reached).
 
 ## Feature Providers
 

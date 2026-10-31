@@ -148,6 +148,12 @@ pub enum IdentityProviderError {
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
+    /// Password hashing capacity is exhausted: the queue of the dedicated
+    /// hashing pool is full (and configured to reject) or the pool cannot run
+    /// the job. Transient, the request can be retried.
+    #[error("password hashing is temporarily unavailable")]
+    PasswordHashingUnavailable,
+
     /// Operation rejected because the configured backend is read-only, e.g.
     /// any mutation against the LDAP identity backend (ADR-0027 §12).
     #[error("operation not permitted: backend is read-only ({0})")]

@@ -79,11 +79,11 @@ pub async fn authenticate_by_password(
         // Fetch the pre-calculated dummy hash instantly from the cache
         let dummy_hash = password_hashing::get_or_init_dummy_hash(config)
             .await
-            .map_err(IdentityProviderError::password_hash)?;
+            .map_err(crate::password::hash_error)?;
 
         let _ = password_hashing::verify_password(config, &auth.password, dummy_hash)
             .await
-            .map_err(IdentityProviderError::password_hash)?;
+            .map_err(crate::password::hash_error)?;
         return Err(AuthenticationError::UserNameOrPasswordWrong.into());
     }
 
@@ -136,7 +136,7 @@ pub async fn authenticate_by_password(
     let now = Utc::now();
     if !password_hashing::verify_password(config, &auth.password, expected_hash)
         .await
-        .map_err(IdentityProviderError::password_hash)?
+        .map_err(crate::password::hash_error)?
     {
         local_user::log_failed_auth(db, &local_user_entry, now).await?;
         return Err(AuthenticationError::UserNameOrPasswordWrong.into());

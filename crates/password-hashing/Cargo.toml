@@ -15,6 +15,7 @@ base64.workspace = true
 bcrypt = { workspace = true, features = ["alloc"] }
 hmac.workspace = true
 openstack-keystone-config.workspace = true
+openstack-keystone-telemetry.workspace = true
 rand.workspace = true
 scrypt = "0.12"
 secrecy.workspace = true

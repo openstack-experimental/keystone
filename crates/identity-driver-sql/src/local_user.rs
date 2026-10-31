@@ -85,7 +85,7 @@ pub async fn update_password(
     // Verify original password
     if !password_hashing::verify_password(conf, &original_password, expected_hash)
         .await
-        .map_err(IdentityProviderError::password_hash)?
+        .map_err(crate::password::hash_error)?
     {
         return Err(AuthenticationError::UserNameOrPasswordWrong.into());
     }

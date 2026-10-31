@@ -86,6 +86,12 @@ pub enum ApplicationCredentialProviderError {
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
+    /// Password hashing capacity is exhausted: the queue of the dedicated
+    /// hashing pool is full (and configured to reject) or the pool cannot run
+    /// the job. Transient, the request can be retried.
+    #[error("password hashing is temporarily unavailable")]
+    PasswordHashingUnavailable,
+
     /// Role Database error.
     #[error(transparent)]
     Role {
