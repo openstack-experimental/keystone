@@ -5543,6 +5543,7 @@ dependencies = [
  "bcrypt",
  "hmac 0.13.0",
  "openstack-keystone-config",
+ "openstack-keystone-telemetry",
  "rand 0.10.3",
  "scrypt",
  "secrecy",

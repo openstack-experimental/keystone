@@ -263,6 +263,7 @@ pub fn identity_failure_reason(e: &IdentityProviderError) -> &'static str {
         IdentityProviderError::NoMainUserEntry(_) => "NoMainUserEntry",
         IdentityProviderError::NotImplemented(_) => "NotImplemented",
         IdentityProviderError::PasswordHash { .. } => "PasswordHash",
+        IdentityProviderError::PasswordHashingUnavailable => "PasswordHashingUnavailable",
         IdentityProviderError::Readonly(_) => "Readonly",
         IdentityProviderError::ResourceProvider { .. } => "ProviderError",
         IdentityProviderError::SecurityCompliance(_) => "SecurityCompliance",

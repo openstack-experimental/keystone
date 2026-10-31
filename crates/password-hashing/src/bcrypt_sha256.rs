@@ -24,10 +24,9 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 // KeyInit provides new_from_slice; Mac provides update/finalize.
 use hmac::{Hmac, KeyInit, Mac};
 use openstack_keystone_config::Config;
-use tokio::task;
 use tracing::debug;
 
-use super::{PasswordHashError, PasswordHasher, generate_salt};
+use super::{PasswordHashError, PasswordHasher, generate_salt, pool};
 
 type HmacSha256 = Hmac<sha2::Sha256>;
 
@@ -68,7 +67,7 @@ impl PasswordHasher for BcryptSha256Hasher {
         let password_bytes = password.to_vec();
         let rounds = conf.identity.password_hash_rounds.unwrap_or(12);
 
-        let hash = task::spawn_blocking(move || {
+        pool::run(conf, move || {
             // Two values are derived from the same 16 random salt bytes:
             //   (a) the raw bytes themselves, used directly as the salt for
             //       the real bcrypt hash computed below; and
@@ -121,13 +120,12 @@ impl PasswordHasher for BcryptSha256Hasher {
                 rounds, salt_str, digest_str
             ))
         })
-        .await??;
-        Ok(hash)
+        .await
     }
 
     async fn verify(
         &self,
-        _conf: &Config,
+        conf: &Config,
         password: &[u8],
         hash: &str,
     ) -> Result<bool, PasswordHashError> {
@@ -176,7 +174,7 @@ impl PasswordHasher for BcryptSha256Hasher {
             PasswordHashError::CryptoHash("Missing rounds parameter in BcryptSha256 record".into())
         })?;
 
-        match task::spawn_blocking(move || {
+        pool::run(conf, move || {
             // Reconstruct the bcrypt hash string for checkpw.
             // Python does: new_salt = f"${opts['t']}${opts['r']}${salt}"
             // then bcrypt.checkpw(hmac_digest,
@@ -201,11 +199,7 @@ impl PasswordHasher for BcryptSha256Hasher {
 
             ::bcrypt::verify(intermediate_b64, &reconstructed_hash).map_err(PasswordHashError::from)
         })
-        .await?
-        {
-            Ok(res) => Ok(res),
-            Err(e) => Err(e),
-        }
+        .await
     }
 }
 

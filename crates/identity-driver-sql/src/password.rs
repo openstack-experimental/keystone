@@ -19,6 +19,9 @@ use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core_types::identity::UserResponseBuilder;
 use openstack_keystone_password_hashing as password_hashing;
 
+use openstack_keystone_config::PasswordHashingQueueFull;
+use openstack_keystone_password_hashing::PasswordHashError;
+
 use crate::entity::password as db_password;
 
 mod check_history;
@@ -30,6 +33,28 @@ pub use create::create;
 pub use list::list;
 
 use sea_orm::ConnectionTrait;
+
+/// `Retry-After` hint for a request rejected by the full password hashing
+/// queue. Hashing takes at most a few hundred milliseconds per job.
+const HASHING_QUEUE_RETRY_AFTER_SECS: u64 = 1;
+
+/// Convert the password hashing error into the identity provider error.
+///
+/// A rejection by the full hashing queue is mapped according to the configured
+/// behavior to the dedicated errors (429/503) instead of an internal error.
+pub(crate) fn hash_error(err: PasswordHashError) -> IdentityProviderError {
+    match err {
+        PasswordHashError::QueueFull {
+            behavior: PasswordHashingQueueFull::TooManyRequests,
+        } => IdentityProviderError::TooManyRequests {
+            retry_after_secs: HASHING_QUEUE_RETRY_AFTER_SECS,
+        },
+        PasswordHashError::QueueFull { .. } | PasswordHashError::PoolUnavailable => {
+            IdentityProviderError::PasswordHashingUnavailable
+        }
+        other => IdentityProviderError::password_hash(other),
+    }
+}
 
 /// Set a new password for the local user using pre-loaded existing passwords.
 ///
@@ -68,7 +93,7 @@ pub async fn set_new_password<C: ConnectionTrait>(
         .unwrap_or(0);
     let hashed_password = password_hashing::hash_password(conf, &password)
         .await
-        .map_err(IdentityProviderError::password_hash)?;
+        .map_err(hash_error)?;
 
     let expires_at = conf.security_compliance.get_password_expires_at(now);
     set::set_new_password(
@@ -141,6 +166,30 @@ pub mod tests {
     use crate::entity::password as db_password;
 
     use super::*;
+
+    #[test]
+    fn test_hash_error_queue_full_follows_configured_behavior() {
+        assert!(matches!(
+            hash_error(PasswordHashError::QueueFull {
+                behavior: PasswordHashingQueueFull::TooManyRequests
+            }),
+            IdentityProviderError::TooManyRequests { retry_after_secs } if retry_after_secs >= 1
+        ));
+        assert!(matches!(
+            hash_error(PasswordHashError::QueueFull {
+                behavior: PasswordHashingQueueFull::ServiceUnavailable
+            }),
+            IdentityProviderError::PasswordHashingUnavailable
+        ));
+        assert!(matches!(
+            hash_error(PasswordHashError::PoolUnavailable),
+            IdentityProviderError::PasswordHashingUnavailable
+        ));
+        assert!(matches!(
+            hash_error(PasswordHashError::CryptoHash("x".into())),
+            IdentityProviderError::PasswordHash { .. }
+        ));
+    }
 
     /// Create a mock password for testing.
     ///

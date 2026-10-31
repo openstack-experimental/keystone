@@ -41,12 +41,13 @@ use tracing::debug;
 use rand::distr::{Alphanumeric, SampleString};
 use secrecy::{ExposeSecret, SecretString};
 
-use openstack_keystone_config::{Config, PasswordHashingAlgo};
+use openstack_keystone_config::{Config, PasswordHashingAlgo, PasswordHashingQueueFull};
 
 mod bcrypt;
 mod bcrypt_sha256;
 mod pbkdf2;
 mod plaintext;
+mod pool;
 mod scrypt;
 
 use bcrypt::BcryptHasher;
@@ -93,6 +94,20 @@ pub enum PasswordHashError {
         #[from]
         source: tokio::task::JoinError,
     },
+
+    /// The queue of the dedicated hashing pool is full and the configured
+    /// behavior is to reject the job instead of waiting.
+    #[error("password hashing queue is full")]
+    QueueFull {
+        /// The configured behavior, never
+        /// [`PasswordHashingQueueFull::Wait`].
+        behavior: PasswordHashingQueueFull,
+    },
+
+    /// The dedicated hashing pool cannot run the job (no thread could be
+    /// started or the job panicked).
+    #[error("password hashing pool is unavailable")]
+    PoolUnavailable,
 }
 
 // ---------------------------------------------------------------------------

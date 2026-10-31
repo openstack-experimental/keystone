@@ -17,9 +17,8 @@
 //! `keystone/common/password_hashers/bcrypt.py::Bcrypt`.
 
 use openstack_keystone_config::Config;
-use tokio::task;
 
-use super::{PasswordHashError, PasswordHasher};
+use super::{PasswordHashError, PasswordHasher, pool};
 
 /// Plain bcrypt. The `bcrypt` crate path is referenced absolutely (`::bcrypt`)
 /// throughout this module so it is never confused with the module's own name.
@@ -29,27 +28,32 @@ impl PasswordHasher for BcryptHasher {
     async fn hash(&self, conf: &Config, password: &[u8]) -> Result<String, PasswordHashError> {
         let password_bytes = password.to_vec();
         let rounds = conf.identity.password_hash_rounds.unwrap_or(12);
-        // bcrypt::hash is CPU-bound; run off the async executor.
-        let hash =
-            task::spawn_blocking(move || ::bcrypt::hash(password_bytes, rounds as u32)).await??;
-        Ok(hash)
+        // bcrypt::hash is CPU-bound; run on the dedicated hashing pool.
+        pool::run(conf, move || {
+            Ok(::bcrypt::hash(password_bytes, rounds as u32)?)
+        })
+        .await
     }
 
     async fn verify(
         &self,
-        _conf: &Config,
+        conf: &Config,
         password: &[u8],
         hash: &str,
     ) -> Result<bool, PasswordHashError> {
         let password_bytes = password.to_vec();
         let hash_str = hash.to_string();
-        match task::spawn_blocking(move || ::bcrypt::verify(password_bytes, &hash_str)).await? {
-            Ok(res) => Ok(res),
-            // A malformed hash string is not a fatal error - it just means
-            // the stored value is not a valid bcrypt hash and cannot match.
-            Err(::bcrypt::BcryptError::InvalidHash(_)) => Ok(false),
-            Err(e) => Err(PasswordHashError::from(e)),
-        }
+        pool::run(conf, move || {
+            match ::bcrypt::verify(password_bytes, &hash_str) {
+                Ok(res) => Ok(res),
+                // A malformed hash string is not a fatal error - it just means
+                // the stored value is not a valid bcrypt hash and cannot
+                // match.
+                Err(::bcrypt::BcryptError::InvalidHash(_)) => Ok(false),
+                Err(e) => Err(PasswordHashError::from(e)),
+            }
+        })
+        .await
     }
 }
 
