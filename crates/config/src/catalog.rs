@@ -26,6 +26,30 @@ pub struct CatalogProvider {
     /// `GET /v3/services`, `/v3/regions`, `/v3/endpoints` pagination limits.
     #[serde(default)]
     pub list_limit: ListLimitConfig,
+
+    /// Toggle for catalog caching.
+    ///
+    /// When enabled the assembled service catalog is cached in memory for
+    /// `cache_time` seconds.
+    #[serde(default = "default_caching")]
+    pub caching: bool,
+
+    /// Time in seconds the assembled service catalog is cached in memory.
+    ///
+    /// Changes made through this process invalidate the cache immediately;
+    /// changes made by other processes become visible after at most this
+    /// time. `0` disables the cache. Only effective when `caching` is
+    /// enabled.
+    #[serde(default = "default_cache_time")]
+    pub cache_time: u64,
+}
+
+fn default_caching() -> bool {
+    true
+}
+
+fn default_cache_time() -> u64 {
+    10
 }
 
 impl Default for CatalogProvider {
@@ -33,6 +57,8 @@ impl Default for CatalogProvider {
         Self {
             driver: default_sql_driver(),
             list_limit: ListLimitConfig::default(),
+            caching: default_caching(),
+            cache_time: default_cache_time(),
         }
     }
 }
