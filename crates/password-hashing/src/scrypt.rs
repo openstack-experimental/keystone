@@ -19,21 +19,20 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
 use openstack_keystone_config::Config;
 use subtle::ConstantTimeEq;
-use tokio::task;
 
-use super::{PasswordHashError, PasswordHasher, generate_salt};
+use super::{PasswordHashError, PasswordHasher, generate_salt, pool};
 
 pub(super) struct ScryptHasher;
 
 impl PasswordHasher for ScryptHasher {
-    async fn hash(&self, _conf: &Config, password: &[u8]) -> Result<String, PasswordHashError> {
+    async fn hash(&self, conf: &Config, password: &[u8]) -> Result<String, PasswordHashError> {
         // mirrors keystone/common/password_hashers/scrypt.py::Scrypt.hash()
         // Python hardcodes: n=2**16 (ln=16), r=8, p=1, salt_size=16, output=32
         // bytes. scrypt_block_size / scrypt_parallelism / salt_bytesize
         // config fields are not yet in IdentityProvider - use
         // Keystone's own defaults until they are added.
         let password_bytes = password.to_vec();
-        let hash = task::spawn_blocking(move || {
+        pool::run(conf, move || {
             let salt = generate_salt();
             // Params::new(log_n, r, p): ln=16 means n=2^16=65536.
             let params = ::scrypt::Params::new(16, 8, 1)
@@ -49,13 +48,12 @@ impl PasswordHasher for ScryptHasher {
                 "$scrypt$ln=16,r=8,p=1${salt_str}${digest_str}"
             ))
         })
-        .await??;
-        Ok(hash)
+        .await
     }
 
     async fn verify(
         &self,
-        _conf: &Config,
+        conf: &Config,
         password: &[u8],
         hash: &str,
     ) -> Result<bool, PasswordHashError> {
@@ -65,7 +63,7 @@ impl PasswordHasher for ScryptHasher {
         // any old hashes with different params.
         let password_bytes = password.to_vec();
         let hash_str = hash.to_string();
-        let res = task::spawn_blocking(move || -> Result<bool, PasswordHashError> {
+        pool::run(conf, move || -> Result<bool, PasswordHashError> {
             // Strip leading '$', split on '$': ["scrypt", "ln=N,r=R,p=P",
             // salt_b64, digest_b64]
             let parts: Vec<&str> = hash_str[1..].split('$').collect();
@@ -109,8 +107,7 @@ impl PasswordHasher for ScryptHasher {
 
             Ok(computed.as_slice().ct_eq(expected.as_slice()).into())
         })
-        .await??;
-        Ok(res)
+        .await
     }
 }
 

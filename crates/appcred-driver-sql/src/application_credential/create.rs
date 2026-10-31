@@ -85,7 +85,7 @@ pub async fn create(
     model.secret_hash = if let Some(secret) = &rec.secret {
         Set(password_hashing::hash_password(conf, secret)
             .await
-            .map_err(ApplicationCredentialProviderError::password_hash)?)
+            .map_err(super::verify::hash_error)?)
     } else {
         return Err(ApplicationCredentialProviderError::SecretMissing);
     };

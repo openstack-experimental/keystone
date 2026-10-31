@@ -281,6 +281,14 @@ token-restriction)
 0030 introduces (e.g. `role_assignments`, `catalog_endpoints`), not
 per-request data.
 
+#### Password hashing pool
+
+| Metric | Type | Labels | Purpose |
+|---|---|---|---|
+| `keystone_password_hashing_rejected_total` | counter | `behavior` (`too_many_requests`/`service_unavailable`) | Jobs rejected by a full hashing queue |
+| `keystone_password_hashing_queue_depth` | gauge | – | Jobs waiting for a free hashing thread |
+| `keystone_password_hashing_queue_wait_seconds` | histogram | – | Time a job waited for a hashing thread |
+
 #### Process / runtime metrics — out of scope
 
 Standard process metrics (`process_cpu_seconds_total`,

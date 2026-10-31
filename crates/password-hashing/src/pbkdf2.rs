@@ -25,9 +25,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
 use hmac::{Hmac, KeyInit, Mac};
 use openstack_keystone_config::Config;
 use subtle::ConstantTimeEq;
-use tokio::task;
 
-use super::{PasswordHashError, PasswordHasher, generate_salt};
+use super::{PasswordHashError, PasswordHasher, generate_salt, pool};
 
 type HmacSha512 = Hmac<sha2::Sha512>;
 
@@ -44,7 +43,7 @@ impl PasswordHasher for Pbkdf2Sha512Hasher {
         // (binascii.b2a_base64().rstrip("=\n")).
         let password_bytes = password.to_vec();
         let rounds = conf.identity.password_hash_rounds.unwrap_or(25000);
-        let hash = task::spawn_blocking(move || {
+        pool::run(conf, move || {
             let salt = generate_salt();
             let mut digest = [0u8; SHA512_OUTPUT_BYTES];
             pbkdf2_hmac_sha512(&password_bytes, &salt, rounds as u32, &mut digest)?;
@@ -54,13 +53,12 @@ impl PasswordHasher for Pbkdf2Sha512Hasher {
                 "$pbkdf2-sha512${rounds}${salt_str}${digest_str}"
             ))
         })
-        .await??;
-        Ok(hash)
+        .await
     }
 
     async fn verify(
         &self,
-        _conf: &Config,
+        conf: &Config,
         password: &[u8],
         hash: &str,
     ) -> Result<bool, PasswordHashError> {
@@ -70,7 +68,7 @@ impl PasswordHasher for Pbkdf2Sha512Hasher {
         // instead of '+'.
         let password_bytes = password.to_vec();
         let hash_str = hash.to_string();
-        let res = task::spawn_blocking(move || {
+        pool::run(conf, move || {
             // Split "$pbkdf2-sha512$<rounds>$<salt>$<digest>" on '$':
             // parts = ["", "pbkdf2-sha512", rounds_str, salt_b64, digest_b64]
             let parts: Vec<&str> = hash_str.split('$').collect();
@@ -111,8 +109,7 @@ impl PasswordHasher for Pbkdf2Sha512Hasher {
                 .ct_eq(expected_digest.as_slice())
                 .into())
         })
-        .await??;
-        Ok(res)
+        .await
     }
 }
 

@@ -41,12 +41,13 @@ use tracing::debug;
 use rand::distr::{Alphanumeric, SampleString};
 use secrecy::{ExposeSecret, SecretString};
 
-use openstack_keystone_config::{Config, PasswordHashingAlgo};
+use openstack_keystone_config::{Config, PasswordHashingAlgo, PasswordHashingQueueFull};
 
 mod bcrypt;
 mod bcrypt_sha256;
 mod pbkdf2;
 mod plaintext;
+mod pool;
 mod scrypt;
 
 use bcrypt::BcryptHasher;
@@ -87,12 +88,23 @@ pub enum PasswordHashError {
     #[error("Password hashing framework error: {0}")]
     CryptoHash(String),
 
-    /// Async task join error.
-    #[error(transparent)]
-    Join {
-        #[from]
-        source: tokio::task::JoinError,
+    /// A hashing job panicked. This is a bug, not a transient condition.
+    #[error("password hashing job panicked")]
+    JobPanicked,
+
+    /// The queue of the dedicated hashing pool is full and the configured
+    /// behavior is to reject the job instead of waiting.
+    #[error("password hashing queue is full")]
+    QueueFull {
+        /// The configured behavior, never
+        /// [`PasswordHashingQueueFull::Wait`].
+        behavior: PasswordHashingQueueFull,
     },
+
+    /// The dedicated hashing pool cannot run the job (no thread could be
+    /// started).
+    #[error("password hashing pool is unavailable")]
+    PoolUnavailable,
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +241,20 @@ pub async fn get_or_init_dummy_hash(conf: &Config) -> Result<String, PasswordHas
 /// `crates/keystone/src/bin/keystone.rs` for the wiring.
 pub async fn reset_dummy_hash_cache() {
     get_dummy_cache().map.write().await.clear();
+}
+
+/// `Retry-After` hint (seconds) for a request rejected by the full hashing
+/// queue. Hashing takes at most a few hundred milliseconds per job.
+pub const QUEUE_FULL_RETRY_AFTER_SECS: u64 = 1;
+
+/// Apply `[identity] password_hashing_threads` and
+/// `password_hashing_queue_size` to the running hashing pool.
+///
+/// Call this whenever the Keystone configuration reloads. Does nothing until
+/// the pool is used for the first time. Running hashes are never interrupted
+/// by a shrink.
+pub fn apply_pool_config(conf: &Config) {
+    pool::apply_config(conf);
 }
 
 /// Generate a dummy password hash matching the configured algorithm.

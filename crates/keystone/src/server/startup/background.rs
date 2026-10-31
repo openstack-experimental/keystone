@@ -100,6 +100,7 @@ pub async fn spawn_all(startup: &Startup, phase_start: Instant) {
 
     // Config-reload reactors.
     spawn(reset_dummy_hash_on_reload(token.clone(), state.clone()));
+    spawn(resize_hashing_pool_on_reload(token.clone(), state.clone()));
     spawn(reload_rate_limits_on_config_change(
         token.clone(),
         state.clone(),
@@ -297,6 +298,31 @@ async fn reset_dummy_hash_on_reload(cancel: CancellationToken, state: ServiceSta
             }
             () = cancel.cancelled() => {
                 info!("Cancellation requested. Stopping dummy-hash reset task.");
+                break;
+            }
+        }
+    }
+}
+
+/// Resize the password hashing pool on every configuration reload.
+///
+/// Applies `[identity] password_hashing_threads` and
+/// `password_hashing_queue_size`. Running hashes are never interrupted.
+async fn resize_hashing_pool_on_reload(cancel: CancellationToken, state: ServiceState) {
+    let mut reload_rx = state.config_manager.notify_tx.subscribe();
+    loop {
+        tokio::select! {
+            recv = reload_rx.recv() => {
+                match recv {
+                    Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        let config = state.config_manager.config.read().await;
+                        openstack_keystone_password_hashing::apply_pool_config(&config);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            () = cancel.cancelled() => {
+                info!("Cancellation requested. Stopping hashing pool resize task.");
                 break;
             }
         }

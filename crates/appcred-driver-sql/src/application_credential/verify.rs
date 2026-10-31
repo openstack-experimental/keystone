@@ -17,15 +17,34 @@ use sea_orm::entity::*;
 use sea_orm::query::*;
 use secrecy::SecretString;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::{Config, PasswordHashingQueueFull};
 use openstack_keystone_core::application_credential::ApplicationCredentialProviderError;
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_password_hashing as password_hashing;
+use openstack_keystone_password_hashing::{self as password_hashing, PasswordHashError};
 
 use crate::entity::{
     application_credential as db_application_credential,
     prelude::ApplicationCredential as DbApplicationCredential,
 };
+
+/// Convert the password hashing error into the application credential provider
+/// error.
+///
+/// A rejection by the full hashing queue is mapped according to the configured
+/// behavior to the dedicated errors (429/503) instead of an internal error.
+pub(super) fn hash_error(err: PasswordHashError) -> ApplicationCredentialProviderError {
+    match err {
+        PasswordHashError::QueueFull {
+            behavior: PasswordHashingQueueFull::TooManyRequests,
+        } => ApplicationCredentialProviderError::TooManyRequests {
+            retry_after_secs: password_hashing::QUEUE_FULL_RETRY_AFTER_SECS,
+        },
+        PasswordHashError::QueueFull { .. } | PasswordHashError::PoolUnavailable => {
+            ApplicationCredentialProviderError::PasswordHashingUnavailable
+        }
+        other => ApplicationCredentialProviderError::password_hash(other),
+    }
+}
 
 pub async fn verify_secret(
     config: &Config,
@@ -43,17 +62,17 @@ pub async fn verify_secret(
         // "not found" path takes comparable time to the "wrong secret" one.
         let dummy_hash = password_hashing::get_or_init_dummy_hash(config)
             .await
-            .map_err(ApplicationCredentialProviderError::password_hash)?;
+            .map_err(hash_error)?;
         let _ = password_hashing::verify_password(config, secret, dummy_hash)
             .await
-            .map_err(ApplicationCredentialProviderError::password_hash)?;
+            .map_err(hash_error)?;
         return Err(ApplicationCredentialProviderError::AuthenticationFailed);
     };
 
     // record is db_application_credential::Model, which has secret_hash
     let matched = password_hashing::verify_password(config, secret, &record.secret_hash)
         .await
-        .map_err(ApplicationCredentialProviderError::password_hash)?;
+        .map_err(hash_error)?;
 
     if !matched {
         return Err(ApplicationCredentialProviderError::AuthenticationFailed);

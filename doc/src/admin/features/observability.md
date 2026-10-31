@@ -80,6 +80,7 @@ first dashboard from.
 | Throttled clients       | `sum by (scope) (rate(keystone_rate_limit_rejections_total[5m]))`                                                     |
 | Policy engine trouble   | `rate(keystone_policy_errors_total[5m])`                                                                              |
 | Cache effectiveness     | `rate(keystone_cache_hits_total[5m]) / (rate(keystone_cache_hits_total[5m]) + rate(keystone_cache_misses_total[5m]))` |
+| Login queue saturated   | `keystone_password_hashing_queue_depth` and `sum(rate(keystone_password_hashing_rejected_total[5m]))`                 |
 | Raft leader exists      | `sum(keystone_raft_is_leader) == 1`                                                                                   |
 | Follower falling behind | `keystone_raft_replication_lag`                                                                                       |
 
