@@ -1,0 +1,42 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.0](https://github.com/openstack-experimental/keystone/releases/tag/openstack-keystone-oauth2-session-driver-raft-v0.1.0) - 2026-11-01
+
+### Added
+
+- Support DPoP in /token endpoint ([#1581](https://github.com/openstack-experimental/keystone/pull/1581))
+- *(oauth2)* Add DPoP binding data model ([#1576](https://github.com/openstack-experimental/keystone/pull/1576))
+- *(oauth2)* Add delegatable service grants ([#1550](https://github.com/openstack-experimental/keystone/pull/1550))
+- *(oauth2)* back-channel/front-channel logout and upstream IdP logout ([#1505](https://github.com/openstack-experimental/keystone/pull/1505))
+- *(oauth2)* Add back-channel logout ([#1493](https://github.com/openstack-experimental/keystone/pull/1493))
+- *(oauth2)* Add federated sign-in to device page ([#1491](https://github.com/openstack-experimental/keystone/pull/1491))
+- *(oauth2)* Harden SSO sessions ([#1490](https://github.com/openstack-experimental/keystone/pull/1490))
+- *(oauth2)* Remember consent per client ([#1476](https://github.com/openstack-experimental/keystone/pull/1476))
+- *(oauth2)* Add SSO session and RP logout ([#1475](https://github.com/openstack-experimental/keystone/pull/1475))
+- *(oauth2)* Add federated sign-in to OP login ([#1474](https://github.com/openstack-experimental/keystone/pull/1474))
+- *(oauth2)* Add TOTP second factor to OP login ([#1473](https://github.com/openstack-experimental/keystone/pull/1473))
+- Enable OpenTelemetry metrics and traces support ([#1456](https://github.com/openstack-experimental/keystone/pull/1456))
+- *(oauth2)* Revoke refresh families on lifecycle ([#1404](https://github.com/openstack-experimental/keystone/pull/1404))
+- *(oauth2)* Cap refresh families and revalidate user ([#1360](https://github.com/openstack-experimental/keystone/pull/1360))
+- *(oauth2-session)* Add expired record janitor ([#1359](https://github.com/openstack-experimental/keystone/pull/1359))
+- *(oauth2)* Add secondary indexes to raft driver ([#1327](https://github.com/openstack-experimental/keystone/pull/1327))
+- Auto-register backend drivers via inventory ([#1105](https://github.com/openstack-experimental/keystone/pull/1105))
+- *(adr0026)* Add RFC 8628 Device Authorization Grant ([#1023](https://github.com/openstack-experimental/keystone/pull/1023))
+- *(adr0026)* Add authorization code flow with PKCE ([#1015](https://github.com/openstack-experimental/keystone/pull/1015))
+
+### Fixed
+
+- *(oauth2)* Clear logout relying parties atomically ([#1496](https://github.com/openstack-experimental/keystone/pull/1496))
+- *(oauth2-session)* Tombstone revoked refresh families ([#1358](https://github.com/openstack-experimental/keystone/pull/1358))
+- *(storage)* Adopt leader's DEK when nodes join ([#1328](https://github.com/openstack-experimental/keystone/pull/1328))
+
+### Other
+
+- Fix clippy lints across workspace ([#1361](https://github.com/openstack-experimental/keystone/pull/1361))
