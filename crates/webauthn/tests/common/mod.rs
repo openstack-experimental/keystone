@@ -29,7 +29,7 @@ use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 use uuid::Uuid;
-use webauthn_authenticator_rs::{AuthenticatorBackend, WebauthnAuthenticator};
+use webauthn_authenticator_rs::WebauthnAuthenticator;
 
 use cadf::AuditDispatcher;
 use openstack_keystone_config::{Config, RelyingParty, TlsConfiguration, TlsConfigurationBuilder};
@@ -207,9 +207,9 @@ pub async fn get_state(
     Ok((extension_state, tmp_db_dir))
 }
 
-pub fn generate_webauthn_credential<T: AuthenticatorBackend>(
+pub fn generate_webauthn_credential<T: WebauthnAuthenticator>(
     state: &CombinedExtensionState,
-    authenticator: &mut WebauthnAuthenticator<T>,
+    authenticator: &mut T,
     user_id: Uuid,
 ) -> Result<WebauthnCredential> {
     let origin = Url::parse("https://keystone.local")?;

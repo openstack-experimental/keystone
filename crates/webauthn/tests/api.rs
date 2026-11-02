@@ -202,7 +202,7 @@ async fn test_webauthn_roundtrip() -> Result<()> {
 
     let authenticator_backend = SoftToken::new(true)?.0;
     let origin = Url::parse("https://keystone.local")?;
-    let mut authenticator = WebauthnAuthenticator::new(authenticator_backend);
+    let mut authenticator = authenticator_backend;
 
     let addr = ReservedSocketAddr::reserve_random_socket_addr()?.socket_addr();
     let cancel_token = CancellationToken::new();

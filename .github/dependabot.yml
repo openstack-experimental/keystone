@@ -25,6 +25,9 @@ updates:
       wasmtime:
         patterns:
           - "wasmtime*"
+      webauthn:
+        patterns:
+          - "webauthn*"
 
   - package-ecosystem: "docker"
     directory: "/"

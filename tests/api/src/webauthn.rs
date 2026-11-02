@@ -28,7 +28,7 @@ use openstack_sdk::{
     api::{QueryAsync, raw},
 };
 use openstack_sdk::{api::rest_endpoint_prelude::*, types::identity::v3::AuthResponse};
-use webauthn_authenticator_rs::{AuthenticatorBackend, WebauthnAuthenticator};
+use webauthn_authenticator_rs::WebauthnAuthenticator;
 
 #[derive(Builder, Default, Clone, Debug)]
 #[builder(setter(strip_option, into))]
@@ -217,11 +217,11 @@ pub async fn register_user_passkey<B, U: AsRef<str>, D: Into<String>>(
     client: &Arc<AsyncOpenStack>,
     user_id: U,
     origin: Url,
-    authenticator: &mut WebauthnAuthenticator<B>,
+    authenticator: &mut B,
     description: Option<D>,
 ) -> Result<()>
 where
-    B: AuthenticatorBackend,
+    B: WebauthnAuthenticator,
 {
     let reg_challenge = start_registration(client, user_id.as_ref(), PasskeyCreate::default())
         .await
@@ -249,11 +249,11 @@ where
     Ok(())
 }
 
-pub async fn auth_passkey<B: AuthenticatorBackend, U: AsRef<str>>(
+pub async fn auth_passkey<B: WebauthnAuthenticator, U: AsRef<str>>(
     client: &Arc<AsyncOpenStack>,
     user_id: U,
     origin: Url,
-    authenticator: &mut WebauthnAuthenticator<B>,
+    authenticator: &mut B,
 ) -> Result<AuthResponse> {
     let auth_challenge = start_auth(client, user_id.as_ref()).await?;
     info!("start auth challenge: {:?}", auth_challenge);
