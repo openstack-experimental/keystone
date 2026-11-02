@@ -690,6 +690,26 @@ impl ResourceApi for ResourceService {
         Ok(parents)
     }
 
+    /// Get project subtree (all descendants).
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `project_id`: The ID of the project.
+    ///
+    /// # Returns
+    /// - A `Result` containing an `Option` with the descendants of the project
+    ///   ordered breadth first if the project exists, or an `Error`.
+    #[tracing::instrument(name = "provider.resource.get_project_subtree", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn get_project_subtree<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+    ) -> Result<Option<Vec<Project>>, ResourceProviderError> {
+        self.backend_driver
+            .get_project_subtree(ctx.state(), project_id)
+            .await
+    }
+
     /// List domains.
     ///
     /// # Parameters
