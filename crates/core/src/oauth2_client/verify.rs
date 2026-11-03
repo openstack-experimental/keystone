@@ -36,6 +36,7 @@ use thiserror::Error;
 use openstack_keystone_core_types::oauth2_client::{
     Audience, Confirmation, DelegationContext, IdTokenClaims, OPENSTACK_APIS_AUDIENCE,
     OidcAccessTokenClaims, OpenStackAccessTokenClaims, OpenStackScope, openstack_service_audience,
+    is_openstack_audience,
 };
 use openstack_keystone_key_repository::asymmetric::{SigningAlgorithm, jwt_algorithm};
 
@@ -236,11 +237,18 @@ pub fn enforce_token_binding(
 /// expected issuer. The profile controls issuer and audience constraints,
 /// required claims, time skew, and optional age/lifetime limits.
 #[derive(Clone, Debug)]
+enum AudienceConstraint {
+    AnyOf(Vec<String>),
+    Exact(String),
+    AnyOpenStack,
+}
+
+#[derive(Clone, Debug)]
 pub struct SubjectTokenValidationProfile {
     expected_issuers: Vec<String>,
-    accepted_audiences: Vec<String>,
-    require_exact_audience: bool,
+    audience_constraint: AudienceConstraint,
     required_claims: Vec<String>,
+    string_claims: Vec<String>,
     max_token_age: Option<Duration>,
     max_token_lifetime: Option<Duration>,
     clock_skew: Duration,
@@ -260,20 +268,39 @@ impl SubjectTokenValidationProfile {
 
         Self {
             expected_issuers: expected_issuers.to_vec(),
-            accepted_audiences,
-            require_exact_audience: false,
+            audience_constraint: AudienceConstraint::AnyOf(accepted_audiences),
             required_claims: ["exp", "iat", "nbf", "iss", "aud", "sub", "jti"]
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
+            string_claims: ["iss", "sub", "jti"].map(str::to_string).to_vec(),
             max_token_age: None,
             max_token_lifetime: None,
             clock_skew: Duration::from_secs(60),
         }
     }
 
-    /// A short-lived assertion profile for future external subject-token and
-    /// JWT-SVID exchange paths.
+    /// A native OpenStack subject-token profile that accepts any OpenStack
+    /// audience, including service-type narrowed audiences. This is for
+    /// re-exchanging Keystone-minted tokens; ordinary resource-server
+    /// verification should use [`Self::keystone_native`] to enforce its
+    /// service audience.
+    pub fn keystone_native_subject_token(expected_issuers: &[String]) -> Self {
+        Self {
+            expected_issuers: expected_issuers.to_vec(),
+            audience_constraint: AudienceConstraint::AnyOpenStack,
+            required_claims: ["exp", "iat", "nbf", "iss", "aud", "sub", "jti"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            string_claims: ["iss", "sub", "jti"].map(str::to_string).to_vec(),
+            max_token_age: None,
+            max_token_lifetime: None,
+            clock_skew: Duration::from_secs(60),
+        }
+    }
+
+    /// A profile for short-lived external subject tokens, including JWT-SVIDs.
     ///
     /// The audience is the exact token-endpoint audience configured by the
     /// caller. If `iat` is present, issuance time may be at most 300 seconds
@@ -285,12 +312,33 @@ impl SubjectTokenValidationProfile {
     pub fn external_assertion(expected_issuers: &[String], token_endpoint_audience: &str) -> Self {
         Self {
             expected_issuers: expected_issuers.to_vec(),
-            accepted_audiences: vec![token_endpoint_audience.to_string()],
-            require_exact_audience: true,
+            audience_constraint: AudienceConstraint::Exact(token_endpoint_audience.to_string()),
             required_claims: ["exp", "iss", "aud", "sub"]
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
+            string_claims: ["iss", "sub", "jti"].map(str::to_string).to_vec(),
+            max_token_age: Some(Duration::from_secs(300)),
+            max_token_lifetime: Some(Duration::from_secs(300)),
+            clock_skew: Duration::from_secs(60),
+        }
+    }
+
+    /// A JWT-SVID client-assertion profile. Unlike external subject tokens,
+    /// client assertions require an issuance time and a replay identifier.
+    /// Callers must still record `jti` in a replay cache.
+    pub fn jwt_svid_client_assertion(
+        expected_issuers: &[String],
+        token_endpoint_audience: &str,
+    ) -> Self {
+        Self {
+            expected_issuers: expected_issuers.to_vec(),
+            audience_constraint: AudienceConstraint::Exact(token_endpoint_audience.to_string()),
+            required_claims: ["exp", "iat", "iss", "aud", "sub", "jti"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            string_claims: ["iss", "sub", "jti"].map(str::to_string).to_vec(),
             max_token_age: Some(Duration::from_secs(300)),
             max_token_lifetime: Some(Duration::from_secs(300)),
             clock_skew: Duration::from_secs(60),
@@ -425,8 +473,13 @@ where
 {
     if profile.expected_issuers.is_empty()
         || profile.expected_issuers.iter().any(String::is_empty)
-        || profile.accepted_audiences.is_empty()
-        || profile.accepted_audiences.iter().any(String::is_empty)
+        || match &profile.audience_constraint {
+            AudienceConstraint::AnyOf(audiences) => {
+                audiences.is_empty() || audiences.iter().any(String::is_empty)
+            }
+            AudienceConstraint::Exact(audience) => audience.is_empty(),
+            AudienceConstraint::AnyOpenStack => false,
+        }
     {
         return Err(TokenVerificationError::InvalidProfile);
     }
@@ -434,7 +487,11 @@ where
     let (expected_alg, decoding_key) = resolve_decoding_key(token, jwks, expected_algorithm)?;
     let mut validation = Validation::new(expected_alg);
     validation.set_required_spec_claims(&profile.required_claims);
-    validation.set_audience(&profile.accepted_audiences);
+    match &profile.audience_constraint {
+        AudienceConstraint::AnyOf(audiences) => validation.set_audience(audiences),
+        AudienceConstraint::Exact(audience) => validation.set_audience(&[audience.clone()]),
+        AudienceConstraint::AnyOpenStack => validation.validate_aud = false,
+    }
     validation.validate_nbf = true;
     validation.leeway = profile.clock_skew.as_secs();
 
@@ -447,26 +504,47 @@ where
             )));
         }
     }
+    for claim in &profile.string_claims {
+        if claims.get(claim).is_some_and(|value| !value.is_string()) {
+            return Err(TokenVerificationError::MalformedClaims(format!(
+                "claim `{claim}` must be a string"
+            )));
+        }
+    }
     let issuer = claims
         .get("iss")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| TokenVerificationError::MalformedClaims("missing string `iss`".into()))?;
     ensure_trusted_issuer(issuer, &profile.expected_issuers)?;
-    if profile.require_exact_audience {
-        let exact_audience = match claims.get("aud") {
-            Some(serde_json::Value::String(audience)) => profile
-                .accepted_audiences
-                .iter()
-                .any(|accepted| audience == accepted),
-            Some(serde_json::Value::Array(audiences)) if audiences.len() == 1 => audiences[0]
-                .as_str()
-                .is_some_and(|audience| profile.accepted_audiences.iter().any(|a| a == audience)),
-            _ => false,
-        };
-        if !exact_audience {
-            return Err(TokenVerificationError::MalformedClaims(
-                "audience must exactly match the configured token endpoint".into(),
-            ));
+    match &profile.audience_constraint {
+        AudienceConstraint::AnyOf(_) => {}
+        AudienceConstraint::Exact(expected) => {
+            let exact_audience = match claims.get("aud") {
+                Some(serde_json::Value::String(audience)) => audience == expected,
+                Some(serde_json::Value::Array(audiences)) if audiences.len() == 1 => {
+                    audiences[0].as_str() == Some(expected)
+                }
+                _ => false,
+            };
+            if !exact_audience {
+                return Err(TokenVerificationError::MalformedClaims(
+                    "audience must exactly match the configured token endpoint".into(),
+                ));
+            }
+        }
+        AudienceConstraint::AnyOpenStack => {
+            let is_openstack = match claims.get("aud") {
+                Some(serde_json::Value::String(audience)) => is_openstack_audience(audience),
+                Some(serde_json::Value::Array(audiences)) if !audiences.is_empty() => audiences
+                    .iter()
+                    .all(|audience| audience.as_str().is_some_and(is_openstack_audience)),
+                _ => false,
+            };
+            if !is_openstack {
+                return Err(TokenVerificationError::MalformedClaims(
+                    "audience is not an OpenStack access-token audience".into(),
+                ));
+            }
         }
     }
     validate_profile_time_claims(&claims, profile, chrono::Utc::now().timestamp())?;
@@ -1079,6 +1157,34 @@ mod tests {
     }
 
     #[test]
+    fn keystone_native_subject_profile_accepts_narrowed_audiences() {
+        let profile =
+            SubjectTokenValidationProfile::keystone_native_subject_token(&[ISSUER.to_string()]);
+        let now = chrono::Utc::now().timestamp();
+        let claims = serde_json::json!({
+            "iss": ISSUER,
+            "sub": "subject-1",
+            "aud": ["openstack-apis:compute", "openstack-apis:network"],
+            "exp": now + 300,
+            "iat": now,
+            "nbf": now,
+            "jti": "native-subject-1"
+        });
+
+        assert!(matches!(
+            verify_assertion(&claims, &profile),
+            Ok(verified) if verified == claims
+        ));
+
+        let mut mixed_audience = claims;
+        mixed_audience["aud"] = serde_json::json!(["openstack-apis:compute", "unrelated-client"]);
+        assert!(matches!(
+            verify_assertion(&mixed_audience, &profile),
+            Err(TokenVerificationError::MalformedClaims(_))
+        ));
+    }
+
+    #[test]
     fn subject_token_profile_accepts_short_lived_assertion() {
         let profile = SubjectTokenValidationProfile::external_assertion(
             &["https://issuer.example".to_string()],
@@ -1214,6 +1320,46 @@ mod tests {
         assert!(matches!(
             verify_assertion(&claims, &profile),
             Ok(verified) if verified == claims
+        ));
+    }
+
+    #[test]
+    fn jwt_svid_client_assertion_profile_requires_jti_and_iat() {
+        let profile = SubjectTokenValidationProfile::jwt_svid_client_assertion(
+            &["https://issuer.example".to_string()],
+            "https://keystone.example/v4/oauth2/token",
+        );
+        let mut claims = assertion_claims(chrono::Utc::now().timestamp());
+        assert!(verify_assertion(&claims, &profile).is_ok());
+
+        assert!(
+            claims
+                .as_object_mut()
+                .is_some_and(|object| object.remove("jti").is_some())
+        );
+        assert!(matches!(
+            verify_assertion(&claims, &profile),
+            Err(TokenVerificationError::MalformedClaims(_))
+        ));
+
+        assert!(claims.as_object_mut().is_some_and(|object| {
+            object
+                .insert("jti".to_string(), serde_json::json!([]))
+                .is_none()
+        }));
+        assert!(matches!(
+            verify_assertion(&claims, &profile),
+            Err(TokenVerificationError::MalformedClaims(_))
+        ));
+
+        assert!(claims.as_object_mut().is_some_and(|object| {
+            object.insert("jti".to_string(), "assertion-1".into());
+            object.remove("iat").is_some()
+        }));
+        assert!(matches!(
+            verify_assertion(&claims, &profile),
+            Err(TokenVerificationError::Malformed(_))
+                | Err(TokenVerificationError::MalformedClaims(_))
         ));
     }
 
