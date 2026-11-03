@@ -252,7 +252,7 @@ validator = { version = "0.21" }
 vaultrs = { version = "0.8", default-features = false, features = ["rustls-no-provider"] }
 webauthn-authenticator-rs = { version = "0.5" }
 webauthn-rs = { version = "0.5" }
-webauthn-rs-proto = { version = "0.5" }
+webauthn-rs-proto = { version = "0.6" }
 x509-parser = { version = "0.18" }
 zeroize = "1"
 
