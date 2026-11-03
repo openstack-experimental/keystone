@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-4; see doc/src/contributor/crypto-inventory.md
 //! # Offline `OpenStackAccessTokenClaims` verification (ADR 0026 §6, §10 Phase 5)
 //!
 //! Rust-native equivalent of the ADR's `KeystoneNativeJwtMiddleware` Python
@@ -27,7 +28,7 @@
 //! algorithm.
 use jsonwebtoken::jwk::JwkSet;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 use std::collections::HashSet;
 use std::time::Duration;
 use thiserror::Error;
@@ -80,8 +81,7 @@ pub enum TokenVerificationError {
     #[error("token failed verification: {0}")]
     Malformed(#[from] jsonwebtoken::errors::Error),
 
-    /// The decoded claims could not be serialized into the profile's
-    /// validation representation.
+    /// The token claims could not be decoded into the requested representation.
     #[error("token claims are malformed: {0}")]
     MalformedClaims(String),
 
@@ -104,12 +104,15 @@ pub enum TokenVerificationError {
         max_age_secs: u64,
     },
 
-    /// The token's `exp - iat` exceeds the selected validation profile.
-    #[error("token lifetime {lifetime_secs}s exceeds the maximum of {max_lifetime_secs}s")]
+    /// The token lifetime, or remaining lifetime when it has no `iat`, exceeds
+    /// the selected validation profile.
+    #[error(
+        "token lifetime or remaining lifetime {lifetime_secs}s exceeds the maximum of {max_lifetime_secs}s"
+    )]
     TokenLifetimeTooLong {
-        /// The token's `exp - iat` in seconds.
+        /// The token's lifetime, or remaining lifetime, in seconds.
         lifetime_secs: i64,
-        /// The profile's maximum `exp - iat` in seconds.
+        /// The profile's maximum lifetime in seconds.
         max_lifetime_secs: u64,
     },
 
@@ -273,16 +276,18 @@ impl SubjectTokenValidationProfile {
     /// JWT-SVID exchange paths.
     ///
     /// The audience is the exact token-endpoint audience configured by the
-    /// caller. Issuance time may be at most 300 seconds old, `exp - iat` may
-    /// not exceed 300 seconds, and registered time claims allow 60 seconds of
-    /// clock skew. Replay detection for the required `jti` remains the
-    /// caller's responsibility.
+    /// caller. If `iat` is present, issuance time may be at most 300 seconds
+    /// old and `exp - iat` may not exceed 300 seconds. Without `iat`, the
+    /// token must expire within 300 seconds. The age limit is strict and does
+    /// not include clock skew; the 60-second skew applies only to registered
+    /// time claims and rejecting future `iat`. Replay detection for `jti`,
+    /// when present, remains the caller's responsibility.
     pub fn external_assertion(expected_issuers: &[String], token_endpoint_audience: &str) -> Self {
         Self {
             expected_issuers: expected_issuers.to_vec(),
             accepted_audiences: vec![token_endpoint_audience.to_string()],
             require_exact_audience: true,
-            required_claims: ["exp", "iat", "nbf", "iss", "aud", "sub", "jti"]
+            required_claims: ["exp", "iss", "aud", "sub"]
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
@@ -416,7 +421,7 @@ pub fn verify_subject_token_jwt<T>(
     profile: &SubjectTokenValidationProfile,
 ) -> Result<T, TokenVerificationError>
 where
-    T: DeserializeOwned + Serialize,
+    T: DeserializeOwned,
 {
     if profile.expected_issuers.is_empty()
         || profile.expected_issuers.iter().any(String::is_empty)
@@ -433,23 +438,22 @@ where
     validation.validate_nbf = true;
     validation.leeway = profile.clock_skew.as_secs();
 
-    let data = decode::<T>(token, &decoding_key, &validation)?;
-    let serialized = serde_json::to_value(&data.claims)
-        .map_err(|e| TokenVerificationError::MalformedClaims(e.to_string()))?;
+    let data = decode::<serde_json::Value>(token, &decoding_key, &validation)?;
+    let claims = data.claims;
     for claim in &profile.required_claims {
-        if serialized.get(claim).is_none_or(serde_json::Value::is_null) {
+        if claims.get(claim).is_none_or(serde_json::Value::is_null) {
             return Err(TokenVerificationError::MalformedClaims(format!(
                 "missing required claim `{claim}`"
             )));
         }
     }
-    let issuer = serialized
+    let issuer = claims
         .get("iss")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| TokenVerificationError::MalformedClaims("missing string `iss`".into()))?;
     ensure_trusted_issuer(issuer, &profile.expected_issuers)?;
     if profile.require_exact_audience {
-        let exact_audience = match serialized.get("aud") {
+        let exact_audience = match claims.get("aud") {
             Some(serde_json::Value::String(audience)) => profile
                 .accepted_audiences
                 .iter()
@@ -465,8 +469,9 @@ where
             ));
         }
     }
-    validate_profile_time_claims(&serialized, profile, chrono::Utc::now().timestamp())?;
-    Ok(data.claims)
+    validate_profile_time_claims(&claims, profile, chrono::Utc::now().timestamp())?;
+    serde_json::from_value(claims)
+        .map_err(|e| TokenVerificationError::MalformedClaims(e.to_string()))
 }
 
 fn validate_profile_time_claims(
@@ -476,20 +481,26 @@ fn validate_profile_time_claims(
 ) -> Result<(), TokenVerificationError> {
     let iat = claims
         .get("iat")
-        .and_then(serde_json::Value::as_i64)
-        .ok_or_else(|| TokenVerificationError::MalformedClaims("missing integer `iat`".into()))?;
+        .map(|value| {
+            value.as_i64().ok_or_else(|| {
+                TokenVerificationError::MalformedClaims("`iat` must be an integer".into())
+            })
+        })
+        .transpose()?;
 
-    if iat > now.saturating_add(profile.clock_skew.as_secs() as i64) {
-        return Err(TokenVerificationError::IssuedInFuture);
-    }
+    if let Some(iat) = iat {
+        if iat > now.saturating_add(profile.clock_skew.as_secs() as i64) {
+            return Err(TokenVerificationError::IssuedInFuture);
+        }
 
-    if let Some(max_age) = profile.max_token_age
-        && now.saturating_sub(iat) > max_age.as_secs() as i64
-    {
-        return Err(TokenVerificationError::TokenTooOld {
-            iat,
-            max_age_secs: max_age.as_secs(),
-        });
+        if let Some(max_age) = profile.max_token_age
+            && now.saturating_sub(iat) > max_age.as_secs() as i64
+        {
+            return Err(TokenVerificationError::TokenTooOld {
+                iat,
+                max_age_secs: max_age.as_secs(),
+            });
+        }
     }
 
     if let Some(max_lifetime) = profile.max_token_lifetime {
@@ -499,7 +510,7 @@ fn validate_profile_time_claims(
             .ok_or_else(|| {
                 TokenVerificationError::MalformedClaims("missing integer `exp`".into())
             })?;
-        let lifetime = exp.saturating_sub(iat);
+        let lifetime = iat.map_or_else(|| exp.saturating_sub(now), |iat| exp.saturating_sub(iat));
         if lifetime > max_lifetime.as_secs() as i64 {
             return Err(TokenVerificationError::TokenLifetimeTooLong {
                 lifetime_secs: lifetime,
@@ -1075,7 +1086,37 @@ mod tests {
         );
         let claims = assertion_claims(chrono::Utc::now().timestamp());
 
-        assert_eq!(verify_assertion(&claims, &profile).unwrap(), claims);
+        assert!(matches!(
+            verify_assertion(&claims, &profile),
+            Ok(verified) if verified == claims
+        ));
+    }
+
+    #[test]
+    fn subject_token_profile_accepts_jwt_svid_claims() {
+        let profile = SubjectTokenValidationProfile::external_assertion(
+            &["https://issuer.example".to_string()],
+            "https://keystone.example/v4/oauth2/token",
+        );
+        let now = chrono::Utc::now().timestamp();
+        let claims = serde_json::json!({
+            "iss": "https://issuer.example",
+            "sub": "subject-1",
+            "aud": "https://keystone.example/v4/oauth2/token",
+            "exp": now + 300
+        });
+
+        assert!(matches!(
+            verify_assertion(&claims, &profile),
+            Ok(verified) if verified == claims
+        ));
+
+        let mut long_lived = claims;
+        long_lived["exp"] = (now + 301).into();
+        assert!(matches!(
+            verify_assertion(&long_lived, &profile),
+            Err(TokenVerificationError::TokenLifetimeTooLong { .. })
+        ));
     }
 
     #[test]
@@ -1089,9 +1130,9 @@ mod tests {
 
         let parts: Vec<_> = token.split('.').collect();
         assert_eq!(parts.len(), 3);
-        let [header, payload, signature] = parts.as_slice() else {
-            return;
-        };
+        let header = parts[0];
+        let payload = parts[1];
+        let signature = parts[2];
         let replacement = if signature.starts_with('A') { 'B' } else { 'A' };
         let tampered = format!("{header}.{payload}.{replacement}{}", &signature[1..]);
 
@@ -1158,7 +1199,7 @@ mod tests {
     }
 
     #[test]
-    fn subject_token_profile_requires_jti() {
+    fn subject_token_profile_does_not_require_jti() {
         let profile = SubjectTokenValidationProfile::external_assertion(
             &["https://issuer.example".to_string()],
             "https://keystone.example/v4/oauth2/token",
@@ -1172,7 +1213,7 @@ mod tests {
 
         assert!(matches!(
             verify_assertion(&claims, &profile),
-            Err(TokenVerificationError::MalformedClaims(_))
+            Ok(verified) if verified == claims
         ));
     }
 
@@ -1562,6 +1603,35 @@ mod tests {
                 token_project_id,
                 delegated_project_id,
             } if token_project_id == "project-2" && delegated_project_id == "project-1"
+        ));
+    }
+
+    #[test]
+    fn test_service_grant_token_with_act_verifies() {
+        let now = chrono::Utc::now().timestamp();
+        let mut claims = valid_claims(now);
+        claims.delegation_context = DelegationContext::ServiceGrant {
+            project_id: "project-1".to_string(),
+            grant_id: "grant-1".to_string(),
+        };
+        claims.act = Some(ActClaim {
+            client_id: "service-1".to_string(),
+            sub_type: ActSubType::Spiffe,
+            sub: "spiffe://example/service-1".to_string(),
+        });
+        let (token, jwks, _kid) = sign(&claims);
+        let result = verify_openstack_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            None,
+            &HashSet::new(),
+        );
+
+        assert!(matches!(
+            result,
+            Ok(verified) if verified.act == claims.act
         ));
     }
 

@@ -2,11 +2,13 @@
 
 **Date:** 2026-09-10
 
-**Updated:** 2026-10-13
+**Updated:** 2026-10-15
 
 ## Status
 
-Proposed.
+Proposed. Phase 1 (§11) is implemented; see
+[Service grants](../admin/features/service-grants.md) for operation and the
+phase 1 implementation notes below for where it differs from this text.
 
 Supersedes the trust mechanism (`/v3/OS-TRUST`, `AuthenticationContext::Trust`,
 `ScopeInfo::TrustProject`, `trust-driver-sql`) once the phases in §11 are
