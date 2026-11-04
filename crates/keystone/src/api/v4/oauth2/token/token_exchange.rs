@@ -149,12 +149,6 @@ pub(super) async fn handle_token_exchange_grant(
                     "subject_token's scope belongs to a different domain than this token endpoint",
                 )
             }
-            TokenExchangeError::MissingSubjectTokenExpiry => {
-                tracing::warn!(error = %e, "subject_token is missing an expiry claim");
-                Oauth2TokenError::invalid_grant(
-                    "subject_token is missing an expiry claim, cannot be exchanged",
-                )
-            }
             TokenExchangeError::CredentialChainExpired => {
                 tracing::warn!(error = %e, "subject_token or application credential chain is already expired or expires too soon");
                 Oauth2TokenError::invalid_grant(
