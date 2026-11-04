@@ -145,7 +145,28 @@ pub(super) async fn handle_token_exchange_grant(
         now + access_lifetime,
         audience,
     )
-    .map_err(exchange_error)?;
+    .map_err(|e| {
+        use openstack_keystone_core::oauth2_client::TokenExchangeError;
+
+        match e {
+            TokenExchangeError::CrossDomainSubjectToken => {
+                tracing::warn!(error = %e, "subject_token's scope belongs to a different domain than this token endpoint");
+                Oauth2TokenError::invalid_grant(
+                    "subject_token's scope belongs to a different domain than this token endpoint",
+                )
+            }
+            TokenExchangeError::CredentialChainExpired => {
+                tracing::warn!(error = %e, "subject_token or application credential chain is already expired or expires too soon");
+                Oauth2TokenError::invalid_grant(
+                    "subject_token or application credential expiry does not permit token exchange",
+                )
+            }
+            _ => {
+                tracing::error!(error = %e, "unexpected error occurred during token exchange");
+                Oauth2TokenError::internal("token issuance failed")
+            }
+        }
+    })?;
     let token_type = super::dpop::token_type(confirmation.as_ref());
     claims.cnf = confirmation;
     let access_token = sign_jwt(state, domain_id, &claims).await?;
