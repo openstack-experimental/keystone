@@ -80,7 +80,6 @@ impl TryFrom<&WebauthnCredential> for webauthn_credential::ActiveModel {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use base64urlsafedata::HumanBinaryData;
     use chrono::NaiveDateTime;
     use webauthn_rs::prelude::*;
     use webauthn_rs_proto::*;
@@ -91,10 +90,10 @@ pub(crate) mod tests {
         Credential {
             counter: 1,
             transports: None,
-            cred_id: HumanBinaryData::from(vec![
+            cred_id: vec![
                 179, 64, 237, 0, 28, 248, 197, 30, 213, 228, 250, 139, 28, 11, 156, 130, 69, 242,
                 21, 48, 84, 77, 103, 163, 66, 204, 167, 147, 82, 214, 212,
-            ]),
+            ],
             cred: COSEKey {
                 type_: COSEAlgorithm::ES256,
                 key: COSEKeyType::EC_EC2(COSEEC2Key {
@@ -103,14 +102,12 @@ pub(crate) mod tests {
                         187, 71, 18, 101, 166, 110, 166, 38, 116, 119, 74, 4, 183, 104, 24, 46,
                         245, 24, 227, 143, 161, 136, 37, 186, 140, 221, 228, 115, 81, 175, 50, 51,
                     ]
-                    .to_vec()
-                    .into(),
+                    .to_vec(),
                     y: [
                         13, 59, 59, 158, 149, 197, 116, 228, 99, 12, 235, 185, 190, 110, 251, 154,
                         226, 143, 75, 26, 44, 136, 244, 245, 243, 4, 40, 223, 22, 253, 224, 95,
                     ]
-                    .to_vec()
-                    .into(),
+                    .to_vec(),
                 }),
             },
             user_verified: false,

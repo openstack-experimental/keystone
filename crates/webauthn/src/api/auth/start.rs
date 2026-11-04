@@ -65,7 +65,7 @@ pub async fn start_challenge(
                     .iter()
                     .map(|id| webauthn_rs_proto::options::AllowCredentials {
                         type_: "public-key".to_string(),
-                        id: id.as_ref().into(),
+                        id: id.clone(),
                         transports: None,
                     })
                     .collect();

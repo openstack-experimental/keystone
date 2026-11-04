@@ -122,20 +122,23 @@ pub async fn init_extension_state(
         "raft" => Box::new(RaftDriver::default()),
         other => return Err(WebauthnError::UnsupportedDriver(other.to_string()))?,
     };
-    let fake_credential_hmac_key: Vec<u8> = match &config.fake_credential_hmac_key {
-        Some(key) => key.expose_secret().as_bytes().to_vec(),
+    // Borrow the key material instead of copying it: the configured secret
+    // is zeroized by `secrecy`, the random key by `Zeroizing`, and the
+    // generator keeps its own zeroizing copy.
+    let fake_credential_generator = match &config.fake_credential_hmac_key {
+        Some(key) => WebauthnFakeCredentialGenerator::new(key.expose_secret().as_bytes()),
         None => {
             warn!(
                 "`[webauthn]fake_credential_hmac_key` is not configured; using a random \
                  per-process key for decoy credential IDs. Configure a stable key to keep user \
                  enumeration prevention effective across restarts and in multi-node deployments."
             );
-            WebauthnFakeCredentialGenerator::<FakePasskeyDistribution>::new_hmac_key()
-                .map_err(WebauthnError::from)?
+            let key = WebauthnFakeCredentialGenerator::<FakePasskeyDistribution>::new_hmac_key()
+                .map_err(WebauthnError::from)?;
+            WebauthnFakeCredentialGenerator::new(key.as_slice())
         }
-    };
-    let fake_credential_generator = WebauthnFakeCredentialGenerator::new(&fake_credential_hmac_key)
-        .map_err(WebauthnError::from)?;
+    }
+    .map_err(WebauthnError::from)?;
 
     let extension_state = Arc::new(ExtensionState {
         provider: driver,

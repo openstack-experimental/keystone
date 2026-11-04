@@ -42,7 +42,7 @@ async fn test_register_empty_description() -> Result<()> {
     let user = create_user(&test_client, user_create).await?;
 
     let authenticator_backend = SoftToken::new(true)?.0;
-    let mut authenticator = WebauthnAuthenticator::new(authenticator_backend);
+    let mut authenticator = authenticator_backend;
     let origin: Url = env::var("WEBAUTHN_URL")
         .wrap_err("WEBAUTHN_URL must be set. It must be https for non localhost.")?
         .parse()?;
@@ -74,7 +74,7 @@ async fn test_register_description() -> Result<()> {
     let user = create_user(&test_client, user_create).await?;
 
     let authenticator_backend = SoftToken::new(true)?.0;
-    let mut authenticator = WebauthnAuthenticator::new(authenticator_backend);
+    let mut authenticator = authenticator_backend;
     let origin: Url = env::var("WEBAUTHN_URL")
         .wrap_err("WEBAUTHN_URL must be set. It must be https for non localhost.")?
         .parse()?;

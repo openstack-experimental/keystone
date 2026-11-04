@@ -75,7 +75,7 @@ async fn test_webauthn_auth() -> Result<()> {
     let user_id = Uuid::new_v4();
     let exec = ExecutionContext::internal(&state.core);
 
-    let mut authenticator = WebauthnAuthenticator::new(SoftToken::new(true)?.0);
+    let mut authenticator = SoftToken::new(true)?.0;
     let cred = generate_webauthn_credential(&state, &mut authenticator, user_id)?;
 
     let (_ccr, auth_state) = state
@@ -139,7 +139,7 @@ fn compare_credential(left: &WebauthnCredential, right: &WebauthnCredential) {
 async fn test_webauthn_credential() -> Result<()> {
     let (state, _dir) = get_state(None).await?;
     let authenticator_backend = SoftToken::new(true)?.0;
-    let mut authenticator = WebauthnAuthenticator::new(authenticator_backend);
+    let mut authenticator = authenticator_backend;
     let user_id = Uuid::new_v4();
     let exec = ExecutionContext::internal(&state.core);
 
@@ -219,7 +219,7 @@ async fn test_webauthn_roundtrip() -> Result<()> {
     let user_id = Uuid::new_v4();
     let authenticator_backend = SoftToken::new(true)?.0;
     let origin = Url::parse("https://keystone.local")?;
-    let mut authenticator = WebauthnAuthenticator::new(authenticator_backend);
+    let mut authenticator = authenticator_backend;
     let exec = ExecutionContext::internal(&state.core);
 
     // init new cred registration
