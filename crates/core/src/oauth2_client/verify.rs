@@ -489,7 +489,9 @@ where
     validation.set_required_spec_claims(&profile.required_claims);
     match &profile.audience_constraint {
         AudienceConstraint::AnyOf(audiences) => validation.set_audience(audiences),
-        AudienceConstraint::Exact(audience) => validation.set_audience(&[audience.clone()]),
+        AudienceConstraint::Exact(audience) => {
+            validation.set_audience(std::slice::from_ref(audience))
+        }
         AudienceConstraint::AnyOpenStack => validation.validate_aud = false,
     }
     validation.validate_nbf = true;
