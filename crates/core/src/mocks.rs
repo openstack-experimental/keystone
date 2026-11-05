@@ -1923,6 +1923,11 @@ mod revoke {
 
         #[async_trait]
         impl RevokeApi for RevokeProvider {
+            async fn cleanup<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+            ) -> Result<u64, RevokeProviderError>;
+
             async fn create_revocation_event<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,

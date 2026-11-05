@@ -242,7 +242,7 @@ async fn warn_on_unresolvable_auth_methods(state: &ServiceState) {
 }
 
 /// Periodic best-effort housekeeping on a 60s tick: federation provider
-/// cleanup, per-plugin rate-limit keyed-store shrink (ADR 0025 §7), and
+/// cleanup, expired revocation events purge, per-plugin rate-limit keyed-store shrink (ADR 0025 §7), and
 /// global rate-limit stale-entry eviction (ADR 0022).
 async fn cleanup(cancel: CancellationToken, state: ServiceState) {
     let mut interval = time::interval(Duration::from_secs(60));
@@ -259,6 +259,16 @@ async fn cleanup(cancel: CancellationToken, state: ServiceState) {
                     .await
                 {
                     error!("Error during cleanup job: {}", e);
+                }
+                match state
+                    .provider
+                    .get_revoke_provider()
+                    .cleanup(&ExecutionContext::internal(&state))
+                    .await
+                {
+                    Ok(0) => {}
+                    Ok(deleted) => debug!(deleted, "Deleted the expired revocation events"),
+                    Err(e) => error!("Error deleting the expired revocation events: {}", e),
                 }
                 for limiter in state.auth_plugin_limiters.read().await.values() {
                     limiter.shrink_idle_sources();

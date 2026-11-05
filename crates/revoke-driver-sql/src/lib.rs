@@ -16,10 +16,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 
 use sea_orm::{DatabaseConnection, Schema};
+use sea_orm_migration::{MigrationTrait, SchemaManager};
 
 use openstack_keystone_core::auth::ValidatedSecurityContext;
+use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::revoke::{RevokeProviderError, backend::RevokeBackend};
@@ -31,9 +34,14 @@ use openstack_keystone_core_types::token::FernetToken;
 
 use crate::entity::revocation_event as db_revocation_event;
 
+mod cleanup;
 mod create;
 pub mod entity;
+mod indexes;
 mod list;
+pub mod migration;
+#[cfg(test)]
+mod sqlite_tests;
 
 /// Sql Database revocation backend.
 #[derive(Default)]
@@ -110,6 +118,28 @@ impl RevokeBackend for SqlBackend {
         Ok(create::create(&state.db.connection(), event).await?)
     }
 
+    /// Delete the revocation events revoked before the given moment.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `revoked_before`: Delete the events with an earlier `revoked_at`.
+    ///
+    /// # Returns
+    /// A `Result` containing the number of the deleted events, or a
+    /// `RevokeProviderError`.
+    #[tracing::instrument(
+        name = "driver.sql.revoke.delete_expired_revocation_events",
+        level = "debug",
+        skip_all
+    )]
+    async fn delete_expired_revocation_events(
+        &self,
+        state: &ServiceState,
+        revoked_before: DateTime<Utc>,
+    ) -> Result<u64, RevokeProviderError> {
+        cleanup::delete_expired(&state.db.connection(), revoked_before).await
+    }
+
     /// Check the token for being revoked.
     ///
     /// List not expired revocation records that invalidate the token and
@@ -134,11 +164,7 @@ impl RevokeBackend for SqlBackend {
             RevocationEventListParametersBuilder::try_from(token_security_context)?;
 
         let params = params_builder.build()?;
-        if list::count(&state.db.connection(), &params).await? > 0 {
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        list::exists(&state.db.connection(), &params).await
     }
 
     /// Revoke the token.
@@ -180,7 +206,15 @@ impl SqlDriver for SqlBackend {
         schema: &Schema,
     ) -> Result<(), DatabaseError> {
         create_table(connection, schema, crate::entity::prelude::RevocationEvent).await?;
+        indexes::ensure(&SchemaManager::new(connection))
+            .await
+            .context("creating the revocation_event indexes")?;
         Ok(())
+    }
+
+    /// Return the ordered list of database migrations for this driver.
+    fn migrations(&self) -> Vec<Box<dyn MigrationTrait>> {
+        crate::migration::migrations()
     }
 }
 

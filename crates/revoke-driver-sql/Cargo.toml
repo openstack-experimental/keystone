@@ -17,13 +17,14 @@ inventory.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-core-types.workspace = true
 sea-orm = { workspace = true, features = ["macros"] }
+sea-orm-migration.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true
 openstack-keystone-core = { workspace = true, features = ["mock"] }
-sea-orm = { workspace = true, features = ["mock"] }
+sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite", "runtime-tokio"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros"] }
 
