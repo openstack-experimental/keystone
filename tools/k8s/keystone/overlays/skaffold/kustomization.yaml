@@ -32,3 +32,16 @@ patches:
       - op: add
         path: /spec/sessionAffinity
         value: ClientIP
+  # `public_endpoint` is http://keystone-rs.local (port 80): serve it on the
+  # service as well, so in-cluster clients using that name get through.
+  - target:
+      kind: Service
+      name: keystone-rs
+    patch: |-
+      - op: add
+        path: /spec/ports/-
+        value:
+          name: http-public
+          port: 80
+          protocol: TCP
+          targetPort: 8080

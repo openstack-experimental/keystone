@@ -28,10 +28,20 @@ manifests:
       - tools/k8s/tests/callback
   rawYaml:
     - tools/k8s/tests/selenium.yaml
+    - tools/k8s/tests/coredns-custom.yaml
 deploy:
   statusCheck: true
   statusCheckDeadlineSeconds: 300
   tolerateFailuresUntilDeadline: true
+  kubectl:
+    hooks:
+      after:
+        - host:
+            # CoreDNS reads the custom `*.override` files at start only.
+            command:
+              - sh
+              - -c
+              - kubectl -n kube-system rollout restart deploy/coredns && kubectl -n kube-system rollout status deploy/coredns --timeout=120s
   helm:
     releases:
       - name: cloudnative-pg
@@ -241,6 +251,8 @@ verify:
           value: "info,reqwest=off,h2=off,hyper=off"
         - name: "KEYSTONE_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
+        - name: "KEYSTONE_PUBLIC_URL"
+          value: "http://keystone-rs.local"
         - name: "OS_AUTH_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
         - name: "OS_USERNAME"
@@ -267,6 +279,8 @@ verify:
           value: "debug,reqwest=off,h2=off,hyper=off"
         - name: "KEYSTONE_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
+        - name: "KEYSTONE_PUBLIC_URL"
+          value: "http://keystone-rs.local"
         - name: "OS_AUTH_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
         - name: "OS_USERNAME"
@@ -371,6 +385,8 @@ verify:
           value: "http://selenium-service:4444"
         - name: "KEYSTONE_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
+        - name: "KEYSTONE_PUBLIC_URL"
+          value: "http://keystone-rs.local"
         - name: "KEYCLOAK_URL"
           value: "http://keycloak:8080"
         - name: "KEYCLOAK_PASSWORD"

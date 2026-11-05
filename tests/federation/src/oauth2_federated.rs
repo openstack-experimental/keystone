@@ -169,9 +169,13 @@ impl Fixture {
         let kc_user = format!("fed-{suffix}");
         if with_keycloak {
             let callback = format!(
-                // Where Keycloak sends the browser back to: the OP callback.
+                // Where Keycloak sends the browser back to: the OP callback,
+                // built by the server from `[DEFAULT] public_endpoint`, which
+                // can differ from the address the test reaches it at.
                 "{}/v4/oauth2/{domain_id}/{}/federated/callback",
-                config.keystone_url,
+                env::var("KEYSTONE_PUBLIC_URL")
+                    .unwrap_or_else(|_| config.keystone_url.clone())
+                    .trim_end_matches('/'),
                 if device { "device" } else { "authorize" }
             );
             retry(|| async {

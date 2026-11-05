@@ -161,22 +161,30 @@ kubectl -n keystone-raft-test port-forward svc/keystone-rs 18080:8080
 
 ### Endpoints and the service catalog
 
-The `skaffold` stack uses three different addresses, each for a different
-client:
+The `skaffold` stack is reachable under these addresses:
 
-| Client                                   | URL                                                  |
-| ---------------------------------------- | ---------------------------------------------------- |
-| In-cluster tests (api, tempest)          | `http://keystone-rs.default.svc.cluster.local:8080`  |
-| Host (loadtest, manual `openstack` use)  | `kubectl port-forward svc/keystone-rs 8080:8080`     |
-| Host through the ingress                 | `http://keystone-rs.local` (needs an `/etc/hosts` entry) |
+| Client                                  | URL                                                       |
+| --------------------------------------- | --------------------------------------------------------- |
+| Public name (issuer, ingress, tests)    | `http://keystone-rs.local`                                |
+| In-cluster tests (`KEYSTONE_URL`)       | `http://keystone-rs.default.svc.cluster.local:8080`       |
+| Host (loadtest, manual `openstack` use) | `kubectl port-forward svc/keystone-rs 8080:8080`          |
+| Host through the ingress                | `http://keystone-rs.local` (needs an `/etc/hosts` entry)  |
 
-`[DEFAULT] public_endpoint` is pinned to the in-cluster URL (OAuth2 issuer and
-pagination links). The `identity-rs` catalog entries are created by the
-deploy hook in `skaffold.yaml`: `internal` points to the in-cluster URL (used
-by tempest, `v3_endpoint_type = internal`), `public` to the ingress host.
-Both must carry `--region-id RegionOne`: tempest filters the catalog by
-interface **and** region and silently falls back to the first entry (the
-unresolvable `public` one) when the region does not match.
+`[DEFAULT] public_endpoint` is pinned to `http://keystone-rs.local`, the
+externally visible address. The server builds the OAuth2 issuer, the DPoP
+`htu` and the federated callback URL from it, so every client has to be able
+to resolve that name. Inside the cluster
+`tools/k8s/tests/coredns-custom.yaml` (deployed with the `infra` module)
+rewrites it to the `keystone-rs` service, which also listens on port 80.
+Tests send their requests to `KEYSTONE_URL` and use `KEYSTONE_PUBLIC_URL`
+(default `KEYSTONE_URL`) wherever the server-side public address matters.
+
+The `identity-rs` catalog entries are created by the deploy hook in
+`skaffold.yaml`: `internal` points to the in-cluster URL (used by tempest,
+`v3_endpoint_type = internal`), `public` to the ingress host. Both must carry
+`--region-id RegionOne`: tempest filters the catalog by interface **and**
+region and silently falls back to the first entry when the region does not
+match.
 
 The `k3s-raft-pkcs11` job in `.github/workflows/functional.yml` runs the PKCS#11
 overlay in CI when the storage crates or the Kubernetes overlays change.
