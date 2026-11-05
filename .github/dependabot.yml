@@ -28,6 +28,11 @@ updates:
       webauthn:
         patterns:
           - "webauthn*"
+      spiffe:
+        patterns:
+          - "spiffe"
+          - "spiffe-rustls"
+          - "spiffe-rustls-tokio"
 
   - package-ecosystem: "docker"
     directory: "/"
