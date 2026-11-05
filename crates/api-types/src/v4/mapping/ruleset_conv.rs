@@ -56,6 +56,7 @@ impl From<api::IdentitySource> for core::IdentitySource {
             api::IdentitySource::ApiClient { provider_id } => Self::ApiClient { provider_id },
             api::IdentitySource::WasmPlugin { plugin_name } => Self::WasmPlugin { plugin_name },
             api::IdentitySource::OAuth2Client { provider_id } => Self::OAuth2Client { provider_id },
+            api::IdentitySource::TokenExchange { issuer } => Self::TokenExchange { issuer },
         }
     }
 }
@@ -71,6 +72,7 @@ impl From<core::IdentitySource> for api::IdentitySource {
             core::IdentitySource::OAuth2Client { provider_id } => {
                 Self::OAuth2Client { provider_id }
             }
+            core::IdentitySource::TokenExchange { issuer } => Self::TokenExchange { issuer },
         }
     }
 }
@@ -403,5 +405,25 @@ impl From<api::RuleMutationsRequest> for core::RuleMutations {
         Self {
             mutations: value.mutations.into_iter().map(Into::into).collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_token_exchange_source_round_trips_through_core() {
+        let api_source = api::IdentitySource::TokenExchange {
+            issuer: "https://idp.example.com".to_string(),
+        };
+        let core_source: core::IdentitySource = api_source.clone().into();
+        assert_eq!(
+            core_source,
+            core::IdentitySource::TokenExchange {
+                issuer: "https://idp.example.com".to_string(),
+            }
+        );
+        assert_eq!(api::IdentitySource::from(core_source), api_source);
     }
 }

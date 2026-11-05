@@ -80,13 +80,23 @@ pub enum IdentitySource {
         /// The OAuth2 client's `provider_id` this ruleset is bound to.
         provider_id: String,
     },
+    /// RFC 8693 token exchange of an external identity provider JWT (ADR 0026
+    /// §12). The `subject_token` is verified against the identity provider
+    /// whose `bound_issuer` equals `issuer`, and its claims are fed to the
+    /// ruleset bound to this source.
+    TokenExchange {
+        /// The `iss` of the external JWT, equal to the `bound_issuer` of the
+        /// identity provider that signs it.
+        issuer: String,
+    },
 }
 
 impl IdentitySource {
     /// Returns a stable string representation for keyspace indexing.
     ///
     /// Format: `"<variant>:<id>"`, e.g. `"federation:okta-enterprise-idp"`,
-    /// `"k8s:eks-prod-cluster-01"`, `"spiffe:prod.keystone.internal"`.
+    /// `"k8s:eks-prod-cluster-01"`, `"spiffe:prod.keystone.internal"`,
+    /// `"token_exchange:https://idp.example.com"`.
     pub fn to_string_key(&self) -> String {
         match self {
             Self::Federation { idp_id } => format!("federation:{idp_id}"),
@@ -95,6 +105,7 @@ impl IdentitySource {
             Self::ApiClient { provider_id } => format!("api_client:{provider_id}"),
             Self::WasmPlugin { plugin_name } => format!("wasm:{plugin_name}"),
             Self::OAuth2Client { provider_id } => format!("oauth2_client:{provider_id}"),
+            Self::TokenExchange { issuer } => format!("token_exchange:{issuer}"),
         }
     }
 }
@@ -109,5 +120,44 @@ mod tests {
             plugin_name: "acme_scim_bridge".to_string(),
         };
         assert_eq!(source.to_string_key(), "wasm:acme_scim_bridge");
+    }
+
+    #[test]
+    fn test_token_exchange_to_string_key() {
+        let source = IdentitySource::TokenExchange {
+            issuer: "https://idp.example.com".to_string(),
+        };
+        assert_eq!(
+            source.to_string_key(),
+            "token_exchange:https://idp.example.com"
+        );
+    }
+
+    #[test]
+    fn test_token_exchange_keys_differ_per_issuer() {
+        let a = IdentitySource::TokenExchange {
+            issuer: "https://a.example.com".to_string(),
+        };
+        let b = IdentitySource::TokenExchange {
+            issuer: "https://b.example.com".to_string(),
+        };
+        assert_ne!(a.to_string_key(), b.to_string_key());
+    }
+
+    #[test]
+    fn test_token_exchange_serde_shape() {
+        let source: IdentitySource =
+            serde_json::from_str(r#"{"type":"token_exchange","issuer":"https://idp.example.com"}"#)
+                .unwrap();
+        assert_eq!(
+            source,
+            IdentitySource::TokenExchange {
+                issuer: "https://idp.example.com".to_string(),
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(&source).unwrap(),
+            serde_json::json!({"type": "token_exchange", "issuer": "https://idp.example.com"})
+        );
     }
 }
