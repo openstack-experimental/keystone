@@ -159,6 +159,25 @@ bootstrapped `admin` user against project `admin`:
 kubectl -n keystone-raft-test port-forward svc/keystone-rs 18080:8080
 ```
 
+### Endpoints and the service catalog
+
+The `skaffold` stack uses three different addresses, each for a different
+client:
+
+| Client                                   | URL                                                  |
+| ---------------------------------------- | ---------------------------------------------------- |
+| In-cluster tests (api, tempest)          | `http://keystone-rs.default.svc.cluster.local:8080`  |
+| Host (loadtest, manual `openstack` use)  | `kubectl port-forward svc/keystone-rs 8080:8080`     |
+| Host through the ingress                 | `http://keystone-rs.local` (needs an `/etc/hosts` entry) |
+
+`[DEFAULT] public_endpoint` is pinned to the in-cluster URL (OAuth2 issuer and
+pagination links). The `identity-rs` catalog entries are created by the
+deploy hook in `skaffold.yaml`: `internal` points to the in-cluster URL (used
+by tempest, `v3_endpoint_type = internal`), `public` to the ingress host.
+Both must carry `--region-id RegionOne`: tempest filters the catalog by
+interface **and** region and silently falls back to the first entry (the
+unresolvable `public` one) when the region does not match.
+
 The `k3s-raft-pkcs11` job in `.github/workflows/functional.yml` runs the PKCS#11
 overlay in CI when the storage crates or the Kubernetes overlays change.
 `tools/k3s-raft-smoke.sh` is the check it runs and can be used locally against

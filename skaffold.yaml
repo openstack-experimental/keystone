@@ -211,14 +211,23 @@ deploy:
                 done
                 echo "OAuth2 signing key ensured for domain default"
         - host:
-            # Extend catalog with identity-rs catalog entry
+            # Extend catalog with identity-rs catalog entry.
+            #
+            # Both endpoints MUST carry the region (RegionOne, created by the
+            # py-keystone bootstrap): tempest filters the catalog by interface
+            # AND region, and when no endpoint matches the region it silently
+            # falls back to the first catalog entry (`public`,
+            # http://keystone-rs.local, which does not resolve in-cluster)
+            # instead of the `internal` one. The commands are idempotent, so
+            # failures are not masked with `|| true`.
             command:
               - sh
               - -c
               - |
+                set -e
                 kubectl exec keystone-rs-0 -c keystone -- keystone-manage catalog service create --name keystone-rs --type identity-rs --enabled || true
-                kubectl exec keystone-rs-0 -c keystone -- keystone-manage catalog endpoint create --service-name keystone-rs --interface public --url "http://keystone-rs.local" --enabled || true
-                kubectl exec keystone-rs-0 -c keystone -- keystone-manage catalog endpoint create --service-name keystone-rs --interface internal --url "http://keystone-rs.default.svc.cluster.local:8080" --enabled || true
+                kubectl exec keystone-rs-0 -c keystone -- keystone-manage catalog endpoint create --service-name keystone-rs --interface public --region-id RegionOne --url "http://keystone-rs.local" --enabled
+                kubectl exec keystone-rs-0 -c keystone -- keystone-manage catalog endpoint create --service-name keystone-rs --interface internal --region-id RegionOne --url "http://keystone-rs.default.svc.cluster.local:8080" --enabled
 
 verify:
   - &api_test_v3
