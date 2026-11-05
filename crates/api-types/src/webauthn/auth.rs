@@ -135,7 +135,7 @@ impl TryFrom<PasskeyAuthenticationFinishRequest> for webauthn_rs_proto::auth::Pu
         Ok(webauthn_rs_proto::auth::PublicKeyCredential {
             id: req.id,
             extensions: req.extensions.try_into()?,
-            raw_id: URL_SAFE.decode(req.raw_id)?.into(),
+            raw_id: URL_SAFE.decode(req.raw_id)?,
             response: req.response.try_into()?,
             type_: req.type_,
         })

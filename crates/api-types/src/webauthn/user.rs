@@ -41,7 +41,7 @@ impl TryFrom<User> for webauthn_rs_proto::options::User {
     type Error = WebauthnError;
     fn try_from(value: User) -> Result<Self, Self::Error> {
         Ok(webauthn_rs_proto::options::User {
-            id: URL_SAFE.decode(value.id)?.into(),
+            id: URL_SAFE.decode(value.id)?,
             name: value.name,
             display_name: value.display_name,
         })

@@ -123,7 +123,7 @@ impl TryFrom<PublicKeyCredentialCreationOptions>
                 .attestation_formats
                 .map(|ats| ats.into_iter().map(Into::into).collect::<Vec<_>>()),
             authenticator_selection: val.authenticator_selection.map(Into::into),
-            challenge: URL_SAFE.decode(val.challenge)?.into(),
+            challenge: URL_SAFE.decode(val.challenge)?,
             exclude_credentials: val
                 .exclude_credentials
                 .map(|ecs| {

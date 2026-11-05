@@ -50,7 +50,7 @@ impl TryFrom<AllowCredentials> for webauthn_rs_proto::options::AllowCredentials 
 
     fn try_from(val: AllowCredentials) -> Result<Self, Self::Error> {
         Ok(Self {
-            id: URL_SAFE.decode(val.id)?.into(),
+            id: URL_SAFE.decode(val.id)?,
             transports: val
                 .transports
                 .map(|tr| tr.into_iter().map(Into::into).collect::<Vec<_>>()),

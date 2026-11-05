@@ -40,7 +40,7 @@ impl TryFrom<PublicKeyCredentialDescriptor>
     type Error = WebauthnError;
     fn try_from(value: PublicKeyCredentialDescriptor) -> Result<Self, Self::Error> {
         Ok(Self {
-            id: URL_SAFE.decode(value.id)?.into(),
+            id: URL_SAFE.decode(value.id)?,
             type_: value.type_,
             transports: value
                 .transports

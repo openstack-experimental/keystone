@@ -36,12 +36,8 @@ impl TryFrom<HmacGetSecretOutput> for webauthn_rs_proto::extensions::HmacGetSecr
 
     fn try_from(val: HmacGetSecretOutput) -> Result<Self, Self::Error> {
         Ok(Self {
-            output1: URL_SAFE.decode(val.output1)?.into(),
-            output2: val
-                .output2
-                .map(|s2| URL_SAFE.decode(s2))
-                .transpose()?
-                .map(Into::into),
+            output1: URL_SAFE.decode(val.output1)?,
+            output2: val.output2.map(|s2| URL_SAFE.decode(s2)).transpose()?,
         })
     }
 }

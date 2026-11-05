@@ -86,7 +86,7 @@ impl TryFrom<PublicKeyCredentialRequestOptions>
                 .into_iter()
                 .map(TryInto::try_into)
                 .collect::<Result<Vec<_>, _>>()?,
-            challenge: URL_SAFE.decode(value.challenge)?.into(),
+            challenge: URL_SAFE.decode(value.challenge)?,
             extensions: value.extensions.map(TryInto::try_into).transpose()?,
             hints: value
                 .hints

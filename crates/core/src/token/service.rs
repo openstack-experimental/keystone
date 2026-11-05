@@ -399,16 +399,16 @@ impl TokenService {
         };
         let user_fut = async {
             match user_detail {
-                    UserDetail::Full => identity_provider
-                        .get_user(ctx, token.user_id())
-                        .await?
-                        .map(|user| (UserCore::from(&user), Some(user))),
-                    UserDetail::Core => identity_provider
-                        .get_user_core(ctx, token.user_id())
-                        .await?
-                        .map(|core| (core, None)),
-                }
-                .ok_or_else(user_not_found)
+                UserDetail::Full => identity_provider
+                    .get_user(ctx, token.user_id())
+                    .await?
+                    .map(|user| (UserCore::from(&user), Some(user))),
+                UserDetail::Core => identity_provider
+                    .get_user_core(ctx, token.user_id())
+                    .await?
+                    .map(|core| (core, None)),
+            }
+            .ok_or_else(user_not_found)
         };
         let authz_fut = self.build_authz_info_from_fernet_token(state, &token);
         let ((user_core, user), authz_info) = tokio::try_join!(user_fut, authz_fut)?;
