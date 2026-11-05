@@ -22,14 +22,12 @@ use secrecy::ExposeSecret;
 use std::env;
 use std::time::Duration;
 
-mod mix;
 mod seed;
 mod summary;
 mod v3;
 mod v4;
 mod vu;
 
-use crate::mix::mix_op;
 use crate::v3::auth::lifecycle::{token_lifecycle, validate as validate_token};
 use crate::v3::auth::password::{
     invalid as password_auth_invalid, scoped as password_auth_scoped,
@@ -183,15 +181,6 @@ async fn main() -> Result<(), GooseError> {
                     .set_weight(1)?
                     .register_transaction(transaction!(vu_start).set_on_start())
                     .register_transaction(transaction!(vu_op)),
-            )
-    } else if mix_profile() {
-        GooseAttack::initialize()?
-            .set_default(GooseDefault::Users, 45usize)?
-            .register_scenario(
-                scenario!("Mix")
-                    .set_weight(1)?
-                    .register_transaction(transaction!(openstack_login).set_on_start())
-                    .register_transaction(transaction!(mix_op)),
             )
     } else {
         stress_attack(think, hash_wait)?
@@ -521,12 +510,6 @@ fn get_users() -> usize {
         .find(|w| w[0] == "--users" || w[0] == "-u")
         .and_then(|w| w[1].parse().ok())
         .unwrap_or(45)
-}
-
-/// Whether `LOADTEST_PROFILE=mix` is set: a single scenario with a fixed
-/// request mix (see [`mix`]).
-fn mix_profile() -> bool {
-    env::var("LOADTEST_PROFILE").is_ok_and(|v| v == "mix")
 }
 
 /// Whether `LOADTEST_PROFILE=realistic` is set: the scenario mix leans on the

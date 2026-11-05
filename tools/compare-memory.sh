@@ -25,8 +25,7 @@
 #     --interval 15      sample interval, seconds
 #     --think-ms 250     read-scenario think time (LOADTEST_THINK_MS, default 250;
 #                        0 = flat out)
-#     --profile realistic|stress|mix|vu   scenario mix (LOADTEST_PROFILE, default realistic;
-#                                       mix = fixed request share: 10% hashing, 50% validate, 40% r/w)
+#     --profile realistic|stress|vu   scenario mix (LOADTEST_PROFILE, default realistic)
 #     --hatch-rate N     goose users started per second (--increase-rate, default users/5+1)
 #     --ramp-time 10m    start the users evenly over this time (--increase-time) instead of
 #                        --hatch-rate, and write an HTML report with the per-second graphs;
@@ -70,7 +69,7 @@ mkdir -p "$OUT"
 [ -x "$LOAD_TEST" ] || { echo "build it: (cd tests/loadtest && cargo build --release)" >&2; exit 1; }
 
 # Scenarios that exist on both implementations (/v3 only).
-SCENARIOS="readheavy,tokenlifecycle,validatetoken,usercrud,projectcrud,rolecrud,groupchurn,catalogchurn,credentialchurn,trustchurn,identitychurn,rolelist,roleassignmentlist,userread,projectread,passwordauth,rescope,systemscopeauth,mix,vu"
+SCENARIOS="readheavy,tokenlifecycle,validatetoken,usercrud,projectcrud,rolecrud,groupchurn,catalogchurn,credentialchurn,trustchurn,identitychurn,rolelist,roleassignmentlist,userread,projectread,passwordauth,rescope,systemscopeauth,vu"
 
 selector() { case "$1" in rs) echo app.kubernetes.io/name=keystone-rs;; py) echo app.kubernetes.io/name=keystone-py;; esac; }
 url() { case "$1" in rs) echo "${RS_URL:-http://keystone-rs.local}";; py) echo "${PY_URL:-http://keystone-py.local}";; esac; }
