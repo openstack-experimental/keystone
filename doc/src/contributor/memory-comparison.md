@@ -1,260 +1,246 @@
 # Rust vs Python Keystone comparison
 
 This page compares the Rust Keystone (`keystone-rs`) with the Python Keystone
-(`keystone-py`) under the same synthetic load on the same machine, and records
-what it takes to get the Rust memory footprint down.
+(`keystone-py`) under the same synthetic load on the same machine. It answers
+one question: how much more load does the Rust implementation serve than the
+Python one on the same hardware, and what does it cost in memory.
 
-The numbers are a snapshot from one development machine, from single 15-minute
-runs. Treat them as relative, not absolute.
+The numbers are a snapshot from one development machine. Each load step ran
+once, so differences of a few percent are noise. Treat the figures as relative,
+not absolute.
 
 ## Summary
 
-Same load, same Postgres, three pods each, 50 users, 15 minutes, freshly started
-pods. Rust is the release build with jemalloc, telemetry off and a CPU limit of
-10 per pod. Python is uwsgi with 10 single-threaded processes and no CPU limit
-per pod.
+One pod of each implementation, both with `requests = limits = 24` CPU on a
+single-node k3s host with 32 cores, the same Postgres, and a closed-loop
+virtual-user (VU) load that is stepped up until the 95th percentile (p95)
+latency reaches 500 ms.
 
-|                                            |              Rust |                         Python | Rust advantage |
-| ------------------------------------------ | ----------------: | -----------------------------: | -------------: |
-| Memory, 3 pods, end of run                 |       **581 MiB** |                 **~3,653 MiB** |      6.3x less |
-| Memory per pod                             |    174 to 207 MiB |                     ~1,218 MiB |        6x less |
-| Requests served                            |           578,521 |                        155,730 |      3.7x more |
-| Throughput (offered-load bound, see below) |         639 req/s |                      171 req/s |    3.7x higher |
-| Memory per unit of throughput              | 0.9 MiB per req/s |             21.4 MiB per req/s |     23x better |
-| Latency p50                                |             30 ms |                         150 ms |       5x lower |
-| Latency p95                                |            280 ms |                         700 ms |     2.5x lower |
-| Latency p99                                |            300 ms |                       1,000 ms |     3.3x lower |
-| Failed requests                            |       15 (0.003%) |                   1,101 (0.7%) |    ~270x fewer |
-| Memory trend, second half                  |   flat to falling | +85 to +97 MiB/h, still rising |                |
+|                                              |          Rust |     Python | Rust advantage |
+| -------------------------------------------- | ------------: | ---------: | -------------: |
+| VUs at p95 = 500 ms, default mix (3% logins) |          ~673 |       ~188 |           3.6x |
+| Throughput at that point, default mix        |  ~1,730 req/s | ~515 req/s |           3.4x |
+| VUs at p95 = 500 ms, no password logins      |        ~1,364 |       ~187 |           7.3x |
+| VUs per CPU core, no password logins         |          56.8 |        7.8 |           7.3x |
+| Memory, idle                                 |      ~155 MiB |   ~2.7 GiB |      ~17x less |
+| Memory, 600 VUs (average / max)              | 194 / 223 MiB |          - |                |
+| Memory, 2,100 VUs (average / max)            | 297 / 428 MiB |          - |                |
 
 What this shows:
 
-- **Memory.** Rust holds the same workload in about a sixth of the memory.
-  Python pays for every worker process with a full copy of the application:
-  going from 4 to 10 processes per pod raised throughput by about 16% (134k to
-  156k requests) and memory by about 2.5x (1,478 to ~3,653 MiB). Rust is one
-  process per pod and shares everything between its async tasks.
-- **Latency.** Rust answers the median request in 30 ms and the tail within 300
-  ms. The Python median is 5x higher and its p99 reaches one second. The gap is
-  widest on authentication (p50 31 ms against 280 ms), which is the CPU-heavy
-  path (password hashing and token handling).
-- **Reliability under load.** Python returned 465 HTTP 500 and 672 HTTP 502
-  responses, spread across the auth, revoke and group endpoints. Rust had 15
-  failures, all transport timeouts on one read endpoint. The failures are
-  counted by the loadtest itself; the expected 401/404 negative-test responses
-  are excluded.
-- **Steady state.** Rust memory is stable or falling once the working set is
-  warm. Python was still growing at the end of the run, at roughly 90 MiB/h per
-  pod. Whether it would plateau was not measured.
+- **Capacity.** With the default mix Rust carries about 3.5x the VUs and
+  throughput of Python at the same p95 limit. The no-login figures are the
+  better comparison of the implementations, see
+  [Why password hashing is reduced](#why-password-hashing-is-reduced-for-the-comparison).
+  The password logins are the expensive part for Rust (hashing is CPU-bound and
+  runs in a bounded pool), so removing them moves Rust from ~673 to ~1,364 VUs.
+  Python does not move (~188 to ~187), which means its limit is not the hashing.
+- **Memory.** Rust runs in one process and shares everything between async
+  tasks. Python pays a full copy of the application for each of its 24 worker
+  processes. The Rust figure is roughly 155 to 430 MiB for the whole range of
+  loads tested.
+- **Reliability.** Rust had no failed requests at any step of the sweeps. Python
+  returned about 2% HTTP 500 and 502 responses under load.
+- **Python ceiling.** Python's throughput is flat at about 500 req/s regardless
+  of the VU count. It may not be CPU-bound.
 
-The load is closed-loop (50 users with think-time), so a slower server also
-receives fewer requests per second. The request and throughput rows therefore
-reflect latency under a fixed offered load, **not capacity**. Rust is not
-saturated by this load: its throughput stayed at about 637 to 639 req/s whether
-it had a CPU limit of 4, 10 or none, and with the audit log on or off. They are
-not a maximum-throughput comparison; see [Saturation test](#saturation-test) for
-that. The memory, latency and failure figures at this load do not depend on it.
+## Why password hashing is reduced for the comparison
+
+Password hashing is an external load, not a property of either implementation.
+Verifying a password costs a fixed amount of CPU, set by the hashing algorithm
+and its cost parameters (the configured work factor), and it deliberately takes
+tens of milliseconds. Both servers have to do the same work for every login, and
+the cost does not depend on the language, the web framework, the database access
+or the caching.
+
+When logins are a noticeable share of the mix, that fixed cost dominates the CPU
+budget. In the default mix only 3% of the operations are logins, but each one
+costs far more CPU than any other operation (removing them roughly doubles the
+VUs Rust carries), so the VU count at p95 = 500 ms partly measures how many
+hashes the machine can compute. The other operations (token validation, reads,
+role assignment) are what the implementations differ in, and their differences
+are hidden behind the hashing.
+
+The comparison therefore reports two views:
+
+- **Default mix (3% logins).** Closer to a deployment where users log in with
+  passwords all the time. It shows the result with the hashing cost included.
+- **No password logins (`LOADTEST_VU_HASH_PCT=0`).** Isolates the logic and the
+  framework: request handling, authorization, database round trips and
+  revocation checks. This is the better measure of the performance benefit of
+  the implementation, and it is the figure used for the VUs-per-core comparison.
+
+Production deployments also reduce the share of password logins by design:
+clients keep a token until it expires instead of a password for each request. A
+mix dominated by hashing is not typical of the steady state, so the
+reduced-hashing numbers are the more realistic indication of the benefit.
+
+The Rust implementation also bounds the hashing in a separate pool (with the
+queue set to `wait` in these runs), so that hashing does not starve the other
+requests; the Python implementation hashes in the request worker. This is one
+more reason the default mix mixes two effects: the cost of the hash itself and
+how each implementation schedules it.
 
 ## Method
 
 - Cluster: single-node k3s (32 cores) deployed with skaffold, see
   [Local development](development.md). Both implementations use the same
-  Postgres.
-- Load: `tests/loadtest` (Goose), `/v3` scenarios only, because the Python
-  implementation has no `/v4` API. The mix covers password and token auth,
-  validation, role assignment, and group, catalog, credential and trust churn,
-  with 250 ms think-time on reads.
-- Driver: `tools/compare-memory.sh` runs the load against one or both targets
-  and samples per-pod memory. `tools/summarize-memory.py` turns the samples into
-  first/max/last values and a slope (MiB/h over the second half of the run).
-- Metric: container working set from `kubectl top`, plus RSS split into anon and
-  file from `/proc/<pid>/status`.
-- Each run: 15 minutes, 50 users, **freshly restarted pods**. An earlier
-  measurement of about 700 MiB per `keystone-rs` pod was taken after the soak
-  test and is not comparable.
+  Postgres (CloudNativePG).
+- Rust: StatefulSet with one pod, `--release` build, jemalloc via `LD_PRELOAD`,
+  telemetry off, `[database] max_pool_size` as in the skaffold setup, audit
+  chain capped, password hashing pool queue full behaviour set to `wait` (queue
+  instead of answering 503), CPU `requests = limits = 24`.
+- Python: Deployment with one pod, uwsgi with 24 single-threaded processes, one
+  memcached shared by all workers, CPU `requests = limits = 24`.
+- Python threads (`--enable-threads`) were tried earlier and are not
+  recommended: a 4-process x 4-thread variant used less memory per pod but
+  returned thousands of HTTP 502 responses returned by the wsgi server.
+- Load: `tests/loadtest` (Goose 0.19) with `LOADTEST_PROFILE=vu`. Every VU is an
+  end user of a tenant of its own, with its own project, role assignments and
+  token, so the caches of the server see realistic variety. Operations are
+  picked per request according to the mix below.
+- Sweep: the VU count is raised step by step (600, 900, 1200, 1500, 1800, 2100
+  for Rust; much lower for Python), 2 minutes per step plus warm-up. The sweep
+  stops when p95 exceeds 800 ms. The VU count at p95 = 500 ms is interpolated
+  between the two steps that bracket it.
+- Metric: per-pod working set from `kubectl top`, sampled during the run.
 
-Deployments under test:
+### VU operation mix
 
-| Implementation | Setup                                                                                                                                                                                    |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `keystone-rs`  | StatefulSet, 3 pods, `--release` build, jemalloc via `LD_PRELOAD` (`background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:0`), `OS_OTEL__ENABLED=false`, CPU request 1 and limit 10. |
-| `keystone-py`  | Deployment, 3 pods, uwsgi with 10 single-threaded worker processes each, caching in an external memcached, no CPU limit.                                                                 |
+The mix is configurable through environment variables. Defaults:
 
-Python threads (`--enable-threads`) were tried and are not recommended: a
-4-process x 4-thread variant used about 530 MiB per pod and returned 9,569 HTTP
-502 responses. The cause was not investigated deeper.
+| Variable                     | Default | Operation                                |
+| ---------------------------- | ------: | ---------------------------------------- |
+| `LOADTEST_VU_VALIDATE_PCT`   |      75 | Validate a token (`GET /v3/auth/tokens`) |
+| `LOADTEST_VU_ADMIN_READ_PCT` |      13 | Admin read                               |
+| `LOADTEST_VU_HASH_PCT`       |       3 | Password login (hashing)                 |
+| `LOADTEST_VU_ASSIGN_PCT`     |       2 | Role assignment                          |
+| `LOADTEST_VU_CREATE_PCT`     |     0.2 | Create resources                         |
+| `LOADTEST_VU_REVOKE_PCT`     |    0.02 | Revoke a token                           |
 
-## Rust memory: what moves the number
+The remainder is spread over other reads. "No password logins" means
+`LOADTEST_VU_HASH_PCT=0`.
 
-Working set per pod at the end of the run, in MiB. All Rust rows are three pods,
-fresh start, 15 minutes, 50 users.
+## Rust results
 
-| Run                                                                   | Pod 0 / 1 / 2   |   Total | Requests | Failed |
-| --------------------------------------------------------------------- | --------------- | ------: | -------: | -----: |
-| Untuned (telemetry on, no CPU limit)                                  | 499 / 519 / 578 |   1,596 |     704k |     23 |
-| CPU limit 4 + 4 tokio workers + telemetry off                         | 227 / 254 / 267 |     748 |     346k |      7 |
-| CPU limit 4, telemetry off                                            | 234 / 253 / 274 |     761 |     341k |      3 |
-| CPU limit 4, telemetry off, `MALLOC_ARENA_MAX=2`                      | 205 / 222 / 235 |     662 |     296k |      1 |
-| CPU limit 4, telemetry off, jemalloc                                  | 180 / 222 / 202 |     604 |     361k |      6 |
-| CPU limit 4, telemetry off, jemalloc, tuned decay                     | 160 / 199 / 214 |     573 |     338k |      3 |
-| **Release build, CPU limit 10, telemetry off, jemalloc, tuned decay** | 174 / 207 / 200 | **581** | **579k** | **15** |
-| Release build, **no CPU limit**, audit off, telemetry off, jemalloc   | 210 / 242 / 232 |     684 |     577k |     18 |
-| Python, 4 processes per pod                                           | 492 to 494      |   1,478 |     134k |    495 |
-| Python, 10 processes per pod                                          | 1,217 to 1,218  |  ~3,653 |     156k |  1,101 |
+### Default mix
 
-Findings:
+p95 = 500 ms is reached at about 673 VUs and about 1,730 req/s. CPU is the
+limit: the 24 cores are saturated, and a password login costs far more CPU than
+any other operation.
 
-- **Audit log and CPU limit do not change throughput at this load.** Removing
-  the CPU limit and disabling the audit framework (`[audit] enabled = false`)
-  gave 637 req/s against 639 req/s, with identical latency (p50 30 ms, p95 280
-  ms, p99 300 ms). The cost of no limit is memory: 684 MiB against 581 MiB
-  (about 18% more), from more tokio workers and allocator arenas. The reason
-  throughput does not move is that the load is not heavy enough to saturate
-  Rust, see [Saturation test](#saturation-test).
-- **Raising the CPU limit costs no memory.** Moving from a limit of 4 to a limit
-  of 10 gave about 1.7x the requests (338k to 579k) at the same memory (573 to
-  581 MiB). Rust memory does not scale with the number of workers the way the
-  Python deployment does.
-- **A CPU limit is the most effective single setting.** Without one, the
-  container sees all 32 host cores, tokio starts a worker per core (79 threads
-  per pod) and glibc creates up to 8 allocation arenas per core, so freed memory
-  stays scattered. With a limit, tokio reads the cgroup quota and sizes its pool
-  from it. A `TOKIO_WORKER_THREADS` override is not needed. The measured saving
-  is about 50% (1,596 to 761 MiB), together with telemetry off.
-- **Telemetry.** At the default sampling rate of 1.0 and span level debug,
-  OpenTelemetry adds allocation churn. Disabling it alone saved about 25% on an
-  otherwise untuned run. Sample or disable it when measuring memory.
-- **Allocator.** glibc does not read the cgroup quota, so it still benefits from
-  tuning. `MALLOC_ARENA_MAX=2` saved about 13%. jemalloc saved about 20 to 25%
-  against glibc with the same CPU limit. It has a similar peak but returns
-  memory to the OS afterwards, so its end-of-run figure and its slope are lower.
-  The negative slopes in the jemalloc runs are that release, not a leak signal.
-- **Release build.** The last Rust run is the only one built with `--release`
-  (thin LTO). The earlier runs used the `skaffold` profile, which disables LTO.
-  The release build did not change memory measurably; the throughput gain over
-  the CPU-limit-4 run comes from the higher limit.
+### No password logins
 
-## Conclusions
+Throughput, p95 and p99 per step. There were no failed requests at any step.
 
-- On this workload Rust needs about a sixth of the memory of Python for three
-  pods (581 against ~3,653 MiB), serves the same users with a fifth of the
-  median latency, and have no direct failures (all seen failures are the client
-  failures).
-- The Python memory bill scales with the number of worker processes and pods.
-  Adding processes buys little throughput. Rust scales by raising the CPU limit
-  with no memory cost.
-- To deploy `keystone-rs` with a small footprint: set a CPU limit, keep
-  telemetry sampled or off, and use jemalloc. Shipping jemalloc would mean using
-  `tikv-jemallocator` as the global allocator; it was tested here through
-  `LD_PRELOAD` of the Debian `libjemalloc2`.
+|   VUs | Throughput (req/s) | p95 (ms) | p99 (ms) |
+| ----: | -----------------: | -------: | -------: |
+|   600 |              2,877 |      221 |      331 |
+|   900 |              2,816 |      327 |      696 |
+| 1,200 |              2,733 |      446 |    1,040 |
+| 1,500 |              2,679 |      557 |    1,458 |
+| 1,800 |              2,624 |      663 |    1,867 |
+| 2,100 |              2,552 |      835 |    2,260 |
+
+p95 = 500 ms at about 1,340 VUs, which is 55.8 VUs per core.
+
+Throughput slowly decreases as VUs grow while the latency rises linearly. That
+is the shape of a CPU-bound server with a closed-loop client: extra VUs only
+queue.
+
+### Where the CPU goes
+
+A request costs about 3.6 ms of CPU without hashing. From a CPU profile under
+load:
+
+- Around 12.6% of CPU is in the kernel, mostly socket I/O to Postgres.
+- A validate issues about 14 database queries in about 10 sequential steps
+  (about 20 ms of wall time at low load, of which the database spends only 0.014
+  to 0.064 ms per query). The queries are round trips, not work.
+- For comparison, Python Keystone validating the same token with a cold cache
+  (memcached flushed, caller and subject being the same token) issues 36 to 39
+  data `SELECT` statements (36 with the catalog, 39 with `nocatalog`, measured
+  once each). They run in about 20 transactions, each with a connection
+  pre-ping, so Postgres sees about 99 statements (`BEGIN`, `ROLLBACK`,
+  `SELECT 1` and the data queries) and the validation takes 70 to 290 ms. Per
+  resource it loads the project, its options and tags, the role, its options and
+  the implied roles four times each, the assignments three times, the user and
+  its options twice, then groups, federation data, endpoint filters and the
+  revocation events. With a warm cache the same validation issues no queries at
+  all (29 ms); everything comes from memcached. Rust Keystone deliberately has
+  no cross-request cache to guarantee immediate access revocation, so it pays
+  its 14 queries on every request, while Python pays 36 to 39 only on a miss.
+  This is why the cache hit rate (64% in the earlier shared-memcached runs,
+  where the load creates new keys faster than any cache size keeps them) decides
+  how much database work Python does per request.
+- The revocation check is one `SELECT EXISTS` over a `UNION ALL` of one branch
+  per token dimension (audit id, user, project, domain, role, trust).
+
+Removing latency alone does not raise the ceiling of a CPU-bound server. Fewer
+queries per request reduce client and kernel CPU and would, by a few percent.
+
+## Python results
+
+Python reached p95 = 500 ms at about 188 VUs (default mix) and about 187 VUs (no
+logins), at about 7.8 VUs per core and about 515 req/s. About 2% of the requests
+failed with HTTP 500 or 502 under load.
+
+A shared cache is the only valid Python topology, see
+[Python cache topology](#python-cache-topology).
+
+## Memory
+
+| State                     | Rust (1 pod)  | Python (1 pod, 24 processes) |
+| ------------------------- | ------------- | ---------------------------- |
+| Idle                      | ~155 MiB      | ~2.7 GiB                     |
+| 600 VUs (average / max)   | 194 / 223 MiB | -                            |
+| 2,100 VUs (average / max) | 297 / 428 MiB | -                            |
+
+Rust memory grows with the number of connections and in-flight requests, not
+with the number of workers. Python memory is dominated by the per-process copy
+of the application and does not depend on the cache: earlier 15-minute runs with
+three pods and 10 processes each measured 1.2 GiB per pod with the cache off,
+with a small cache and with a large one.
+
+To deploy `keystone-rs` with a small footprint: set a CPU limit (tokio sizes its
+pool from the cgroup quota), keep telemetry sampled or off, and use jemalloc
+(tested through `LD_PRELOAD` of the Debian `libjemalloc2`; shipping it would
+mean using `tikv-jemallocator` as the global allocator).
+
+## Python cache topology
+
+Python Keystone must use **one cache shared by all pods**. Token validation
+relies on the revocation events being visible to every API instance. A memcached
+instance per pod gives every pod a private cache: a token revoked through one
+pod stays valid in the caches of the others until it expires. That breaks token
+revocation, is an anti-pattern, and must not be used in a real deployment. All
+Python figures on this page use the shared memcached.
 
 ## Limitations
 
-- Single runs, one per variant (15 minutes, 5 minutes for the saturation test).
-  Differences of a few tens of MiB, such as jemalloc default against tuned, are
-  within noise.
-- Python was run with its default setup: no CPU limit, no telemetry, no tuning
-  other than the process count. Rust CPU was capped at 10 per pod; Python was
-  not capped and had access to all 32 cores.
-- The two sides do not serve identical APIs: the loadtest is restricted to `/v3`
-  scenarios that both implement.
-- The loadtest is closed-loop, so request counts depend on latency, see the
-  Summary. The 15 Rust failures are load-generator artefacts, see
-  [Rust client timeouts](#rust-client-timeouts).
-- Python failures were counted but their cause was not investigated.
-
-## Saturation test
-
-The 50-user runs above do not saturate Rust. Each user waits 250 ms between read
-requests, so the offered load is fixed by the user count. Rust answers in about
-30 ms, which leaves most of each user's time idle. That is why its throughput
-stayed at 637 to 639 req/s whether it had a CPU limit of 4, 10 or none, and
-whether the audit log was on or off: the server was never the limit, the load
-generator's think-time was. Python, with a 150 ms median at the same load, was
-already close to its limit, so its lower throughput does reflect capacity.
-
-To compare capacity, the same `/v3` mix was run flat out: 150 users, no
-think-time, 5 minutes per target, same three pods each, through Traefik. Rust
-had no CPU limit, audit off, telemetry off and jemalloc; Python was 10 processes
-per pod. Both were already warm, so memory is not a fresh-pod value.
-
-|                            |      Rust |     Python | Rust advantage |
-| -------------------------- | --------: | ---------: | -------------: |
-| Requests served            |   137,638 |     37,640 |      3.7x more |
-| Throughput                 | 451 req/s |  123 req/s |    3.7x higher |
-| Latency p50                |    310 ms |     800 ms |     2.6x lower |
-| Latency p95                |    700 ms |   3,000 ms |     4.3x lower |
-| Latency p99                |    900 ms |   8,000 ms |     8.9x lower |
-| Failed requests            |         0 | 585 (1.6%) |                |
-| Memory, 3 pods, end of run |   767 MiB |  3,585 MiB |      4.7x less |
-
-Python's failures were 524 HTTP 502 and 63 HTTP 500 responses.
-
-What this shows:
-
-- **Rust is saturated here, the earlier runs were not.** At 50 users with
-  think-time the median was 30 ms. With 150 users and none it is 310 ms:
-  requests now queue, which is what saturation looks like. Throughput (451
-  req/s) is lower than in the think-time runs (637 req/s) because the mix is
-  different: think-time only applies to reads, so without it the cheap reads no
-  longer dilute the password-hashing and write requests, and the average request
-  costs more.
-- **The gap holds at capacity.** Rust serves 3.7x the requests of Python, the
-  same ratio as in the offered-load runs, with a tail 9x shorter and no
-  failures. Python's p99 of 8 seconds and its 502s are what overload looks like
-  in uwsgi.
-- **Rust memory stays small under overload.** Per pod it peaked at 365 to 392
-  MiB and ended at 239 to 266 MiB, against about 1,200 MiB for each Python pod.
-- **What limits Rust here was not isolated.** It may be CPU, Postgres (shared by
-  both targets), Traefik, or the load generator on the same host. Treat 451
-  req/s as a lower bound for Rust's capacity on this machine, and the ratio to
-  Python as the meaningful figure, since both sides share those limits.
-
-## Rust client timeouts
-
-All Rust failures were 60 s client timeouts on
-`GET /v3/auth/tokens (validate new)`, the request right after a token is issued.
-They are not a Keystone problem. They happen at about 0.03 to 0.1% of
-`tokenlifecycle` iterations and were reproduced with the `tokenlifecycle`
-scenario alone:
-
-| Users | Iterations | Timeouts |
-| ----: | ---------: | -------: |
-|     5 |     19,087 |        1 |
-|    20 |     41,420 |       19 |
-|    50 |   ~128,000 |      129 |
-
-Evidence that the request is never sent:
-
-- Bypassing Traefik (ClusterIP) gives the same failures.
-- With a "request started" log added to the access log, every request that
-  reached a pod also finished (169,777 started, 169,777 finished, slowest 339
-  ms). The pods saw exactly as many `GET` requests as the client sent minus the
-  timeouts.
-- A packet capture on `cni0` during a 20-user run (389k packets, none dropped)
-  shows, for every matched timeout, a healthy connection that completes the
-  `POST` for the new token, goes silent for exactly 60 s, then sends the
-  `DELETE`. No packet carrying the `validate new` token exists before that
-  `DELETE`.
-- Disabling idle connection reuse in the client did not remove the failures; it
-  only added port-exhaustion connect errors.
-- A plain Python keep-alive loop running the same sequence against each pod
-  showed no hangs in about 190k iterations.
-
-So the Goose 0.18.1 / reqwest client occasionally stalls before writing the
-request, and its 60 s total timeout then fires. Treat these as load-generator
-errors when reading the failure counts above.
+- Single run per load step, on one development machine. The load generator runs
+  on the same host as both servers and Postgres.
+- The load is closed-loop, so request counts depend on latency. The VU count at
+  a fixed p95 is the comparison metric, not the raw request count.
+- The two sides do not serve identical APIs: the load is restricted to `/v3`
+  operations that both implement.
+- The Python failures (about 2% HTTP 500 and 502) and its flat ~500 req/s
+  ceiling were not investigated.
+- Python has no no-login throughput figure in this page, only the VU count.
+- Rust runs with telemetry off; Python with no telemetry either.
 
 ## Reproducing
 
 ```bash
-# needs the admin password in OS_PASSWORD
-tools/compare-memory.sh --targets rs --run-time 15m --users 50 --out tests/loadtest/reports/<name>
-tools/compare-memory.sh --targets py --run-time 15m --users 50 --out tests/loadtest/reports/<name>
-python3 tools/summarize-memory.py tests/loadtest/reports/<name>/memory.csv
+cd tests/loadtest
+# needs the admin credentials in OS_* variables or OS_CLOUD
+LOADTEST_PROFILE=vu \
+LOADTEST_VU_HASH_PCT=0 \
+cargo run --release -- --host <url> --users 1200 --run-time 2m \
+  --report-file reports/<name>.md
 ```
 
-Result directories hold `load-<target>.json|log|md`, `memory.csv` and
-`summary.md`. `summarize-memory.py` sums the last working set of every pod in
-the CSV, including pods that were terminating during a rollout, so compute the
-total by hand after redeploying.
+Raise `--users` step by step, keep each step in its own report, and read the p95
+from the report. Sample memory during the run with
+`tests/loadtest/sample_metrics.sh`. Redirect the output to a file and do not
+pipe the run through `tail`.
