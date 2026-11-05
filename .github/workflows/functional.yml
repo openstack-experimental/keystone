@@ -302,7 +302,7 @@ jobs:
           mkdir -p tests/loadtest/reports
           (cd tests/loadtest && ./target/release/load_test \
               --host http://localhost:8080 \
-              --hatch-rate 2 \
+              --increase-rate 2 \
               --run-time 30s \
               --report-file reports/loadtest-report-rust.html \
               --report-file reports/loadtest-report-rust.md)

@@ -118,7 +118,7 @@ Backend traits in `crates/core/src/backend.rs` follow CRUD naming:
   SPIRE, an embedded-OPA rust `keystone`, bootstraps the admin user, seeds
   data, builds `tests/loadtest`, and runs it against `http://localhost:8080`.
   Extra args are forwarded to `load_test`, e.g.:
-  `tools/run-loadtest-local.sh --users 20 --hatch-rate 4 --run-time 30s --report-file reports/run.md`.
+  `tools/run-loadtest-local.sh --users 20 --increase-rate 4 --run-time 30s --report-file reports/run.md`.
   `tools/teardown-loadtest.sh` tears everything down; the runner calls it
   itself at the start of every run, so a stale environment from an
   interrupted run is cleaned up automatically.
