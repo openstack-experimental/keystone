@@ -217,11 +217,11 @@ serde = { version = "1.0" }
 serde_bytes = { version = "0.11" }
 serde_json = { version = "1.0" }
 serde_urlencoded = { version = "0.7" }
-spiffe = { version = "0.18" }
+spiffe = { version = "0.19" }
 # spiffe-rustls hardwires exactly one provider through its own features, so it
 # cannot follow `openstack-keystone-tls-provider`; SPIFFE mTLS stays on ring.
-spiffe-rustls = { version = "0.10", default-features = false, features = ["ring"] }
-spiffe-rustls-tokio = { version = "0.6" }
+spiffe-rustls = { version = "0.11", default-features = false, features = ["ring"] }
+spiffe-rustls-tokio = { version = "0.7" }
 subtle = "2.6"
 temp-env = { version = "0.3" }
 tempfile = { version = "3.27" }
