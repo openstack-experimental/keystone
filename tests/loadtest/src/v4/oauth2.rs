@@ -39,6 +39,7 @@ pub fn set_oauth2_seed(seed: Oauth2Seed) {
 
 /// Per-VU `client_credentials` client and the resources bound to it.
 /// `/token` is rate limited per client, so every virtual user needs its own.
+#[derive(Clone)]
 pub struct CcClient {
     pub client_id: String,
     pub secret: String,
@@ -313,6 +314,7 @@ pub async fn create_cc_client(user: &mut GooseUser) -> TransactionResult {
 
 /// Wrapper so the per-VU client does not collide with [`Session`] in goose's
 /// single session-data slot.
+#[derive(Clone)]
 struct CcSession(CcClient);
 
 /// Delete the per-VU client and its ruleset (on_stop for

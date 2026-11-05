@@ -33,12 +33,19 @@ pub fn set_seeded_ids(ids: Vec<String>) {
 pub async fn list(user: &mut GooseUser) -> TransactionResult {
     let session = user.get_session_data_unchecked::<Session>();
     let token = session.token.clone();
+    let path = match crate::v3::user::random_list_domain() {
+        Some(domain) => format!("/v3/projects?domain_id={domain}"),
+        None => "/v3/projects".to_string(),
+    };
 
     let req = user
-        .get_request_builder(&GooseMethod::Get, "/v3/projects")?
+        .get_request_builder(&GooseMethod::Get, &path)?
         .header("x-auth-token", &token);
 
-    let goose_request = GooseRequest::builder().set_request_builder(req).build();
+    let goose_request = GooseRequest::builder()
+        .name("GET /v3/projects?domain_id")
+        .set_request_builder(req)
+        .build();
 
     user.request(goose_request).await?;
     Ok(())

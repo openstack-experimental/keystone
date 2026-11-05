@@ -11,13 +11,15 @@
 // limitations under the License.
 //
 
-//! Group churn: create, show, update, list and delete in every iteration.
-//! (Group membership is not served by keystone-rs yet, so it is not covered.)
+//! Group churn: create, show, update, list and delete in every iteration,
+//! plus adding, checking, listing and removing the membership of a seeded
+//! user.
 
 use goose::prelude::*;
 use serde_json::json;
 use uuid::Uuid;
 
+use crate::v3::user::random_seeded_cred;
 use crate::v3::util::{DEFAULT_DOMAIN_ID, Undo, admin_token, call, create};
 
 pub async fn cycle(user: &mut GooseUser) -> TransactionResult {
@@ -48,6 +50,40 @@ async fn run(user: &mut GooseUser, undo: &mut Undo) -> TransactionResult {
         return Ok(());
     };
     let path = format!("/v3/groups/{id}");
+    if let Some(cred) = random_seeded_cred() {
+        let member = format!("{path}/users/{}", cred.id);
+        if call(
+            user,
+            GooseMethod::Put,
+            &member,
+            "PUT /v3/groups/:id/users/:id",
+            None,
+            Some(&token),
+        )
+        .await?
+        .is_some()
+        {
+            undo.push(member.clone(), "DELETE /v3/groups/:id/users/:id");
+            call(
+                user,
+                GooseMethod::Head,
+                &member,
+                "HEAD /v3/groups/:id/users/:id",
+                None,
+                Some(&token),
+            )
+            .await?;
+            call(
+                user,
+                GooseMethod::Get,
+                &format!("{path}/users"),
+                "GET /v3/groups/:id/users",
+                None,
+                Some(&token),
+            )
+            .await?;
+        }
+    }
     call(
         user,
         GooseMethod::Get,

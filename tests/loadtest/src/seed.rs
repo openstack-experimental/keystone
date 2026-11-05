@@ -23,6 +23,11 @@ use uuid::Uuid;
 const DEFAULT_DOMAIN_ID: &str = "default";
 const SEED_USERS: usize = 100;
 const SEED_PROJECTS: usize = 100;
+/// Dedicated domains the list scenarios iterate over, with their own users
+/// and projects, so a list is scoped to one domain like real clients do.
+const LIST_DOMAINS: usize = 5;
+const LIST_DOMAIN_USERS: usize = 40;
+const LIST_DOMAIN_PROJECTS: usize = 20;
 /// Shared password for every seeded user, so password-auth scenarios can log
 /// in as any user from the seeded pool without tracking per-user secrets.
 pub const SEED_USER_PASSWORD: &str = "LoadTestSeedPassw0rd!";
@@ -32,6 +37,7 @@ const AUTH_PROJECT_NAME: &str = "loadtest-authproject";
 const AUTH_ROLE_NAME: &str = "member";
 const SCIM_IDP_NAME: &str = "loadtest-scim-idp";
 const SCIM_REALM_PROVIDER_ID: &str = "loadtest-scim-realm";
+const SCIM_MAPPING_ID: &str = "loadtest-scim-sync";
 
 /// A seeded user's credentials, usable for password authentication.
 #[derive(Clone)]
@@ -54,6 +60,12 @@ pub struct Oauth2Seed {
 }
 
 pub struct SeedState {
+    /// Domains holding `LIST_DOMAIN_USERS` users and `LIST_DOMAIN_PROJECTS`
+    /// projects each; the list scenarios pick one at random.
+    pub list_domain_ids: Vec<String>,
+    /// Users and projects living in `list_domain_ids`, kept only for cleanup.
+    list_domain_user_ids: Vec<String>,
+    list_domain_project_ids: Vec<String>,
     pub user_ids: Vec<String>,
     pub project_ids: Vec<String>,
     /// Credentials for the seeded users, each holding a `member` role on
@@ -73,23 +85,37 @@ pub struct SeedState {
     /// no realm-delete endpoint (only per-resource purge), so this realm is
     /// not torn down -- only the backing IdP is, best-effort, in `cleanup`.
     pub scim_realm_provider_id: Option<String>,
+    /// Mapping ruleset (source `api_client`) that grants the SCIM sync API
+    /// Keys a domain role; without it every `/SCIM/v2` call is a 401.
+    scim_mapping_id: Option<String>,
     /// Domain, clients and mapping ruleset for the OAuth2 token scenarios.
     pub oauth2: Option<Oauth2Seed>,
+}
+
+impl SeedState {
+    /// A state without any seeded resource.
+    pub fn empty() -> Self {
+        Self {
+            list_domain_ids: Vec::new(),
+            list_domain_user_ids: Vec::new(),
+            list_domain_project_ids: Vec::new(),
+            user_ids: Vec::new(),
+            project_ids: Vec::new(),
+            user_creds: Vec::new(),
+            auth_project_id: None,
+            auth_role_id: None,
+            scim_idp_id: None,
+            scim_realm_provider_id: None,
+            scim_mapping_id: None,
+            oauth2: None,
+        }
+    }
 }
 
 /// Create background resources so list endpoints return non-trivial result sets.
 pub async fn seed(host: &str, token: &str) -> SeedState {
     let client = Client::new();
-    let mut state = SeedState {
-        user_ids: Vec::new(),
-        project_ids: Vec::new(),
-        user_creds: Vec::new(),
-        auth_project_id: None,
-        auth_role_id: None,
-        scim_idp_id: None,
-        scim_realm_provider_id: None,
-        oauth2: None,
-    };
+    let mut state = SeedState::empty();
 
     for i in 0..SEED_USERS {
         let name = format!("loadtest-seed-user-{}-{}", i, Uuid::new_v4().as_simple());
@@ -119,6 +145,8 @@ pub async fn seed(host: &str, token: &str) -> SeedState {
         state.project_ids.len()
     );
 
+    seed_list_domains(&client, host, token, &mut state).await;
+
     match seed_auth_project(&client, host, token, &state.user_ids).await {
         Some((project_id, role_id)) => {
             eprintln!(
@@ -135,6 +163,7 @@ pub async fn seed(host: &str, token: &str) -> SeedState {
         Some((idp_id, provider_id)) => {
             eprintln!("seed: created SCIM idp {idp_id} + realm {provider_id}");
             state.scim_idp_id = Some(idp_id);
+            state.scim_mapping_id = seed_scim_mapping(&client, host, token, &provider_id).await;
             state.scim_realm_provider_id = Some(provider_id);
         }
         None => eprintln!("seed: failed to set up SCIM idp/realm for ScimRealmRead scenario"),
@@ -149,6 +178,130 @@ pub async fn seed(host: &str, token: &str) -> SeedState {
     }
 
     state
+}
+
+/// Create the dedicated list domains and fill them with users and projects.
+async fn seed_list_domains(client: &Client, host: &str, token: &str, state: &mut SeedState) {
+    let suffix = Uuid::new_v4().as_simple().to_string();
+    for d in 0..LIST_DOMAINS {
+        let resp = client
+            .post(format!("{host}/v3/domains"))
+            .header("x-auth-token", token)
+            .json(&json!({"domain": {"name": format!("loadtest-list-{d}-{suffix}"), "enabled": true}}))
+            .send()
+            .await;
+        let domain_id = match resp {
+            Ok(r) if r.status().is_success() => r
+                .json::<serde_json::Value>()
+                .await
+                .ok()
+                .and_then(|v| v["domain"]["id"].as_str().map(str::to_owned)),
+            Ok(r) => {
+                eprintln!("seed: create list domain HTTP {}", r.status());
+                None
+            }
+            Err(e) => {
+                eprintln!("seed: create list domain failed: {e}");
+                None
+            }
+        };
+        let Some(domain_id) = domain_id else { continue };
+
+        for i in 0..LIST_DOMAIN_USERS {
+            let name = format!("loadtest-list-user-{i}-{}", Uuid::new_v4().as_simple());
+            if let Some(id) = create_user(client, host, token, &name, &domain_id).await {
+                state.list_domain_user_ids.push(id);
+            }
+        }
+        for i in 0..LIST_DOMAIN_PROJECTS {
+            let name = format!("loadtest-list-project-{i}-{}", Uuid::new_v4().as_simple());
+            if let Some(id) = create_project(client, host, token, &name, &domain_id).await {
+                state.list_domain_project_ids.push(id);
+            }
+        }
+        state.list_domain_ids.push(domain_id);
+    }
+    eprintln!(
+        "seed: created {} list domains with {} users, {} projects",
+        state.list_domain_ids.len(),
+        state.list_domain_user_ids.len(),
+        state.list_domain_project_ids.len()
+    );
+}
+
+/// Create the `api_client` mapping ruleset the SCIM sync API Keys hydrate
+/// through (ADR 0021 §3 Step 4): it maps the key to a user holding `manager` on
+/// the default domain. A leftover ruleset of a prior run is replaced.
+async fn seed_scim_mapping(
+    client: &Client,
+    host: &str,
+    token: &str,
+    provider_id: &str,
+) -> Option<String> {
+    let resp = client
+        .get(format!("{host}/v3/roles?name=manager"))
+        .header("x-auth-token", token)
+        .send()
+        .await
+        .ok()?;
+    let val: serde_json::Value = resp.json().await.ok()?;
+    let role_id = val["roles"][0]["id"].as_str()?.to_owned();
+
+    delete(
+        client,
+        host,
+        token,
+        &format!("/v4/mappings/rulesets/{SCIM_MAPPING_ID}"),
+    )
+    .await
+    .ok()?;
+    let body = json!({
+        "mapping": {
+            "mapping_id": SCIM_MAPPING_ID,
+            "domain_id": DEFAULT_DOMAIN_ID,
+            "domain_resolution_mode": {"type": "fixed"},
+            "enabled": true,
+            "source": {"type": "api_client", "provider_id": provider_id},
+            "rules": [{
+                "name": "loadtest-scim-sync",
+                "match": {"all_of": []},
+                "identity": {"user_name": "${claims.api_client.client_id}"},
+                "groups": [],
+                "authorizations": [{
+                    "type": "domain",
+                    "domain_id": DEFAULT_DOMAIN_ID,
+                    "roles": [{"id": role_id, "name": "manager"}]
+                }]
+            }]
+        }
+    });
+    let resp = client
+        .post(format!("{host}/v4/mappings/rulesets"))
+        .header("x-auth-token", token)
+        .json(&body)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        eprintln!("seed: create scim mapping ruleset HTTP {}", resp.status());
+        return None;
+    }
+    Some(SCIM_MAPPING_ID.to_string())
+}
+
+/// Disable then delete a domain (a domain must be disabled before deletion).
+async fn delete_domain(client: &Client, host: &str, token: &str, domain: &str) {
+    if let Err(e) = client
+        .patch(format!("{host}/v3/domains/{domain}"))
+        .header("x-auth-token", token)
+        .json(&json!({"domain": {"enabled": false}}))
+        .send()
+        .await
+    {
+        eprintln!("seed cleanup: failed to disable domain {domain}: {e}");
+    } else if let Err(e) = delete(client, host, token, &format!("/v3/domains/{domain}")).await {
+        eprintln!("seed cleanup: failed to delete domain {domain}: {e}");
+    }
 }
 
 /// Create a global federation IdP and a SCIM realm bound to it, so the SCIM
@@ -233,7 +386,25 @@ async fn seed_scim_realm(client: &Client, host: &str, token: &str) -> Option<(St
         let val: serde_json::Value = resp.json().await.ok()?;
         let existing_idp_id = val["scim_realm"]["idp_id"].as_str()?.to_owned();
         let provider_id = val["scim_realm"]["provider_id"].as_str()?.to_owned();
-        return Some((existing_idp_id, provider_id));
+        if existing_idp_id != idp_id {
+            // `cleanup` deletes the IdP but the realm outlives it, so the
+            // surviving realm points at a deleted IdP and every `/SCIM/v2`
+            // call authenticates with 401. Re-point it at the current IdP.
+            let resp = client
+                .put(format!(
+                    "{host}/v4/scim_realms/{DEFAULT_DOMAIN_ID}/{SCIM_REALM_PROVIDER_ID}"
+                ))
+                .header("x-auth-token", token)
+                .json(&json!({"scim_realm": {"idp_id": idp_id, "enabled": true}}))
+                .send()
+                .await
+                .ok()?;
+            if !resp.status().is_success() {
+                eprintln!("seed: re-point scim_realm HTTP {}", resp.status());
+                return None;
+            }
+        }
+        return Some((idp_id, provider_id));
     }
     if !resp.status().is_success() {
         eprintln!("seed: create scim_realm HTTP {}", resp.status());
@@ -465,6 +636,20 @@ pub async fn cleanup(host: &str, token: &str, state: &SeedState) {
         }
     }
 
+    for id in &state.list_domain_user_ids {
+        if let Err(e) = delete(&client, host, token, &format!("/v3/users/{id}")).await {
+            eprintln!("seed cleanup: failed to delete user {id}: {e}");
+        }
+    }
+    for id in &state.list_domain_project_ids {
+        if let Err(e) = delete(&client, host, token, &format!("/v3/projects/{id}")).await {
+            eprintln!("seed cleanup: failed to delete project {id}: {e}");
+        }
+    }
+    for domain in &state.list_domain_ids {
+        delete_domain(&client, host, token, domain).await;
+    }
+
     for id in &state.project_ids {
         if let Err(e) = delete(&client, host, token, &format!("/v3/projects/{id}")).await {
             eprintln!("seed cleanup: failed to delete project {id}: {e}");
@@ -481,6 +666,18 @@ pub async fn cleanup(host: &str, token: &str, state: &SeedState) {
         .await
     {
         eprintln!("seed cleanup: failed to delete auth project {auth_project_id}: {e}");
+    }
+
+    if let Some(mapping_id) = &state.scim_mapping_id
+        && let Err(e) = delete(
+            &client,
+            host,
+            token,
+            &format!("/v4/mappings/rulesets/{mapping_id}"),
+        )
+        .await
+    {
+        eprintln!("seed cleanup: failed to delete scim mapping {mapping_id}: {e}");
     }
 
     if let Some(idp_id) = &state.scim_idp_id
@@ -505,19 +702,7 @@ pub async fn cleanup(host: &str, token: &str, state: &SeedState) {
                 eprintln!("seed cleanup: failed to delete {path}: {e}");
             }
         }
-        // A domain must be disabled before it can be deleted.
-        if let Err(e) = client
-            .patch(format!("{host}/v3/domains/{domain}"))
-            .header("x-auth-token", token)
-            .json(&json!({"domain": {"enabled": false}}))
-            .send()
-            .await
-        {
-            eprintln!("seed cleanup: failed to disable oauth2 domain {domain}: {e}");
-        } else if let Err(e) = delete(&client, host, token, &format!("/v3/domains/{domain}")).await
-        {
-            eprintln!("seed cleanup: failed to delete oauth2 domain {domain}: {e}");
-        }
+        delete_domain(&client, host, token, domain).await;
     }
 
     eprintln!(

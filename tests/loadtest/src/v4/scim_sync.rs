@@ -45,7 +45,7 @@ pub fn set_realm_provider_id(id: String) {
 
 /// Per-VU SCIM sync session state: the API Key bearer token minted in
 /// `provision_api_key` and the SCIM user id created in `sync_create`.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ScimSession {
     pub bearer: Option<String>,
     pub user_id: Option<String>,
