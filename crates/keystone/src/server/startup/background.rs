@@ -449,6 +449,9 @@ async fn reconnect_db_on_config_change(cancel: CancellationToken, state: Service
                             .sqlx_logging(config.database.sqlx_logging_enabled())
                             .sqlx_logging_level(config.database.sqlx_logging_level())
                             .to_owned();
+                        if let Some(max) = config.database.max_pool_size {
+                            opt.max_connections(max);
+                        }
                         db_reload::apply_db_tls(&mut opt, &config.database.tls);
                         drop(config);
                         match state.db.reconnect(opt).await {
