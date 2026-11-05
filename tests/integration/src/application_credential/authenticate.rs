@@ -503,13 +503,13 @@ async fn test_authenticate_by_app_cred_scope_to_different_project_rejected() -> 
 
     // Scoping to a different project must be rejected
     let wrong_scope = ScopeInfo::Project {
-        project: openstack_keystone_core_types::resource::ProjectBuilder::default()
+        project: openstack_keystone_core_types::resource::ProjectRefBuilder::default()
             .id(&other_project.id)
             .name("other")
             .domain_id(&domain.id)
             .enabled(true)
             .build()?,
-        project_domain: openstack_keystone_core_types::resource::DomainBuilder::default()
+        project_domain: openstack_keystone_core_types::resource::DomainRefBuilder::default()
             .id(&domain.id)
             .name("test")
             .enabled(true)
@@ -523,7 +523,7 @@ async fn test_authenticate_by_app_cred_scope_to_different_project_rejected() -> 
 
     // Domain scope must be rejected
     let domain_scope = ScopeInfo::Domain(
-        openstack_keystone_core_types::resource::DomainBuilder::default()
+        openstack_keystone_core_types::resource::DomainRefBuilder::default()
             .id(&domain.id)
             .name("test")
             .enabled(true)
@@ -832,13 +832,13 @@ async fn test_issue_token_app_cred_scope_rules() -> Result<(), Report> {
     // accepts only that one.
     let project_scope = |id: &str| -> Result<ScopeInfo, Report> {
         Ok(ScopeInfo::Project {
-            project: openstack_keystone_core_types::resource::ProjectBuilder::default()
+            project: openstack_keystone_core_types::resource::ProjectRefBuilder::default()
                 .id(id)
                 .name("own")
                 .domain_id(&domain.id)
                 .enabled(true)
                 .build()?,
-            project_domain: openstack_keystone_core_types::resource::DomainBuilder::default()
+            project_domain: openstack_keystone_core_types::resource::DomainRefBuilder::default()
                 .id(&domain.id)
                 .name("test")
                 .enabled(true)
@@ -859,7 +859,7 @@ async fn test_issue_token_app_cred_scope_rules() -> Result<(), Report> {
         ScopeInfo::Unscoped,
         project_scope("other-project")?,
         ScopeInfo::Domain(
-            openstack_keystone_core_types::resource::DomainBuilder::default()
+            openstack_keystone_core_types::resource::DomainRefBuilder::default()
                 .id(&domain.id)
                 .name("test")
                 .enabled(true)

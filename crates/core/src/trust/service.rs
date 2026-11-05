@@ -405,6 +405,7 @@ impl TrustApi for TrustService {
                         ctx,
                         &RoleListParameters {
                             domain_id: Some(None),
+                            skip_options: true,
                             ..Default::default()
                         },
                     )
@@ -475,6 +476,7 @@ impl TrustApi for TrustService {
                     ctx,
                     &RoleListParameters {
                         domain_id: Some(None),
+                        skip_options: true,
                         ..Default::default()
                     },
                 )
@@ -561,6 +563,7 @@ mod tests {
             .withf(|_, qp: &RoleListParameters| {
                 RoleListParameters {
                     domain_id: Some(None),
+                    skip_options: true,
                     ..Default::default()
                 } == *qp
             })
@@ -597,6 +600,7 @@ mod tests {
             .withf(|_, qp: &RoleListParameters| {
                 RoleListParameters {
                     domain_id: Some(None),
+                    skip_options: true,
                     ..Default::default()
                 } == *qp
             })
@@ -640,6 +644,7 @@ mod tests {
             .withf(|_, qp: &RoleListParameters| {
                 RoleListParameters {
                     domain_id: Some(None),
+                    skip_options: true,
                     ..Default::default()
                 } == *qp
             })
@@ -678,6 +683,7 @@ mod tests {
             .withf(|_, qp: &RoleListParameters| {
                 RoleListParameters {
                     domain_id: Some(None),
+                    skip_options: true,
                     ..Default::default()
                 } == *qp
             })
@@ -732,6 +738,7 @@ mod tests {
             .withf(|_, qp: &RoleListParameters| {
                 RoleListParameters {
                     domain_id: Some(None),
+                    skip_options: true,
                     ..Default::default()
                 } == *qp
             })
@@ -796,6 +803,7 @@ mod tests {
             .withf(|_, qp: &RoleListParameters| {
                 RoleListParameters {
                     domain_id: Some(None),
+                    skip_options: true,
                     ..Default::default()
                 } == *qp
             })
@@ -871,6 +879,7 @@ mod tests {
             .withf(|_, qp: &RoleListParameters| {
                 RoleListParameters {
                     domain_id: Some(None),
+                    skip_options: true,
                     ..Default::default()
                 } == *qp
             })
@@ -940,6 +949,7 @@ mod tests {
             .withf(|_, qp: &RoleListParameters| {
                 RoleListParameters {
                     domain_id: Some(None),
+                    skip_options: true,
                     ..Default::default()
                 } == *qp
             })
@@ -1063,6 +1073,7 @@ mod tests {
             .withf(|_, qp: &RoleListParameters| {
                 RoleListParameters {
                     domain_id: Some(None),
+                    skip_options: true,
                     ..Default::default()
                 } == *qp
             })

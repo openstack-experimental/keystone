@@ -110,6 +110,16 @@ pub trait ResourceApi: Send + Sync {
         domain_name: &'a str,
     ) -> Result<Option<Domain>, ResourceProviderError>;
 
+    /// Get the short representation of a domain by the `id`.
+    ///
+    /// Does not load the domain options, which makes it the cheaper lookup
+    /// for callers that only need the identity and the enabled flag.
+    async fn get_domain_ref<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+    ) -> Result<Option<DomainRef>, ResourceProviderError>;
+
     /// Get a domain by the `id`.
     ///
     /// * `state` - The current service state.
@@ -163,6 +173,59 @@ pub trait ResourceApi: Send + Sync {
         name: &'a str,
         domain_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError>;
+
+    /// Get the ID of the domain a project belongs to.
+    ///
+    /// Cheaper than `get_project` when the domain is all that is needed. The
+    /// domain of a project never changes, which is why `[resource] caching`
+    /// can keep it in memory.
+    ///
+    /// * `ctx` - The execution context.
+    /// * `project_id` - The ID of the project.
+    ///
+    /// A `Result` containing an `Option` with the domain ID if the project
+    /// exists, or an `Error`.
+    async fn get_project_domain_id<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+    ) -> Result<Option<String>, ResourceProviderError>;
+
+    /// Get the short representation of a project (without options and tags).
+    ///
+    /// Meant for the authentication and authorization code, which does not
+    /// read the options and tags of a project: only the project row is
+    /// queried. The result is kept in the request cache.
+    ///
+    /// # Arguments
+    /// * `ctx` - The execution context.
+    /// * `project_id` - The ID of the project.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `ProjectRef` if the project
+    /// exists, or an `Error`.
+    async fn get_project_ref<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+    ) -> Result<Option<ProjectRef>, ResourceProviderError>;
+
+    /// Get the IDs of the project parents.
+    ///
+    /// The closest parent comes first, the root last; the project itself is not
+    /// included. The chain never changes, which is why `[resource] caching` can
+    /// keep it in memory.
+    ///
+    /// * `ctx` - The execution context.
+    /// * `project_id` - The ID of the project.
+    ///
+    /// A `Result` containing an `Option` with the parent IDs if the project
+    /// exists, or an `Error`.
+    async fn get_project_parent_ids<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+    ) -> Result<Option<Vec<String>>, ResourceProviderError>;
 
     /// Get project parents.
     ///

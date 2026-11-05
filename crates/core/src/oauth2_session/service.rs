@@ -178,9 +178,9 @@ impl Oauth2SessionService {
     }
 
     /// Delete every live pre-auth session and device code grant matching
-    /// the predicates and return how many were deleted. Neither record kind
-    /// has an owner index, so the candidates come from the expiry index:
-    /// both are short-lived, which keeps the scan bounded.
+    /// the predicates and return how many were deleted. The candidates come
+    /// from the expiry index, so every pending record is read: used for the
+    /// rare per-domain purge. The per-user purge uses the owner index.
     async fn purge_pending_grants(
         &self,
         state: &ServiceState,
@@ -1089,12 +1089,43 @@ impl Oauth2SessionApi for Oauth2SessionService {
         state: &ServiceState,
         user_id: &str,
     ) -> Result<usize, Oauth2SessionProviderError> {
-        self.purge_pending_grants(
-            state,
-            |s| s.user_id.as_deref() == Some(user_id),
-            |g| g.user_id.as_deref() == Some(user_id),
-        )
-        .await
+        // The backend keeps a per-user index, so only this user's records
+        // are read.
+        let mut purged = 0;
+        for (kind, id) in self
+            .backend_driver
+            .list_pending_grants_by_user(state, user_id)
+            .await?
+        {
+            match kind.as_str() {
+                "session" => {
+                    if let Some(session) =
+                        self.backend_driver.get_pre_auth_session(state, &id).await?
+                        && session.user_id.as_deref() == Some(user_id)
+                    {
+                        self.backend_driver
+                            .delete_pre_auth_session(state, &id)
+                            .await?;
+                        purged += 1;
+                    }
+                }
+                "device" => {
+                    if let Some(grant) = self
+                        .backend_driver
+                        .get_device_code_grant(state, &id)
+                        .await?
+                        && grant.user_id.as_deref() == Some(user_id)
+                    {
+                        self.backend_driver
+                            .take_device_code_grant(state, &id)
+                            .await?;
+                        purged += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(purged)
     }
 
     #[tracing::instrument(
@@ -1609,6 +1640,18 @@ mod tests {
     #[tokio::test]
     async fn test_purge_pending_grants_by_user_deletes_only_that_user() {
         let mut mock = backend_with_pending_grants();
+        // The owner index lists a stale entry per kind; the records no longer
+        // belong to the user and must be left alone.
+        mock.expect_list_pending_grants_by_user()
+            .withf(|_, user_id| user_id == "user-1")
+            .returning(|_, _| {
+                Ok(vec![
+                    ("session".to_string(), "s1".to_string()),
+                    ("session".to_string(), "s2".to_string()),
+                    ("device".to_string(), "d1".to_string()),
+                    ("device".to_string(), "d2".to_string()),
+                ])
+            });
         mock.expect_delete_pre_auth_session()
             .withf(|_, session_id| session_id == "s1")
             .times(1)

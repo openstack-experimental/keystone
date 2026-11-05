@@ -301,7 +301,7 @@ mod tests {
         SecurityContext, UserIdentityInfoBuilder,
     };
     use openstack_keystone_core_types::oauth2_client::{DelegationPolicy, OAuth2ClientResource};
-    use openstack_keystone_core_types::resource::{Domain, Project};
+    use openstack_keystone_core_types::resource::{Domain, ProjectRef};
     use openstack_keystone_core_types::role::RoleRef;
     use openstack_keystone_core_types::token::{FernetToken, payload::ProjectScopePayloadBuilder};
 
@@ -399,14 +399,14 @@ mod tests {
             .authorization(
                 AuthzInfoBuilder::default()
                     .scope(ScopeInfo::Project {
-                        project: Project {
+                        project: ProjectRef {
                             id: "project-1".into(),
                             domain_id: "domain-1".into(),
                             enabled: true,
                             name: "project".into(),
                             ..Default::default()
                         },
-                        project_domain: domain,
+                        project_domain: domain.into(),
                     })
                     .roles(vec![RoleRef {
                         id: "member".into(),
@@ -441,8 +441,8 @@ mod tests {
             .expect_is_token_revoked()
             .returning(move |_, _| Ok(revoked));
         let mut resource = MockResourceProvider::default();
-        resource.expect_get_domain().returning(|_, id| {
-            Ok(Some(Domain {
+        resource.expect_get_domain_ref().returning(|_, id| {
+            Ok(Some(openstack_keystone_core_types::resource::DomainRef {
                 id: id.to_string(),
                 name: id.to_string(),
                 enabled: true,

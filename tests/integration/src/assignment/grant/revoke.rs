@@ -129,13 +129,13 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
         .await?;
 
     let authz = ScopeInfo::Project {
-        project: ProjectBuilder::default()
+        project: ProjectRefBuilder::default()
             .id(cred.project_id.clone())
             .name(project.id.clone())
             .domain_id(project.domain_id.clone())
             .enabled(true)
             .build()?,
-        project_domain: DomainBuilder::default()
+        project_domain: DomainRefBuilder::default()
             .id(domain.id.clone())
             .name(domain.name.clone())
             .enabled(true)

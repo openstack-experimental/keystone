@@ -255,8 +255,8 @@ mod tests {
         sc.set_authorization(
             AuthzInfoBuilder::default()
                 .scope(ScopeInfo::Project {
-                    project: make_project(),
-                    project_domain: make_domain(),
+                    project: make_project().into(),
+                    project_domain: make_domain().into(),
                 })
                 .roles(vec![make_role("r1"), make_role("r2")])
                 .build()
@@ -279,8 +279,8 @@ mod tests {
         sc.set_authorization(
             AuthzInfoBuilder::default()
                 .scope(ScopeInfo::Project {
-                    project: make_project(),
-                    project_domain: make_domain(),
+                    project: make_project().into(),
+                    project_domain: make_domain().into(),
                 })
                 .roles(vec![make_role("r1"), make_role("r2")])
                 .build()
@@ -306,8 +306,8 @@ mod tests {
         sc.set_authorization(
             AuthzInfoBuilder::default()
                 .scope(ScopeInfo::Project {
-                    project: make_project(),
-                    project_domain: make_domain(),
+                    project: make_project().into(),
+                    project_domain: make_domain().into(),
                 })
                 .roles(app_cred.roles.clone())
                 .build()
@@ -445,8 +445,8 @@ mod tests {
         sc.set_authorization(
             AuthzInfoBuilder::default()
                 .scope(ScopeInfo::Project {
-                    project: make_project(),
-                    project_domain: make_domain(),
+                    project: make_project().into(),
+                    project_domain: make_domain().into(),
                 })
                 .roles(vec![make_role("r1")])
                 .build()

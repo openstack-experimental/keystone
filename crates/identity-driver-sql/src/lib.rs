@@ -346,6 +346,21 @@ impl IdentityBackend for SqlBackend {
         Ok(user::get(&config, &state.db.connection(), user_id).await?)
     }
 
+    /// Get the minimal user data required to authorize a request.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to retrieve.
+    #[tracing::instrument(name = "driver.sql.identity.get_user_core", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn get_user_core<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<Option<UserCore>, IdentityProviderError> {
+        let config = state.config_manager.config.read().await;
+        Ok(user::get_core(&config, &state.db.connection(), user_id).await?)
+    }
+
     /// Get single user by ID.
     ///
     /// # Parameters

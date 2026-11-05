@@ -36,8 +36,8 @@ use openstack_keystone_config::Interface;
 use crate::application_credential::ApplicationCredential;
 use crate::assignment::AssignmentProviderError;
 use crate::error::BuilderError;
-use crate::identity::{Group, UserResponse};
-use crate::resource::{Domain, Project};
+use crate::identity::{Group, UserCore, UserResponse};
+use crate::resource::{DomainRef, ProjectRef};
 use crate::role::RoleRef;
 use crate::token::{FernetToken, TokenRestriction};
 use crate::trust::Trust;
@@ -414,8 +414,10 @@ impl SecurityContext {
     ///
     /// The returned slice always contains at least one element — the fresh
     /// audit ID generated when the context was constructed. When the context
-    /// was authenticated by a parent token, the parent's audit IDs are carried
-    /// forward.
+    /// was authenticated by a parent token, the root audit ID of the parent's
+    /// chain (its last element) follows the fresh one, as in the Python
+    /// implementation (`[current, root]`). The chain therefore never grows
+    /// beyond two entries, however many times a token is rescoped.
     #[must_use]
     pub fn audit_ids(&self) -> &[String] {
         &self.audit_ids
@@ -428,7 +430,7 @@ impl SecurityContext {
     fn extend_audit_ids_from_auth_result(&mut self, auth: &AuthenticationResult) {
         self.audit_ids.push(auth.audit_id.clone());
         if let AuthenticationContext::Token(token) = &auth.context {
-            self.audit_ids.extend(token.audit_ids().clone());
+            self.audit_ids.extend(token.audit_ids().last().cloned());
         }
     }
 
@@ -482,7 +484,7 @@ impl SecurityContext {
     ///
     /// * `domain` - The [`Domain`] object resolved from the database for the
     ///   user's domain ID.
-    pub fn populate_user_domain(&mut self, domain: crate::resource::Domain) {
+    pub fn populate_user_domain(&mut self, domain: DomainRef) {
         if let IdentityInfo::User(ref mut user_info) = self.principal.identity
             && user_info.user_domain.is_none()
         {
@@ -689,11 +691,12 @@ impl SecurityContext {
     pub fn validate(&self) -> Result<(), AuthenticationError> {
         self.principal.validate()?;
         match &self.authentication_context {
-            // Trust and ApplicationCredential are bounded objects that carry their own
-            // user_id. If it differs from the principal's user_id, the context is
-            // misconstructed or malicious. Other authentication methods derive the
-            // principal directly at authentication time and do not have a separate
-            // bounded object restriction, so no check is needed.
+            // Trust and ApplicationCredential are bounded objects that carry
+            // their own user_id. If it differs from the principal's user_id,
+            // the context is misconstructed or malicious. Other authentication
+            // methods derive the principal directly at authentication time and
+            // do not have a separate bounded object restriction, so no check is
+            // needed.
             AuthenticationContext::ApplicationCredential {
                 application_credential,
                 ..
@@ -1048,7 +1051,8 @@ impl TryFrom<AuthenticationResult> for SecurityContext {
 
         let mut audit_ids = vec![value.audit_id];
         if let AuthenticationContext::Token(token) = &value.context {
-            audit_ids.extend(token.audit_ids().clone());
+            // Only the root of the parent chain is carried forward.
+            audit_ids.extend(token.audit_ids().last().cloned());
         }
         if let Some(expires) = &value.expires_at {
             builder.expires_at(*expires);
@@ -1095,7 +1099,7 @@ impl TryFrom<Vec<AuthenticationResult>> for SecurityContext {
                 builder.authorization(authorization);
             }
             if let AuthenticationContext::Token(token) = &auth.context {
-                audit_ids.extend(token.audit_ids().clone());
+                audit_ids.extend(token.audit_ids().last().cloned());
             };
             builder.auth_methods(auth.context.methods());
         }
@@ -1150,6 +1154,7 @@ impl PrincipalInfo {
                     user.user
                         .as_ref()
                         .map(|user_resp| user_resp.domain_id.clone())
+                        .or_else(|| user.user_core.as_ref().map(|core| core.domain_id.clone()))
                 }
             }
             IdentityInfo::Principal(principal) => {
@@ -1244,9 +1249,16 @@ pub struct UserIdentityInfo {
     #[builder(default)]
     pub user: Option<UserResponse>,
 
+    /// Minimal user data, set instead of [`Self::user`] when the request was
+    /// authenticated without loading the complete user record (see
+    /// `TokenApi::authorize_request_token`). Consumers needing more than
+    /// identity, domain and the enabled flag must load the full user.
+    #[builder(default)]
+    pub user_core: Option<UserCore>,
+
     /// Resolved user domain information.
     #[builder(default)]
-    pub user_domain: Option<Domain>,
+    pub user_domain: Option<DomainRef>,
 
     /// Resolved user groups object.
     #[builder(default)]
@@ -1283,23 +1295,26 @@ impl UserIdentityInfo {
             )
             .into());
         }
-        if let Some(user) = &self.user {
-            if user.id != self.user_id {
+        let (id, enabled) = match (&self.user, &self.user_core) {
+            (Some(user), _) => (&user.id, user.enabled),
+            (None, Some(core)) => (&core.id, core.enabled),
+            (None, None) => {
                 warn!(
-                    "User data does not match the user_id attribute: {} vs {}",
-                    self.user_id, user.id
+                    "User data must be resolved in the AuthenticatedInfo before validating: {:?}",
+                    self
                 );
                 return Err(AuthenticationError::Unauthorized);
             }
-            if !user.enabled {
-                return Err(AuthenticationError::UserDisabled(self.user_id.clone()));
-            }
-        } else {
+        };
+        if *id != self.user_id {
             warn!(
-                "User data must be resolved in the AuthenticatedInfo before validating: {:?}",
-                self
+                "User data does not match the user_id attribute: {} vs {}",
+                self.user_id, id
             );
             return Err(AuthenticationError::Unauthorized);
+        }
+        if !enabled {
+            return Err(AuthenticationError::UserDisabled(self.user_id.clone()));
         }
         if let Some(user_domain) = &self.user_domain {
             if !user_domain.enabled {
@@ -1337,7 +1352,7 @@ pub struct PrincipalIdentityInfo {
 
     /// Domain the principal belongs to.
     #[builder(default)]
-    pub domain: Option<crate::resource::Domain>,
+    pub domain: Option<DomainRef>,
 
     /// Human-readable name resolved by the mapping engine (e.g., mapping rule's
     /// user_name). Set when authentication goes through a mapping-based
@@ -1787,22 +1802,22 @@ pub struct TrustProjectInfo {
     /// Trust information.
     pub trust: Trust,
     /// Project information for the trust scope.
-    pub project: Project,
+    pub project: ProjectRef,
     /// Domain information for the trust scope.
-    pub project_domain: Domain,
+    pub project_domain: DomainRef,
 }
 
 /// Authorization information.
 #[derive(Clone, Debug)]
 pub enum ScopeInfo {
     /// Domain scope.
-    Domain(Domain),
+    Domain(DomainRef),
     /// Project scope.
     Project {
-        /// Project information.
-        project: Project,
+        /// Project information (short form: no options and tags).
+        project: ProjectRef,
         /// Domain information for the project scope.
-        project_domain: Domain,
+        project_domain: DomainRef,
     },
     /// System scope.
     System(String),

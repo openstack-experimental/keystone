@@ -26,6 +26,7 @@ mod seed;
 mod summary;
 mod v3;
 mod v4;
+mod vu;
 
 use crate::v3::auth::lifecycle::{token_lifecycle, validate as validate_token};
 use crate::v3::auth::password::{
@@ -76,8 +77,10 @@ use crate::v4::scim_sync::{
     sync_delete as scim_sync_delete, sync_list as scim_sync_list, sync_patch as scim_sync_patch,
     sync_show as scim_sync_show,
 };
+use crate::vu::{vu_op, vu_start};
 
 /// Per-GooseUser session state shared across transactions.
+#[derive(Clone)]
 pub struct Session {
     /// Admin-level token used for privileged operations.
     pub token: String,
@@ -103,13 +106,29 @@ async fn main() -> Result<(), GooseError> {
     let host = get_host();
     let admin_token = get_admin_token().await;
 
+    // `LOADTEST_PROFILE=vu` provisions its own tenants instead of the shared
+    // seed data.
+    let vu_bootstrap = if vu_profile() {
+        let users = get_users();
+        let bootstrap = vu::bootstrap(&host, &admin_token, users).await;
+        vu::share(&bootstrap, &admin_token);
+        Some(bootstrap)
+    } else {
+        None
+    };
+
     // Pre-populate the database so list endpoints operate on non-trivial data.
-    let seed_state = seed::seed(&host, &admin_token).await;
+    let seed_state = if vu_bootstrap.is_some() {
+        seed::SeedState::empty()
+    } else {
+        seed::seed(&host, &admin_token).await
+    };
 
     // Share the seeded ID pools with the catalog-read scenarios so virtual users
     // can pick random IDs without needing to issue their own list calls first.
     v3::user::set_seeded_ids(seed_state.user_ids.clone());
     v3::project::set_seeded_ids(seed_state.project_ids.clone());
+    v3::user::set_list_domain_ids(seed_state.list_domain_ids.clone());
 
     // Share seeded user credentials and the shared auth project with the
     // password-auth scenarios.
@@ -132,7 +151,7 @@ async fn main() -> Result<(), GooseError> {
     // (total weight = 59; 45 ensures proportional coverage).
     // Can be overridden by passing --users on the CLI. To actually run this
     // as a stress test, scale further with goose's own CLI flags, e.g.:
-    //   --users 500 --hatch-rate 20 --run-time 10m
+    //   --users 500 --increase-rate 20 --run-time 10m
     // Think time of the read scenarios, LOADTEST_THINK_MS=<ms> (default 0, flat
     // out). With a value set each read VU waits 0.5x-1.5x of it between
     // transactions, closer to real client behaviour than a tight loop.
@@ -145,262 +164,27 @@ async fn main() -> Result<(), GooseError> {
         Duration::from_millis(think_ms + think_ms / 2),
     );
 
-    let attack = GooseAttack::initialize()?
-        .set_default(GooseDefault::Users, 45usize)?
-        // Read-heavy workload: list endpoints hit the most common production path.
-        .register_scenario(
-            scenario!("ReadHeavy")
-                .set_weight(5)?
-                .set_wait_time(think.0, think.1)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(user_list))
-                .register_transaction(transaction!(project_list))
-                .register_transaction(transaction!(domain_list)),
-        )
-        // Token lifecycle: issue, validate, revoke — the hot path for every API request.
-        .register_scenario(
-            scenario!("TokenLifecycle")
-                .set_weight(3)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(token_lifecycle)),
-        )
-        // Validates the existing token once per iteration (cheapest validation path).
-        .register_scenario(
-            scenario!("ValidateToken")
-                .set_weight(2)?
-                .set_wait_time(think.0, think.1)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(validate_token)),
-        )
-        // User CRUD: each virtual user owns one user resource for the test duration.
-        .register_scenario(
-            scenario!("UserCRUD")
-                .set_weight(2)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(user_create).set_on_start())
-                .register_transaction(transaction!(user_show))
-                .register_transaction(transaction!(user_delete).set_on_stop()),
-        )
-        // Project CRUD: each virtual user owns one project resource for the test duration.
-        .register_scenario(
-            scenario!("ProjectCRUD")
-                .set_weight(1)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(project_create).set_on_start())
-                .register_transaction(transaction!(project_show))
-                .register_transaction(transaction!(project_delete).set_on_stop()),
-        )
-        // Role CRUD: each virtual user owns one role resource for the test duration.
-        .register_scenario(
-            scenario!("RoleCRUD")
-                .set_weight(1)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(role_create).set_on_start())
-                .register_transaction(transaction!(role_show))
-                .register_transaction(transaction!(role_delete).set_on_stop()),
-        )
-        // Dedicated role listing: exercises GET /v3/roles against the roles
-        // bootstrap/CRUD scenarios keep populated (admin, manager, member,
-        // reader, plus the auth-project's member role and any RoleCRUD churn).
-        .register_scenario(
-            scenario!("RoleList")
-                .set_weight(2)?
-                .set_wait_time(think.0, think.1)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(role_list)),
-        )
-        // Role assignment listing: unfiltered plus the user.id/scope.domain.id/
-        // role.id filter variants, all against the auth-project's seeded
-        // (100 users x member role) assignments.
-        .register_scenario(
-            scenario!("RoleAssignmentList")
-                .set_weight(3)?
-                .set_wait_time(think.0, think.1)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(role_assignment_list))
-                .register_transaction(transaction!(role_assignment_list_by_user))
-                .register_transaction(transaction!(role_assignment_list_by_domain))
-                .register_transaction(transaction!(role_assignment_list_by_role)),
-        )
-        // Catalog read: list all users then fetch a randomly chosen one from the
-        // pre-seeded pool.  Exercises the list + point-read path under realistic
-        // data volumes (100 seeded users).
-        .register_scenario(
-            scenario!("UserRead")
-                .set_weight(4)?
-                .set_wait_time(think.0, think.1)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(user_list))
-                .register_transaction(transaction!(user_show_random)),
-        )
-        // Catalog read: list all projects then fetch a randomly chosen one from the
-        // pre-seeded pool.  Exercises the list + point-read path under realistic
-        // data volumes (100 seeded projects).
-        .register_scenario(
-            scenario!("ProjectRead")
-                .set_weight(3)?
-                .set_wait_time(think.0, think.1)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(project_list))
-                .register_transaction(transaction!(project_show_random)),
-        )
-        // Password auth: exercises the hot password-login path against the
-        // pre-provisioned seeded users, both unscoped and project-scoped.
-        .register_scenario(
-            scenario!("PasswordAuth")
-                .set_weight(4)?
-                .register_transaction(transaction!(password_auth_unscoped))
-                .register_transaction(transaction!(password_auth_scoped)),
-        )
-        // Password auth negative path: wrong password must be rejected (401).
-        .register_scenario(
-            scenario!("PasswordAuthNegative")
-                .set_weight(1)?
-                .register_transaction(transaction!(password_auth_invalid)),
-        )
-        // Rescope the OS_CLOUD-authenticated token to system scope.
-        .register_scenario(
-            scenario!("Rescope")
-                .set_weight(2)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(rescope_to_system)),
-        )
-        // Rescope negative path: rescoping to a nonexistent project must fail.
-        .register_scenario(
-            scenario!("RescopeNegative")
-                .set_weight(1)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(rescope_invalid_project)),
-        )
-        // System-scoped auth using the initial bootstrap admin credentials.
-        .register_scenario(
-            scenario!("SystemScopeAuth")
-                .set_weight(2)?
-                .register_transaction(transaction!(system_scope_auth)),
-        )
-        // Churn scenarios: unlike the *CRUD scenarios above (one create in
-        // on_start, one delete in on_stop), each iteration creates, uses and
-        // deletes its resources, so allocator and cache behaviour under
-        // sustained write load shows up in the memory profile.
-        .register_scenario(
-            scenario!("GroupChurn")
-                .set_weight(3)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(group_cycle)),
-        )
-        .register_scenario(
-            scenario!("CatalogChurn")
-                .set_weight(2)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(catalog_cycle)),
-        )
-        .register_scenario(
-            scenario!("CredentialChurn")
-                .set_weight(2)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(credential_cycle)),
-        )
-        .register_scenario(
-            scenario!("TrustChurn")
-                .set_weight(2)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(trust_cycle)),
-        )
-        // New user + project + role + token on every iteration.
-        .register_scenario(
-            scenario!("IdentityChurn")
-                .set_weight(4)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(churn_cycle)),
-        )
-        // Raft-backed API Key CRUD (ADR 0021): create/revoke go through
-        // api-key-driver-raft's log-append + quorum-commit write path.
-        .register_scenario(
-            scenario!("ApiKeyCRUD")
-                .set_weight(1)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(api_key_create).set_on_start())
-                .register_transaction(transaction!(api_key_show))
-                .register_transaction(transaction!(api_key_list))
-                .register_transaction(transaction!(api_key_revoke).set_on_stop()),
-        )
-        // Raft-backed Mapping ruleset CRUD (ADR 0020): mapping-driver-raft is
-        // the largest raft driver -- rules carry nested claim/identity/role
-        // payloads, so this exercises bigger raft log entries than api_key.
-        .register_scenario(
-            scenario!("MappingCRUD")
-                .set_weight(1)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(mapping_create).set_on_start())
-                .register_transaction(transaction!(mapping_show))
-                .register_transaction(transaction!(mapping_list))
-                .register_transaction(transaction!(mapping_delete).set_on_stop()),
-        )
-        // Raft-backed OAuth2 client CRUD (ADR 0026 §5): oauth2-client-driver-raft.
-        .register_scenario(
-            scenario!("OAuth2ClientCRUD")
-                .set_weight(1)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(oauth2_client_create).set_on_start())
-                .register_transaction(transaction!(oauth2_client_show))
-                .register_transaction(transaction!(oauth2_client_list))
-                .register_transaction(transaction!(oauth2_client_delete).set_on_stop()),
-        )
-        // Token minting (ADR 0026 §5): Argon2 secret verification, mapping
-        // ruleset resolution and JWT signing on `/token`. Each VU owns its
-        // client because the limiter is per client; the wait time keeps a VU
-        // under the default 60/min replenish rate.
-        .register_scenario(
-            scenario!("OAuth2ClientCredentials")
-                .set_weight(1)?
-                .set_wait_time(Duration::from_secs(1), Duration::from_secs(2))?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(oauth2_cc_client_create).set_on_start())
-                .register_transaction(transaction!(oauth2_token_client_credentials))
-                .register_transaction(transaction!(oauth2_cc_client_delete).set_on_stop()),
-        )
-        // Device authorization start: client lookup plus session-state write.
-        .register_scenario(
-            scenario!("OAuth2DeviceAuthorization")
-                .set_weight(1)?
-                .register_transaction(transaction!(oauth2_device_authorization_start)),
-        )
-        // Read-heavy OAuth2 discovery: jwks + well-known are unauthenticated,
-        // linearizable-read-policy paths (ADR 0016-v2 §3) -- the actual
-        // steady-state traffic most OAuth2 relying parties generate.
-        .register_scenario(
-            scenario!("OAuth2Discovery")
-                .set_weight(3)?
-                .register_transaction(transaction!(oauth2_jwks))
-                .register_transaction(transaction!(oauth2_well_known)),
-        )
-        // Raft-backed SCIM realm reads (ADR 0024): scim-realm-driver-raft.
-        // No per-VU create/delete -- realm is seeded once (no delete endpoint
-        // exists, only per-resource purge), shared read-mostly across VUs.
-        .register_scenario(
-            scenario!("ScimRealmRead")
-                .set_weight(1)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(scim_realm_show))
-                .register_transaction(transaction!(scim_realm_list))
-                .register_transaction(transaction!(scim_realm_update)),
-        )
-        // Real SCIM sync simulation (ADR 0021 + 0024): unlike ScimRealmRead
-        // (admin x-auth-token reads), this authenticates via a per-VU
-        // `kscim_...` API Key bearer against `/SCIM/v2`, the actual ingress
-        // path an IdP-side SCIM connector uses -- provision, reconcile
-        // (list/show), attribute drift (PATCH), offboard (DELETE).
-        .register_scenario(
-            scenario!("ScimSync")
-                .set_weight(1)?
-                .register_transaction(transaction!(openstack_login).set_on_start())
-                .register_transaction(transaction!(scim_sync_provision_api_key).set_on_start())
-                .register_transaction(transaction!(scim_sync_create).set_on_start())
-                .register_transaction(transaction!(scim_sync_list))
-                .register_transaction(transaction!(scim_sync_show))
-                .register_transaction(transaction!(scim_sync_patch))
-                .register_transaction(transaction!(scim_sync_delete).set_on_stop()),
-        );
+    // Think time of the scenarios hashing passwords (bcrypt, ~270 ms of CPU per
+    // request). Real clients reuse their token, so a password login is rare
+    // next to token validation. LOADTEST_PROFILE=realistic waits 2-4 s.
+    let hash_wait = if realistic_profile() {
+        (Duration::from_secs(2), Duration::from_secs(4))
+    } else {
+        (Duration::ZERO, Duration::ZERO)
+    };
+
+    let attack = if vu_bootstrap.is_some() {
+        GooseAttack::initialize()?
+            .set_default(GooseDefault::Users, 45usize)?
+            .register_scenario(
+                scenario!("Vu")
+                    .set_weight(1)?
+                    .register_transaction(transaction!(vu_start).set_on_start())
+                    .register_transaction(transaction!(vu_op)),
+            )
+    } else {
+        stress_attack(think, hash_wait)?
+    };
 
     let metrics = attack.execute().await?;
 
@@ -416,9 +200,291 @@ async fn main() -> Result<(), GooseError> {
         }
     }
 
+    if let Some(bootstrap) = &vu_bootstrap {
+        vu::cleanup(&host, &admin_token, bootstrap).await;
+    }
     seed::cleanup(&host, &admin_token, &seed_state).await;
 
     Ok(())
+}
+
+/// The default scenario mix (stress, or `realistic` with the tuned weights).
+fn stress_attack(
+    think: (Duration, Duration),
+    hash_wait: (Duration, Duration),
+) -> Result<GooseAttack, GooseError> {
+    let attack = GooseAttack::initialize()?
+        .set_default(GooseDefault::Users, 45usize)?
+        // Read-heavy workload: list endpoints hit the most common production path.
+        .register_scenario(
+            scenario!("ReadHeavy")
+                .set_weight(weight("ReadHeavy", 5))?
+                .set_wait_time(think.0, think.1)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(user_list))
+                .register_transaction(transaction!(project_list))
+                .register_transaction(transaction!(domain_list)),
+        )
+        // Token lifecycle: issue, validate, revoke — the hot path for every API request.
+        .register_scenario(
+            scenario!("TokenLifecycle")
+                .set_weight(weight("TokenLifecycle", 3))?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(token_lifecycle)),
+        )
+        // Validates the existing token once per iteration (cheapest validation path).
+        .register_scenario(
+            scenario!("ValidateToken")
+                .set_weight(weight("ValidateToken", 2))?
+                .set_wait_time(think.0, think.1)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(validate_token)),
+        )
+        // User CRUD: each virtual user owns one user resource for the test duration.
+        .register_scenario(
+            scenario!("UserCRUD")
+                .set_weight(weight("UserCRUD", 2))?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(user_create).set_on_start())
+                .register_transaction(transaction!(user_show))
+                .register_transaction(transaction!(user_delete).set_on_stop()),
+        )
+        // Project CRUD: each virtual user owns one project resource for the test duration.
+        .register_scenario(
+            scenario!("ProjectCRUD")
+                .set_weight(weight("ProjectCRUD", 1))?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(project_create).set_on_start())
+                .register_transaction(transaction!(project_show))
+                .register_transaction(transaction!(project_delete).set_on_stop()),
+        )
+        // Role CRUD: each virtual user owns one role resource for the test duration.
+        .register_scenario(
+            scenario!("RoleCRUD")
+                .set_weight(weight("RoleCRUD", 1))?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(role_create).set_on_start())
+                .register_transaction(transaction!(role_show))
+                .register_transaction(transaction!(role_delete).set_on_stop()),
+        )
+        // Dedicated role listing: exercises GET /v3/roles against the roles
+        // bootstrap/CRUD scenarios keep populated (admin, manager, member,
+        // reader, plus the auth-project's member role and any RoleCRUD churn).
+        .register_scenario(
+            scenario!("RoleList")
+                .set_weight(weight("RoleList", 2))?
+                .set_wait_time(think.0, think.1)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(role_list)),
+        )
+        // Role assignment listing: unfiltered plus the user.id/scope.domain.id/
+        // role.id filter variants, all against the auth-project's seeded
+        // (100 users x member role) assignments.
+        .register_scenario(
+            scenario!("RoleAssignmentList")
+                .set_weight(weight("RoleAssignmentList", 3))?
+                .set_wait_time(think.0, think.1)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(role_assignment_list))
+                .register_transaction(transaction!(role_assignment_list_by_user))
+                .register_transaction(transaction!(role_assignment_list_by_domain))
+                .register_transaction(transaction!(role_assignment_list_by_role)),
+        )
+        // Catalog read: list all users then fetch a randomly chosen one from the
+        // pre-seeded pool.  Exercises the list + point-read path under realistic
+        // data volumes (100 seeded users).
+        .register_scenario(
+            scenario!("UserRead")
+                .set_weight(weight("UserRead", 4))?
+                .set_wait_time(think.0, think.1)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(user_list))
+                .register_transaction(transaction!(user_show_random)),
+        )
+        // Catalog read: list all projects then fetch a randomly chosen one from the
+        // pre-seeded pool.  Exercises the list + point-read path under realistic
+        // data volumes (100 seeded projects).
+        .register_scenario(
+            scenario!("ProjectRead")
+                .set_weight(weight("ProjectRead", 3))?
+                .set_wait_time(think.0, think.1)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(project_list))
+                .register_transaction(transaction!(project_show_random)),
+        )
+        // Password auth: exercises the hot password-login path against the
+        // pre-provisioned seeded users, both unscoped and project-scoped.
+        .register_scenario(
+            scenario!("PasswordAuth")
+                .set_weight(weight("PasswordAuth", 4))?
+                .set_wait_time(hash_wait.0, hash_wait.1)?
+                .register_transaction(transaction!(password_auth_unscoped))
+                .register_transaction(transaction!(password_auth_scoped)),
+        )
+        // Password auth negative path: wrong password must be rejected (401).
+        .register_scenario(
+            scenario!("PasswordAuthNegative")
+                .set_weight(weight("PasswordAuthNegative", 1))?
+                .register_transaction(transaction!(password_auth_invalid)),
+        )
+        // Rescope the OS_CLOUD-authenticated token to system scope.
+        .register_scenario(
+            scenario!("Rescope")
+                .set_weight(weight("Rescope", 2))?
+                .set_wait_time(think.0, think.1)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(rescope_to_system)),
+        )
+        // Rescope negative path: rescoping to a nonexistent project must fail.
+        .register_scenario(
+            scenario!("RescopeNegative")
+                .set_weight(weight("RescopeNegative", 1))?
+                .set_wait_time(think.0, think.1)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(rescope_invalid_project)),
+        )
+        // System-scoped auth using the initial bootstrap admin credentials.
+        .register_scenario(
+            scenario!("SystemScopeAuth")
+                .set_weight(weight("SystemScopeAuth", 2))?
+                .set_wait_time(hash_wait.0, hash_wait.1)?
+                .register_transaction(transaction!(system_scope_auth)),
+        )
+        // Churn scenarios: unlike the *CRUD scenarios above (one create in
+        // on_start, one delete in on_stop), each iteration creates, uses and
+        // deletes its resources, so allocator and cache behaviour under
+        // sustained write load shows up in the memory profile.
+        .register_scenario(
+            scenario!("GroupChurn")
+                .set_weight(weight("GroupChurn", 3))?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(group_cycle)),
+        )
+        .register_scenario(
+            scenario!("CatalogChurn")
+                .set_weight(weight("CatalogChurn", 2))?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(catalog_cycle)),
+        )
+        .register_scenario(
+            scenario!("CredentialChurn")
+                .set_weight(weight("CredentialChurn", 2))?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(credential_cycle)),
+        )
+        .register_scenario(
+            scenario!("TrustChurn")
+                .set_weight(weight("TrustChurn", 2))?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(trust_cycle)),
+        )
+        // New user + project + role + token on every iteration.
+        .register_scenario(
+            scenario!("IdentityChurn")
+                .set_weight(weight("IdentityChurn", 4))?
+                .set_wait_time(hash_wait.0, hash_wait.1)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(churn_cycle)),
+        );
+
+    // The raft-backed `/v4` and `/SCIM` scenarios only exist in the Rust
+    // implementation. LOADTEST_V3_ONLY=1 leaves them out so the same mix can
+    // be run against the Python keystone and compared 1:1.
+    let attack = if v3_only() {
+        attack
+    } else {
+        attack
+            // Raft-backed API Key CRUD (ADR 0021): create/revoke go through
+            // api-key-driver-raft's log-append + quorum-commit write path.
+            .register_scenario(
+                scenario!("ApiKeyCRUD")
+                    .set_weight(weight("ApiKeyCRUD", 1))?
+                    .register_transaction(transaction!(openstack_login).set_on_start())
+                    .register_transaction(transaction!(api_key_create).set_on_start())
+                    .register_transaction(transaction!(api_key_show))
+                    .register_transaction(transaction!(api_key_list))
+                    .register_transaction(transaction!(api_key_revoke).set_on_stop()),
+            )
+            // Raft-backed Mapping ruleset CRUD (ADR 0020): mapping-driver-raft is
+            // the largest raft driver -- rules carry nested claim/identity/role
+            // payloads, so this exercises bigger raft log entries than api_key.
+            .register_scenario(
+                scenario!("MappingCRUD")
+                    .set_weight(weight("MappingCRUD", 1))?
+                    .register_transaction(transaction!(openstack_login).set_on_start())
+                    .register_transaction(transaction!(mapping_create).set_on_start())
+                    .register_transaction(transaction!(mapping_show))
+                    .register_transaction(transaction!(mapping_list))
+                    .register_transaction(transaction!(mapping_delete).set_on_stop()),
+            )
+            // Raft-backed OAuth2 client CRUD (ADR 0026 §5): oauth2-client-driver-raft.
+            .register_scenario(
+                scenario!("OAuth2ClientCRUD")
+                    .set_weight(weight("OAuth2ClientCRUD", 1))?
+                    .register_transaction(transaction!(openstack_login).set_on_start())
+                    .register_transaction(transaction!(oauth2_client_create).set_on_start())
+                    .register_transaction(transaction!(oauth2_client_show))
+                    .register_transaction(transaction!(oauth2_client_list))
+                    .register_transaction(transaction!(oauth2_client_delete).set_on_stop()),
+            )
+            // Token minting (ADR 0026 §5): Argon2 secret verification, mapping
+            // ruleset resolution and JWT signing on `/token`. Each VU owns its
+            // client because the limiter is per client; the wait time keeps a VU
+            // under the default 60/min replenish rate.
+            .register_scenario(
+                scenario!("OAuth2ClientCredentials")
+                    .set_weight(weight("OAuth2ClientCredentials", 1))?
+                    .set_wait_time(Duration::from_secs(1), Duration::from_secs(2))?
+                    .register_transaction(transaction!(openstack_login).set_on_start())
+                    .register_transaction(transaction!(oauth2_cc_client_create).set_on_start())
+                    .register_transaction(transaction!(oauth2_token_client_credentials))
+                    .register_transaction(transaction!(oauth2_cc_client_delete).set_on_stop()),
+            )
+            // Device authorization start: client lookup plus session-state write.
+            .register_scenario(
+                scenario!("OAuth2DeviceAuthorization")
+                    .set_weight(weight("OAuth2DeviceAuthorization", 1))?
+                    .register_transaction(transaction!(oauth2_device_authorization_start)),
+            )
+            // Read-heavy OAuth2 discovery: jwks + well-known are unauthenticated,
+            // linearizable-read-policy paths (ADR 0016-v2 §3) -- the actual
+            // steady-state traffic most OAuth2 relying parties generate.
+            .register_scenario(
+                scenario!("OAuth2Discovery")
+                    .set_weight(weight("OAuth2Discovery", 3))?
+                    .register_transaction(transaction!(oauth2_jwks))
+                    .register_transaction(transaction!(oauth2_well_known)),
+            )
+            // Raft-backed SCIM realm reads (ADR 0024): scim-realm-driver-raft.
+            // No per-VU create/delete -- realm is seeded once (no delete endpoint
+            // exists, only per-resource purge), shared read-mostly across VUs.
+            .register_scenario(
+                scenario!("ScimRealmRead")
+                    .set_weight(weight("ScimRealmRead", 1))?
+                    .register_transaction(transaction!(openstack_login).set_on_start())
+                    .register_transaction(transaction!(scim_realm_show))
+                    .register_transaction(transaction!(scim_realm_list))
+                    .register_transaction(transaction!(scim_realm_update)),
+            )
+            // Real SCIM sync simulation (ADR 0021 + 0024): unlike ScimRealmRead
+            // (admin x-auth-token reads), this authenticates via a per-VU
+            // `kscim_...` API Key bearer against `/SCIM/v2`, the actual ingress
+            // path an IdP-side SCIM connector uses -- provision, reconcile
+            // (list/show), attribute drift (PATCH), offboard (DELETE).
+            .register_scenario(
+                scenario!("ScimSync")
+                    .set_weight(weight("ScimSync", 1))?
+                    .register_transaction(transaction!(openstack_login).set_on_start())
+                    .register_transaction(transaction!(scim_sync_provision_api_key).set_on_start())
+                    .register_transaction(transaction!(scim_sync_create).set_on_start())
+                    .register_transaction(transaction!(scim_sync_list))
+                    .register_transaction(transaction!(scim_sync_show))
+                    .register_transaction(transaction!(scim_sync_patch))
+                    .register_transaction(transaction!(scim_sync_delete).set_on_stop()),
+            )
+    };
+
+    Ok(attack)
 }
 
 /// Build the admin cloud config, preferring plain `OS_*` auth env vars
@@ -426,6 +492,55 @@ async fn main() -> Result<(), GooseError> {
 /// entry when `OS_AUTH_URL` is set, so CI/local runs don't need a clouds.yaml
 /// at all. Falls back to `OS_CLOUD` (default `devstack`) looked up via
 /// clouds.yaml otherwise.
+/// Whether `LOADTEST_V3_ONLY=1` is set: skip the `/v4` and `/SCIM` scenarios.
+fn v3_only() -> bool {
+    env::var("LOADTEST_V3_ONLY").is_ok_and(|v| v == "1")
+}
+
+/// Whether `LOADTEST_PROFILE=vu` is set: every virtual user is an end user of
+/// a tenant of its own (see [`vu`]).
+fn vu_profile() -> bool {
+    env::var("LOADTEST_PROFILE").is_ok_and(|v| v == "vu")
+}
+
+/// The `--users` argument (goose option), 45 when absent.
+fn get_users() -> usize {
+    let args: Vec<String> = env::args().collect();
+    args.windows(2)
+        .find(|w| w[0] == "--users" || w[0] == "-u")
+        .and_then(|w| w[1].parse().ok())
+        .unwrap_or(45)
+}
+
+/// Whether `LOADTEST_PROFILE=realistic` is set: the scenario mix leans on the
+/// cheap operations real clouds see (token validation, reads) and cuts the
+/// password hashing and the resource churn that dominate the default mix.
+fn realistic_profile() -> bool {
+    env::var("LOADTEST_PROFILE").is_ok_and(|v| v == "realistic")
+}
+
+/// Scenario weight: `default` for the stress mix, the tuned value for
+/// `LOADTEST_PROFILE=realistic`.
+fn weight(scenario: &str, default: usize) -> usize {
+    if !realistic_profile() {
+        return default;
+    }
+    match scenario {
+        "ReadHeavy" => 10,
+        "TokenLifecycle" => 1,
+        "ValidateToken" => 45,
+        "UserCRUD" | "ProjectCRUD" | "RoleCRUD" => 1,
+        "GroupChurn" => 4,
+        "CatalogChurn" | "CredentialChurn" | "TrustChurn" | "IdentityChurn" => 1,
+        "RoleList" | "RoleAssignmentList" => 3,
+        "UserRead" => 8,
+        "ProjectRead" => 8,
+        "PasswordAuth" | "SystemScopeAuth" => 1,
+        "Rescope" => 4,
+        _ => default,
+    }
+}
+
 fn load_cloud_config() -> CloudConfig {
     if env::var("OS_AUTH_URL").is_ok() {
         return CloudConfig::from_env().expect("cannot build cloud config from OS_* env vars");
@@ -439,14 +554,27 @@ fn load_cloud_config() -> CloudConfig {
 
 /// Authenticate via the configured OS_CLOUD/OS_* env vars and store the
 /// token in session data.
+///
+/// An overloaded server answers the login with 5xx. That must not kill the
+/// virtual user: retry a few times, then continue with an empty token so the
+/// following requests are counted as failures instead of panicking the worker.
 pub async fn openstack_login(user: &mut GooseUser) -> TransactionResult {
     let profile = load_cloud_config();
-    let session = AsyncOpenStack::new(&profile)
-        .await
-        .expect("cannot connect to the cloud");
-    let token = session.get_auth_token().expect("no auth token in session");
+    let mut token = String::new();
+    for attempt in 1..=5u64 {
+        match AsyncOpenStack::new(&profile).await {
+            Ok(session) => {
+                if let Some(t) = session.get_auth_token() {
+                    token = t.expose_secret().to_string();
+                    break;
+                }
+            }
+            Err(err) => eprintln!("login attempt {attempt} failed: {err}"),
+        }
+        tokio::time::sleep(Duration::from_millis(500 * attempt)).await;
+    }
     user.set_session_data(Session {
-        token: token.expose_secret().to_string(),
+        token,
         user_id: None,
         project_id: None,
         role_id: None,

@@ -146,7 +146,7 @@ pub async fn run(cfg: LoadConfig, deadline: Option<Instant>) -> Result<()> {
             .arg(&cfg.host)
             .arg("--users")
             .arg(users.to_string())
-            .arg("--hatch-rate")
+            .arg("--increase-rate")
             .arg((users / 5).max(1).to_string())
             .arg("--run-time")
             .arg(format!("{}s", length.as_secs().max(1)))

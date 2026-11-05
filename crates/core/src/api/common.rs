@@ -174,8 +174,10 @@ pub async fn get_authz_info(
             if let Some(project) = find_project_from_scope(state, &scope.into()).await? {
                 let domain_id = project.domain_id.clone();
                 ScopeInfo::Project {
-                    project,
-                    project_domain: get_domain(state, Some(&domain_id), None::<&str>).await?,
+                    project: project.into(),
+                    project_domain: get_domain(state, Some(&domain_id), None::<&str>)
+                        .await?
+                        .into(),
                 }
             } else {
                 return Err(KeystoneApiError::UnauthorizedNoContext);
@@ -183,7 +185,7 @@ pub async fn get_authz_info(
         }
         Some(ProviderScope::Domain(scope)) => {
             if let Ok(domain) = get_domain(state, scope.id.as_ref(), scope.name.as_ref()).await {
-                ScopeInfo::Domain(domain)
+                ScopeInfo::Domain(domain.into())
             } else {
                 return Err(KeystoneApiError::UnauthorizedNoContext);
             }

@@ -25,6 +25,16 @@ use crate::revoke::RevokeProviderError;
 /// Revocation Provider interface.
 #[async_trait]
 pub trait RevokeApi: Send + Sync {
+    /// Delete the revocation events that can no longer affect any token.
+    ///
+    /// An event is kept until every token it may revoke has expired and the
+    /// `[revoke] expiration_buffer` has passed. Returns the number of deleted
+    /// events.
+    ///
+    /// # Arguments
+    /// * `ctx` - The execution context.
+    async fn cleanup<'a>(&self, ctx: &ExecutionContext<'a>) -> Result<u64, RevokeProviderError>;
+
     /// Create revocation event.
     ///
     /// # Arguments

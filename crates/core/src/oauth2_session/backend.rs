@@ -75,6 +75,16 @@ pub trait Oauth2SessionBackend: Send + Sync {
         sso_id: &str,
     ) -> Result<(), Oauth2SessionProviderError>;
 
+    /// The pending pre-auth sessions and device code grants authenticated as
+    /// the user, as `(kind, id)` pairs: kind `"session"` with the session ID
+    /// or `"device"` with the device code. Records that never got a user
+    /// are not listed.
+    async fn list_pending_grants_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<Vec<(String, String)>, Oauth2SessionProviderError>;
+
     /// List the SSO sessions of `user_id` in `domain_id`.
     async fn list_sso_sessions_by_user(
         &self,

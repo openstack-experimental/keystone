@@ -123,8 +123,9 @@ impl FernetToken {
             .ok_or(TokenProviderError::ScopeMissing)?;
         match scope {
             ScopeInfo::Domain(domain) => match ctx.authentication_context() {
-                // Protect domain scope by not implementing default match branch allowing newer
-                // AuthenticationContext accidentally grant domain scope token.
+                // Protect domain scope by not implementing default match branch
+                // allowing newer AuthenticationContext accidentally grant
+                // domain scope token.
                 AuthenticationContext::ApplicationCredential { .. } => {
                     Err(AuthenticationError::ScopeNotAllowed.into())
                 }
@@ -195,18 +196,19 @@ impl FernetToken {
                         ctx, project, oidc, expires_at,
                     )?,
                 )),
-                // A trust presented on a plain Project scope (the EC2-redemption
-                // shape, `validate_scope_boundaries` guarantees `project.id ==
-                // trust.project_id` here) MUST NOT fall through to a plain
-                // `ProjectScope` payload: that payload type carries no trust
-                // reference, so decoding it back (`build_authz_info_from_fernet_token`
+                // A trust presented on a plain Project scope (the
+                // EC2-redemption shape, `validate_scope_boundaries` guarantees
+                // `project.id == trust.project_id` here) MUST NOT fall through
+                // to a plain `ProjectScope` payload: that payload type carries
+                // no trust reference, so decoding it back
+                // (`build_authz_info_from_fernet_token`
                 // / `validate_to_context_impl`) would reconstruct a generic
                 // `AuthenticationContext::Token` with the trustee's own live
                 // project role assignments instead of the trust's bounded set —
-                // silently dropping the delegation restriction on every reuse of
-                // the issued token (OSSA-2026-015). Emit the same `Trust` payload
-                // used for the native `TrustProject` scope so the round-trip
-                // always re-derives `AuthenticationContext::Trust`.
+                // silently dropping the delegation restriction on every reuse
+                // of the issued token (OSSA-2026-015). Emit the same `Trust`
+                // payload used for the native `TrustProject` scope so the
+                // round-trip always re-derives `AuthenticationContext::Trust`.
                 AuthenticationContext::Trust { trust, .. } => {
                     Ok(Self::Trust(TrustPayload::from_security_context(
                         ctx,
@@ -450,8 +452,8 @@ mod tests {
             .unwrap()
     }
 
-    fn make_domain() -> Domain {
-        DomainBuilder::default()
+    fn make_domain() -> DomainRef {
+        DomainRefBuilder::default()
             .id("did")
             .name("dname")
             .enabled(true)
@@ -484,7 +486,7 @@ mod tests {
         ctx.set_authorization(
             AuthzInfoBuilder::default()
                 .scope(ScopeInfo::Project {
-                    project: make_project(project_id),
+                    project: make_project(project_id).into(),
                     project_domain: make_domain(),
                 })
                 .build()
@@ -557,7 +559,7 @@ mod tests {
         ctx.set_authorization(
             AuthzInfoBuilder::default()
                 .scope(ScopeInfo::Project {
-                    project: make_project("pid"),
+                    project: make_project("pid").into(),
                     project_domain: make_domain(),
                 })
                 .build()

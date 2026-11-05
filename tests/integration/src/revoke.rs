@@ -21,7 +21,7 @@ use openstack_keystone::auth::*;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::identity::*;
 use openstack_keystone_core_types::resource::*;
-use openstack_keystone_core_types::resource::{DomainBuilder, ProjectBuilder};
+use openstack_keystone_core_types::resource::{DomainRefBuilder, ProjectRefBuilder};
 use openstack_keystone_core_types::revoke::*;
 use openstack_keystone_core_types::role::RoleCreateBuilder;
 
@@ -84,13 +84,13 @@ async fn test_token_revoked() -> Result<(), Report> {
             &ExecutionContext::internal(&state),
             &ctx,
             &ScopeInfo::Project {
-                project: ProjectBuilder::default()
+                project: ProjectRefBuilder::default()
                     .id(project.id.clone())
                     .name(project.name.clone())
                     .domain_id(project.domain_id.clone())
                     .enabled(true)
                     .build()?,
-                project_domain: DomainBuilder::default()
+                project_domain: DomainRefBuilder::default()
                     .id(domain.id.clone())
                     .name(domain.name.clone())
                     .enabled(true)
@@ -197,13 +197,13 @@ async fn test_revoked_event_role() -> Result<(), Report> {
             &ExecutionContext::internal(&state),
             &ctx,
             &ScopeInfo::Project {
-                project: ProjectBuilder::default()
+                project: ProjectRefBuilder::default()
                     .id(project.id.clone())
                     .name(project.name.clone())
                     .domain_id(project.domain_id.clone())
                     .enabled(true)
                     .build()?,
-                project_domain: DomainBuilder::default()
+                project_domain: DomainRefBuilder::default()
                     .id(domain.id.clone())
                     .name(domain.name.clone())
                     .enabled(true)
@@ -314,13 +314,13 @@ async fn test_revoked_event_user() -> Result<(), Report> {
             &ExecutionContext::internal(&state),
             &ctx,
             &ScopeInfo::Project {
-                project: ProjectBuilder::default()
+                project: ProjectRefBuilder::default()
                     .id(project.id.clone())
                     .name(project.name.clone())
                     .domain_id(project.domain_id.clone())
                     .enabled(true)
                     .build()?,
-                project_domain: DomainBuilder::default()
+                project_domain: DomainRefBuilder::default()
                     .id(domain.id.clone())
                     .name(domain.name.clone())
                     .enabled(true)
@@ -431,13 +431,13 @@ async fn test_revoked_event_project() -> Result<(), Report> {
             &ExecutionContext::internal(&state),
             &ctx,
             &ScopeInfo::Project {
-                project: ProjectBuilder::default()
+                project: ProjectRefBuilder::default()
                     .id(project.id.clone())
                     .name(project.name.clone())
                     .domain_id(project.domain_id.clone())
                     .enabled(true)
                     .build()?,
-                project_domain: DomainBuilder::default()
+                project_domain: DomainRefBuilder::default()
                     .id(domain.id.clone())
                     .name(domain.name.clone())
                     .enabled(true)

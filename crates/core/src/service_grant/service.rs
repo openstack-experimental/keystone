@@ -487,7 +487,7 @@ mod tests {
         PrincipalInfo, SecurityContextTestingBuilder, UserIdentityInfo,
     };
     use openstack_keystone_core_types::oauth2_client::{DelegationPolicy, OAuth2ClientResource};
-    use openstack_keystone_core_types::resource::{Domain, Project};
+    use openstack_keystone_core_types::resource::Project;
     use openstack_keystone_core_types::role::RoleRefBuilder;
     use openstack_keystone_core_types::trust::Trust;
 
@@ -505,7 +505,8 @@ mod tests {
             identity: IdentityInfo::User(UserIdentityInfo {
                 user_id: uid.to_string(),
                 user: None,
-                user_domain: Some(Domain {
+                user_core: None,
+                user_domain: Some(openstack_keystone_core_types::resource::DomainRef {
                     id: "d1".into(),
                     enabled: true,
                     name: "d1".into(),

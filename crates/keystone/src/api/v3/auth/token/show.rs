@@ -180,11 +180,13 @@ mod tests {
         };
 
         let authz = AuthzInfoBuilder::default()
-            .scope(ScopeInfo::Domain(CoreDomain {
-                id: "user_domain_id".into(),
-                enabled: true,
-                ..Default::default()
-            }))
+            .scope(ScopeInfo::Domain(
+                openstack_keystone_core_types::resource::DomainRef {
+                    id: "user_domain_id".into(),
+                    enabled: true,
+                    ..Default::default()
+                },
+            ))
             .build()
             .unwrap();
 
@@ -301,11 +303,13 @@ mod tests {
                 ..Default::default()
             };
             let authz = AuthzInfoBuilder::default()
-                .scope(ScopeInfo::Domain(CoreDomain {
-                    id: "d1".into(),
-                    enabled: true,
-                    ..Default::default()
-                }))
+                .scope(ScopeInfo::Domain(
+                    openstack_keystone_core_types::resource::DomainRef {
+                        id: "d1".into(),
+                        enabled: true,
+                        ..Default::default()
+                    },
+                ))
                 .build()
                 .unwrap();
             ValidatedSecurityContext::test_new(
@@ -412,11 +416,13 @@ mod tests {
         };
 
         let authz = AuthzInfoBuilder::default()
-            .scope(ScopeInfo::Domain(CoreDomain {
-                id: "user_domain_id".into(),
-                enabled: true,
-                ..Default::default()
-            }))
+            .scope(ScopeInfo::Domain(
+                openstack_keystone_core_types::resource::DomainRef {
+                    id: "user_domain_id".into(),
+                    enabled: true,
+                    ..Default::default()
+                },
+            ))
             .build()
             .unwrap();
 

@@ -32,9 +32,11 @@ pub use create::create;
 pub use delete::delete;
 pub use get::get_project;
 pub use get::get_project_by_name;
+pub use get::get_project_domain_id;
+pub use get::get_project_ref;
 pub use list::list;
-pub use tree::get_project_parents;
 pub use tree::get_project_subtree;
+pub use tree::{get_project_parent_ids, get_project_parents};
 pub use update::update;
 
 use crate::entity::project as db_project;

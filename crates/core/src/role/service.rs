@@ -47,6 +47,19 @@ const ROLE_CACHE_NS: &str = "role.role";
 /// the request ends -- same accepted, request-scoped staleness window as
 /// `resource::service::PROJECT_PARENTS_CACHE_NS`'s ancestor-update case.
 const ROLE_IMPLY_BY_PRIOR_CACHE_NS: &str = "role.imply_by_prior";
+/// Request-cache namespace for roles looked up by `list_roles` with
+/// `skip_options` (the name resolution of the assigned roles). Kept apart from
+/// [`ROLE_CACHE_NS`], whose entries carry the options.
+const ROLE_NAME_CACHE_NS: &str = "role.name";
+/// Request-cache namespace for the complete imply rule table (a single
+/// `Vec<RoleImply>` under [`ROLE_IMPLY_ALL_CACHE_KEY`]). The rule table is
+/// small, so reading all of it once per request and resolving the inference
+/// graph in the service is cheaper than a recursive query per set of roles,
+/// and every set of roles of the request shares the one read. Invalidated by
+/// every change of the rules within the request.
+const ROLE_IMPLY_ALL_CACHE_NS: &str = "role.imply_all";
+/// Key of the complete rule table in [`ROLE_IMPLY_ALL_CACHE_NS`].
+const ROLE_IMPLY_ALL_CACHE_KEY: &str = "all";
 
 pub struct RoleService {
     backend_driver: Arc<dyn RoleBackend>,
@@ -205,6 +218,7 @@ impl RoleApi for RoleService {
         };
 
         cache_remove(ROLE_IMPLY_BY_PRIOR_CACHE_NS, prior_role_id);
+        cache_remove(ROLE_IMPLY_ALL_CACHE_NS, ROLE_IMPLY_ALL_CACHE_KEY);
         Ok(rule)
     }
 
@@ -276,6 +290,7 @@ impl RoleApi for RoleService {
         };
 
         cache_set(ROLE_CACHE_NS, role_id, role.clone());
+        cache_remove(ROLE_NAME_CACHE_NS, role_id);
         Ok(role)
     }
 
@@ -318,7 +333,9 @@ impl RoleApi for RoleService {
         }
 
         cache_remove(ROLE_CACHE_NS, id);
+        cache_remove(ROLE_NAME_CACHE_NS, id);
         cache_remove(ROLE_IMPLY_BY_PRIOR_CACHE_NS, id);
+        cache_remove(ROLE_IMPLY_ALL_CACHE_NS, ROLE_IMPLY_ALL_CACHE_KEY);
         Ok(())
     }
 
@@ -372,6 +389,7 @@ impl RoleApi for RoleService {
         }
 
         cache_remove(ROLE_IMPLY_BY_PRIOR_CACHE_NS, prior_role_id);
+        cache_remove(ROLE_IMPLY_ALL_CACHE_NS, ROLE_IMPLY_ALL_CACHE_KEY);
         Ok(())
     }
 
@@ -451,7 +469,21 @@ impl RoleApi for RoleService {
         &self,
         ctx: &ExecutionContext<'a>,
     ) -> Result<Vec<RoleImply>, RoleProviderError> {
-        self.backend_driver.list_role_imply_rules(ctx.state()).await
+        if let Some(rules) =
+            cache_get::<Vec<RoleImply>>(ROLE_IMPLY_ALL_CACHE_NS, ROLE_IMPLY_ALL_CACHE_KEY)
+        {
+            return Ok(rules);
+        }
+        let rules = self
+            .backend_driver
+            .list_role_imply_rules(ctx.state())
+            .await?;
+        cache_set(
+            ROLE_IMPLY_ALL_CACHE_NS,
+            ROLE_IMPLY_ALL_CACHE_KEY,
+            rules.clone(),
+        );
+        Ok(rules)
     }
 
     /// List role imply rules for a specific prior role.
@@ -531,6 +563,41 @@ impl RoleApi for RoleService {
         params: &RoleListParameters,
     ) -> Result<Vec<Role>, RoleProviderError> {
         params.validate()?;
+        // The lookup of the names of the assigned roles: serve the known IDs
+        // from the request cache and fetch the rest with one backend call.
+        if let Some(ids) = &params.ids
+            && params.skip_options
+            && params.domain_id.is_none()
+            && params.name.is_none()
+            && params.pagination == Default::default()
+        {
+            let mut roles = Vec::new();
+            let mut missing = Vec::new();
+            for id in ids {
+                match cache_get::<Role>(ROLE_NAME_CACHE_NS, id) {
+                    Some(role) => roles.push(role),
+                    None => missing.push(id.clone()),
+                }
+            }
+            if !missing.is_empty() {
+                let fetched = self
+                    .backend_driver
+                    .list_roles(
+                        ctx.state(),
+                        &RoleListParameters {
+                            ids: Some(missing),
+                            skip_options: true,
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                for role in fetched {
+                    cache_set(ROLE_NAME_CACHE_NS, &role.id, role.clone());
+                    roles.push(role);
+                }
+            }
+            return Ok(roles);
+        }
         self.backend_driver.list_roles(ctx.state(), params).await
     }
 }
@@ -981,6 +1048,130 @@ mod tests {
                 .list_role_imply_rules_by_prior(&ctx, "rid")
                 .await
                 .unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_list_roles_by_ids_fetches_each_role_once_per_request() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockRoleBackend::default();
+        backend.expect_list_roles().times(2).returning(|_, params| {
+            Ok(params
+                .ids
+                .iter()
+                .flatten()
+                .filter(|id| *id != "zzz")
+                .map(|id| make_role(id, &format!("name-{id}")))
+                .collect())
+        });
+        let provider = RoleService {
+            backend_driver: Arc::new(backend),
+        };
+        let params = |ids: &[&str]| RoleListParameters {
+            ids: Some(ids.iter().map(|s| s.to_string()).collect()),
+            skip_options: true,
+            ..Default::default()
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            assert_eq!(
+                provider
+                    .list_roles(&ctx, &params(&["a"]))
+                    .await
+                    .unwrap()
+                    .len(),
+                1
+            );
+            // "a" is cached, only "b" is fetched.
+            let roles = provider
+                .list_roles(&ctx, &params(&["a", "b"]))
+                .await
+                .unwrap();
+            assert_eq!(roles.len(), 2);
+            // Everything cached: no backend call (the mock allows two).
+            assert_eq!(
+                provider
+                    .list_roles(&ctx, &params(&["b", "a"]))
+                    .await
+                    .unwrap()
+                    .len(),
+                2
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_list_roles_with_filters_bypasses_the_request_cache() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockRoleBackend::default();
+        backend
+            .expect_list_roles()
+            .times(2)
+            .returning(|_, _| Ok(vec![make_role("r", "reader")]));
+        let provider = RoleService {
+            backend_driver: Arc::new(backend),
+        };
+        let params = RoleListParameters {
+            name: Some("reader".into()),
+            skip_options: true,
+            ..Default::default()
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            provider.list_roles(&ctx, &params).await.unwrap();
+            provider.list_roles(&ctx, &params).await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_all_rules_hit_backend_once_per_request() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockRoleBackend::default();
+        backend
+            .expect_list_role_imply_rules()
+            .times(1)
+            .returning(|_| Ok(vec![make_imply("a", "b")]));
+        let provider = RoleService {
+            backend_driver: Arc::new(backend),
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            let first = provider.list_role_imply_rules(&ctx).await.unwrap();
+            let second = provider.list_role_imply_rules(&ctx).await.unwrap();
+            assert_eq!(first, second);
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_all_rules_cache_dropped_on_rule_change() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockRoleBackend::default();
+        backend
+            .expect_list_role_imply_rules()
+            .times(2)
+            .returning(|_| Ok(vec![make_imply("a", "b")]));
+        backend
+            .expect_delete_role_imply_rule()
+            .returning(|_, _, _| Ok(()));
+        let provider = RoleService {
+            backend_driver: Arc::new(backend),
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            provider.list_role_imply_rules(&ctx).await.unwrap();
+            provider
+                .delete_role_imply_rule(&ctx, "a", "b")
+                .await
+                .unwrap();
+            provider.list_role_imply_rules(&ctx).await.unwrap();
         })
         .await;
     }

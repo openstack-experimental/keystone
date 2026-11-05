@@ -75,7 +75,8 @@ pub(super) enum ProofRefusal {
 /// `uri` is the external URL of the endpoint (`htu`), `method` its HTTP
 /// method (`htm`). The caller has rate limited the source already, which
 /// bounds the signature checks; this adds the per-key throttle (ADR 0022) on
-/// the verified key thumbprint, in its own pool apart from `/token`. `bound_jkt` is the `cnf` of the token.
+/// the verified key thumbprint, in its own pool apart from `/token`.
+/// `bound_jkt` is the `cnf` of the token.
 pub(super) fn verify_resource_proof(
     state: &ServiceState,
     headers: &HeaderMap,

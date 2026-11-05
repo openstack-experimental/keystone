@@ -446,14 +446,11 @@ mod tests {
             .returning(|_, _| Ok(successful_auth_result()));
 
         let mut resource_mock = MockResourceProvider::default();
-        resource_mock.expect_get_domain().returning(|_, _| {
-            Ok(Some(openstack_keystone_core_types::resource::Domain {
+        resource_mock.expect_get_domain_ref().returning(|_, _| {
+            Ok(Some(openstack_keystone_core_types::resource::DomainRef {
                 id: "domain-1".to_string(),
                 name: "domain-1".to_string(),
-                description: None,
                 enabled: true,
-                extra: Default::default(),
-                options: Default::default(),
             }))
         });
 
@@ -523,14 +520,11 @@ mod tests {
             .expect_authenticate_by_mapping()
             .returning(|_, _| Ok(successful_auth_result()));
         let mut resource_mock = MockResourceProvider::default();
-        resource_mock.expect_get_domain().returning(|_, _| {
-            Ok(Some(openstack_keystone_core_types::resource::Domain {
+        resource_mock.expect_get_domain_ref().returning(|_, _| {
+            Ok(Some(openstack_keystone_core_types::resource::DomainRef {
                 id: "domain-1".to_string(),
                 name: "domain-1".to_string(),
-                description: None,
                 enabled: true,
-                extra: Default::default(),
-                options: Default::default(),
             }))
         });
         let provider = Provider::mocked_builder()

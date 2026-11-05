@@ -372,12 +372,14 @@ mod tests {
 
         fn domain_scoped_vsc(caller_domain_id: &str, roles: &[&str]) -> ValidatedSecurityContext {
             let authz = AuthzInfoBuilder::default()
-                .scope(ScopeInfo::Domain(Domain {
-                    id: caller_domain_id.to_string(),
-                    name: caller_domain_id.to_string(),
-                    enabled: true,
-                    ..Default::default()
-                }))
+                .scope(ScopeInfo::Domain(
+                    openstack_keystone_core_types::resource::DomainRef {
+                        id: caller_domain_id.to_string(),
+                        name: caller_domain_id.to_string(),
+                        enabled: true,
+                        ..Default::default()
+                    },
+                ))
                 .roles(
                     roles
                         .iter()

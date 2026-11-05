@@ -80,7 +80,8 @@ impl WebauthnCredential {
     ) -> WebauthnCredential {
         WebauthnCredential {
             counter: 0,
-            // truncating nanosecs since typical DB (pg) cannot handle it natively.
+            // truncating nanosecs since typical DB (pg) cannot handle it
+            // natively.
             created_at: Utc::now().trunc_subsecs(6),
             credential_id: URL_SAFE_NO_PAD.encode(value.cred_id()),
             data: value,

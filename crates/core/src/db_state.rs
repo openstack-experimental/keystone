@@ -68,7 +68,21 @@ impl DbState {
     /// before the swap keeps using it independently for the remainder of its
     /// in-flight work.
     pub async fn reconnect(&self, opt: ConnectOptions) -> Result<(), DbErr> {
-        let new_conn = Database::connect(opt).await?;
+        self.reconnect_with(opt, |_| {}).await
+    }
+
+    /// Same as [`Self::reconnect`], but `setup` is applied to the new
+    /// connection before it is published.
+    ///
+    /// Use it to re-install per-connection state (for example a metric
+    /// callback) that a freshly built connection does not carry over.
+    pub async fn reconnect_with(
+        &self,
+        opt: ConnectOptions,
+        setup: impl FnOnce(&mut DatabaseConnection),
+    ) -> Result<(), DbErr> {
+        let mut new_conn = Database::connect(opt).await?;
+        setup(&mut new_conn);
         new_conn.ping().await?;
 
         let old = self.current.swap(Arc::new(new_conn));

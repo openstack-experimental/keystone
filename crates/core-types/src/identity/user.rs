@@ -46,6 +46,34 @@ fn validate_optional_secret_length(
 // Non-emptiness is enforced centrally on the wrapped value at the service layer
 // via `security_compliance.validate_password`.
 
+/// Minimal user data required to authorize a request.
+///
+/// Carries only what the authentication path needs to decide whether the
+/// request may proceed: the identity, the owning domain and the *effective*
+/// `enabled` flag (which already accounts for the account inactivity policy).
+/// Everything else in [`UserResponse`] (options, federation data, password
+/// expiry, extra properties) is intentionally absent; callers needing it must
+/// load the full user.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UserCore {
+    /// The user ID.
+    pub id: String,
+    /// The ID of the domain owning the user.
+    pub domain_id: String,
+    /// Effective enabled flag.
+    pub enabled: bool,
+}
+
+impl From<&UserResponse> for UserCore {
+    fn from(user: &UserResponse) -> Self {
+        Self {
+            id: user.id.clone(),
+            domain_id: user.domain_id.clone(),
+            enabled: user.enabled,
+        }
+    }
+}
+
 #[derive(Builder, Clone, Debug, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
@@ -302,7 +330,8 @@ pub struct FederationProtocol {
     #[validate(length(max = 64))]
     pub protocol_id: String,
 
-    // TODO: unique ID should potentially belong to the IDP and not to the protocol
+    // TODO: unique ID should potentially belong to the IDP and not to the
+    // protocol
     /// Unique ID of the associated user.
     #[validate(length(max = 255))]
     pub unique_id: String,

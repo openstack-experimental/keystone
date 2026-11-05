@@ -14,6 +14,7 @@
 //! # Token revocation provider.
 
 use async_trait::async_trait;
+use chrono::{TimeDelta, Utc};
 use std::sync::Arc;
 
 use openstack_keystone_config::Config;
@@ -52,6 +53,36 @@ impl RevokeService {
 
 #[async_trait]
 impl RevokeApi for RevokeService {
+    /// Delete the revocation events that can no longer affect any token.
+    ///
+    /// A token issued at `t` expires no later than `t + token.expiration`, so
+    /// an event revoked longer ago than that plus `expiration_buffer` cannot
+    /// match a token that is still usable.
+    ///
+    /// # Arguments
+    /// * `ctx` - The execution context.
+    #[tracing::instrument(name = "provider.revoke.cleanup", level = "debug", skip_all)]
+    async fn cleanup<'a>(&self, ctx: &ExecutionContext<'a>) -> Result<u64, RevokeProviderError> {
+        // Read the lifetimes on every run: a reloaded `token.expiration` must
+        // not leave events that still cover live tokens exposed to cleanup.
+        let retention = {
+            let config = ctx.state().config_manager.config.read().await;
+            TimeDelta::seconds(
+                i64::try_from(config.token.expiration)
+                    .unwrap_or(i64::MAX)
+                    .saturating_add(
+                        i64::try_from(config.revoke.expiration_buffer).unwrap_or(i64::MAX),
+                    ),
+            )
+        };
+        let revoked_before = Utc::now()
+            .checked_sub_signed(retention)
+            .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+        self.backend_driver
+            .delete_expired_revocation_events(ctx.state(), revoked_before)
+            .await
+    }
+
     /// Create revocation event.
     ///
     /// # Arguments
@@ -173,6 +204,45 @@ mod tests {
                 )
                 .await
                 .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_uses_retention_cutoff() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockRevokeBackend::default();
+        backend
+            .expect_delete_expired_revocation_events()
+            .withf(|_, before| {
+                let expected = Utc::now() - TimeDelta::seconds(5400);
+                (expected - *before).num_seconds().abs() <= 5
+            })
+            .returning(|_, _| Ok(7));
+        let provider = create_revoke_provider(backend);
+
+        assert_eq!(
+            provider
+                .cleanup(&ExecutionContext::internal(&state))
+                .await
+                .unwrap(),
+            7
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_propagates_backend_error() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockRevokeBackend::default();
+        backend
+            .expect_delete_expired_revocation_events()
+            .returning(|_, _| Err(RevokeProviderError::TokenHasNoAuditId));
+        let provider = create_revoke_provider(backend);
+
+        assert!(
+            provider
+                .cleanup(&ExecutionContext::internal(&state))
+                .await
+                .is_err()
         );
     }
 }

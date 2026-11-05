@@ -77,6 +77,70 @@ pub struct Project {
     pub tags: Vec<String>,
 }
 
+/// Short project representation.
+///
+/// The identity and state of a project, without the options and tags that
+/// need queries of their own. It is what the authentication and
+/// authorization code needs from a project (scope checks, token payloads,
+/// audit and policy input). There is no `options` field on purpose: a
+/// project loaded in this form cannot be used for the immutability checks of
+/// the mutating operations, which need the full [`Project`].
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct ProjectRef {
+    /// The project domain_id.
+    #[validate(length(min = 1, max = 64))]
+    pub domain_id: String,
+
+    /// If set to true, project is enabled. If set to false, project is
+    /// disabled.
+    pub enabled: bool,
+
+    /// The project ID.
+    #[validate(length(min = 1, max = 64))]
+    pub id: String,
+
+    /// Indicates whether the project also acts as a domain.
+    #[builder(default)]
+    pub is_domain: bool,
+
+    /// The project name.
+    #[validate(length(min = 1, max = 255))]
+    pub name: String,
+
+    /// The ID of the parent for the project.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub parent_id: Option<String>,
+}
+
+impl From<Project> for ProjectRef {
+    fn from(value: Project) -> Self {
+        Self {
+            domain_id: value.domain_id,
+            enabled: value.enabled,
+            id: value.id,
+            is_domain: value.is_domain,
+            name: value.name,
+            parent_id: value.parent_id,
+        }
+    }
+}
+
+impl From<&Project> for ProjectRef {
+    fn from(value: &Project) -> Self {
+        Self {
+            domain_id: value.domain_id.clone(),
+            enabled: value.enabled,
+            id: value.id.clone(),
+            is_domain: value.is_domain,
+            name: value.name.clone(),
+            parent_id: value.parent_id.clone(),
+        }
+    }
+}
+
 /// New project data.
 #[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]

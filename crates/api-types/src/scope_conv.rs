@@ -34,6 +34,24 @@ impl From<&openstack_keystone_core_types::resource::Domain> for api_types::Domai
     }
 }
 
+impl From<&openstack_keystone_core_types::resource::DomainRef> for api_types::Domain {
+    fn from(value: &openstack_keystone_core_types::resource::DomainRef) -> Self {
+        Self {
+            id: Some(value.id.clone()),
+            name: Some(value.name.clone()),
+        }
+    }
+}
+
+impl From<openstack_keystone_core_types::resource::DomainRef> for api_types::Domain {
+    fn from(value: openstack_keystone_core_types::resource::DomainRef) -> Self {
+        Self {
+            id: Some(value.id),
+            name: Some(value.name),
+        }
+    }
+}
+
 impl From<api_types::Domain> for openstack_keystone_core_types::scope::Domain {
     fn from(value: api_types::Domain) -> Self {
         Self {

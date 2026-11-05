@@ -32,10 +32,32 @@ pub use create::create;
 pub use delete::delete;
 pub use find_by_name::find_by_name_ci;
 pub(super) use get::get_main_entry;
-pub use get::{check_user_exist, get, get_user_domain_id};
+pub use get::{check_user_exist, get, get_core, get_user_domain_id};
 pub use list::list;
 pub use set::reset_last_active;
 pub use update::update;
+
+/// Calculate the effective `enabled` flag of a user.
+///
+/// - `user.enabled` is false => `false`
+/// - `ignore_user_inactivity` => `true`
+/// - both `last_active_at` and the cutoff set => `last_active_at > cutoff`
+/// - otherwise `true`
+pub(crate) fn effective_enabled(
+    user: &db_user::Model,
+    ignore_user_inactivity: bool,
+    last_activity_cutof_date: Option<&NaiveDate>,
+) -> bool {
+    if !user.enabled.is_some_and(|val| val) {
+        return false;
+    }
+    // Only look at the last_activity when the user is enabled.
+    match (&user.last_active_at, last_activity_cutof_date) {
+        (Some(last_active_at), Some(cutoff)) => ignore_user_inactivity || last_active_at > cutoff,
+        // Either last_active_at or cutoff date empty - user is active
+        _ => true,
+    }
+}
 
 pub trait MergeUserData {
     fn merge_user_data(
@@ -81,19 +103,11 @@ impl MergeUserData for UserResponseBuilder {
         if let Some(dp) = &user.default_project_id {
             self.default_project_id(dp.clone());
         }
-        self.enabled(if user.enabled.is_some_and(|val| val) {
-            // Only look at the last_activity when the user is enabled.
-            if let (Some(last_active_at), Some(cutoff)) =
-                (&user.last_active_at, &last_activity_cutof_date)
-            {
-                options.ignore_user_inactivity.is_some_and(|val| val) || last_active_at > cutoff
-            } else {
-                // Either last_active_at or cutoff date empty - user is active
-                true
-            }
-        } else {
-            false
-        });
+        self.enabled(effective_enabled(
+            user,
+            options.ignore_user_inactivity.is_some_and(|val| val),
+            last_activity_cutof_date,
+        ));
         if let Some(extra) = &user.extra
             && extra != "{}"
         {

@@ -209,7 +209,7 @@ mod tests {
     use openstack_keystone_core::common::SpiffeId;
     use openstack_keystone_core_types::assignment::{Assignment, AssignmentType};
     use openstack_keystone_core_types::oauth2_client::{DelegationPolicy, OAuth2ClientResource};
-    use openstack_keystone_core_types::resource::{Domain, Project};
+    use openstack_keystone_core_types::resource::ProjectRef;
     use openstack_keystone_core_types::service_grant::*;
 
     use crate::api::tests::get_mocked_state;
@@ -285,8 +285,8 @@ mod tests {
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
         let mut resource = MockResourceProvider::default();
-        resource.expect_get_project().returning(|_, id| {
-            Ok(Some(Project {
+        resource.expect_get_project_ref().returning(|_, id| {
+            Ok(Some(ProjectRef {
                 id: id.to_string(),
                 domain_id: "domain-1".into(),
                 enabled: true,
@@ -294,8 +294,8 @@ mod tests {
                 ..Default::default()
             }))
         });
-        resource.expect_get_domain().returning(|_, id| {
-            Ok(Some(Domain {
+        resource.expect_get_domain_ref().returning(|_, id| {
+            Ok(Some(openstack_keystone_core_types::resource::DomainRef {
                 id: id.to_string(),
                 name: id.to_string(),
                 enabled: true,

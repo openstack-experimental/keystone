@@ -389,7 +389,8 @@ pub struct FederationProtocol {
     #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub protocol_id: String,
 
-    // TODO: unique ID should potentially belong to the IDP and not to the protocol
+    // TODO: unique ID should potentially belong to the IDP and not to the
+    // protocol
     /// Unique ID of the associated user.
     ///
     /// Unlike other `*_id` fields this is not a Keystone-generated ID, but an

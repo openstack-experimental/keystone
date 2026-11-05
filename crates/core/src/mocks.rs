@@ -1464,6 +1464,12 @@ mod identity {
                 user_id: &'a str,
             ) -> Result<Option<UserResponse>, IdentityProviderError>;
 
+            async fn get_user_core<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                user_id: &'a str,
+            ) -> Result<Option<UserCore>, IdentityProviderError>;
+
             async fn get_user_domain_id<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -1798,12 +1804,6 @@ mod resource {
                 project: ProjectCreate,
             ) -> Result<Project, ResourceProviderError>;
 
-            async fn get_project_parents<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                project_id: &'a str,
-            ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
-
             async fn create_project_tag<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -1842,6 +1842,12 @@ mod resource {
                 domain_id: &'a str,
             ) -> Result<Option<Domain>, ResourceProviderError>;
 
+            async fn get_domain_ref<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+            ) -> Result<Option<DomainRef>, ResourceProviderError>;
+
             async fn get_domain_enabled<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -1862,6 +1868,30 @@ mod resource {
             ) -> Result<Option<Project>, ResourceProviderError>;
 
             async fn get_project_subtree<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
+
+            async fn get_project_domain_id<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<Option<String>, ResourceProviderError>;
+
+            async fn get_project_ref<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<Option<ProjectRef>, ResourceProviderError>;
+
+            async fn get_project_parent_ids<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<Option<Vec<String>>, ResourceProviderError>;
+
+            async fn get_project_parents<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
                 project_id: &'a str,
@@ -1923,6 +1953,11 @@ mod revoke {
 
         #[async_trait]
         impl RevokeApi for RevokeProvider {
+            async fn cleanup<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+            ) -> Result<u64, RevokeProviderError>;
+
             async fn create_revocation_event<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -2062,6 +2097,12 @@ mod token {
                 credential: &SecretString,
                 allow_expired: Option<bool>,
                 window_seconds: Option<i64>,
+            ) -> Result<ValidatedSecurityContext, TokenProviderError>;
+
+            async fn authorize_request_token<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                credential: &SecretString,
             ) -> Result<ValidatedSecurityContext, TokenProviderError>;
 
             async fn validate_to_context<'a>(

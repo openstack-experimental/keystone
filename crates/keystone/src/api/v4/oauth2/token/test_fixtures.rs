@@ -139,13 +139,10 @@ pub(super) fn successful_auth_result() -> openstack_keystone_core_types::auth::A
         .authorization(
             AuthzInfoBuilder::default()
                 .scope(ScopeInfo::Domain(
-                    openstack_keystone_core_types::resource::Domain {
+                    openstack_keystone_core_types::resource::DomainRef {
                         id: "domain-1".to_string(),
                         name: String::new(),
-                        description: None,
                         enabled: true,
-                        extra: Default::default(),
-                        options: Default::default(),
                     },
                 ))
                 .roles(vec![RoleRef {
@@ -215,10 +212,8 @@ pub(super) fn refresh_resource_mock(enabled: Option<bool>) -> MockResourceProvid
             enabled.map(|enabled| openstack_keystone_core_types::resource::Domain {
                 id: "domain-1".to_string(),
                 name: "domain-1".to_string(),
-                description: None,
                 enabled,
-                extra: Default::default(),
-                options: Default::default(),
+                ..Default::default()
             }),
         )
     });

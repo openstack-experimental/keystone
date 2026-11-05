@@ -23,6 +23,7 @@ const DEFAULT_DOMAIN_ID: &str = "default";
 
 static SEEDED_USER_IDS: OnceLock<Vec<String>> = OnceLock::new();
 static SEEDED_USER_CREDS: OnceLock<Vec<crate::seed::SeededUserCred>> = OnceLock::new();
+static LIST_DOMAIN_IDS: OnceLock<Vec<String>> = OnceLock::new();
 static AUTH_PROJECT_ID: OnceLock<String> = OnceLock::new();
 
 /// Call once before `GooseAttack::execute()` to share the seeded user ID pool
@@ -35,6 +36,21 @@ pub fn set_seeded_ids(ids: Vec<String>) {
 /// credential pool (id + password) with the password-auth scenarios.
 pub fn set_seeded_creds(creds: Vec<crate::seed::SeededUserCred>) {
     SEEDED_USER_CREDS.set(creds).ok();
+}
+
+/// Call once before `GooseAttack::execute()` to share the dedicated domains the
+/// list scenarios scope their requests to.
+pub fn set_list_domain_ids(ids: Vec<String>) {
+    LIST_DOMAIN_IDS.set(ids).ok();
+}
+
+/// Return a randomly chosen list domain, or `None` if none were seeded.
+pub fn random_list_domain() -> Option<&'static str> {
+    let ids = LIST_DOMAIN_IDS.get()?;
+    if ids.is_empty() {
+        return None;
+    }
+    Some(&ids[fastrand::usize(..ids.len())])
 }
 
 /// Return a randomly chosen seeded user credential, or `None` if the pool is
@@ -59,16 +75,24 @@ pub fn auth_project_id() -> Option<&'static str> {
     AUTH_PROJECT_ID.get().map(String::as_str)
 }
 
-/// List all users (read-heavy scenario transaction).
+/// List the users of a randomly chosen seeded domain (read-heavy scenario
+/// transaction). Falls back to an unscoped list when no domain was seeded.
 pub async fn list(user: &mut GooseUser) -> TransactionResult {
     let session = user.get_session_data_unchecked::<Session>();
     let token = session.token.clone();
+    let path = match random_list_domain() {
+        Some(domain) => format!("/v3/users?domain_id={domain}"),
+        None => "/v3/users".to_string(),
+    };
 
     let req = user
-        .get_request_builder(&GooseMethod::Get, "/v3/users")?
+        .get_request_builder(&GooseMethod::Get, &path)?
         .header("x-auth-token", &token);
 
-    let goose_request = GooseRequest::builder().set_request_builder(req).build();
+    let goose_request = GooseRequest::builder()
+        .name("GET /v3/users?domain_id")
+        .set_request_builder(req)
+        .build();
 
     user.request(goose_request).await?;
     Ok(())

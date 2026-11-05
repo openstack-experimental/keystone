@@ -164,21 +164,14 @@ async fn create_inner(
         return Err(KeystoneApiError::AuthenticationRescopeForbidden);
     }
 
-    let mut vsc = state
-        .provider
-        .get_token_provider()
-        .issue_token_context(state, &ctx, &authz_info)
-        .await?;
-    if let Some(ip) = audit_ip {
-        vsc.set_peer_addr(ip.to_string());
-    }
-
-    let mut api_token = TokenResponse {
-        token: TokenBuilder::try_from(&vsc)?.build()?,
-    };
-    if !query.nocatalog.is_some_and(|x| x) {
-        let exec = ExecutionContext::internal(state);
-        let catalog: Catalog = Catalog(
+    // The catalog does not depend on the token scope, so it is fetched while
+    // the token context (roles, revocation) is being resolved.
+    let exec = ExecutionContext::internal(state);
+    let catalog_fut = async {
+        if query.nocatalog.is_some_and(|x| x) {
+            return Ok::<_, KeystoneApiError>(None);
+        }
+        Ok(Some(Catalog(
             state
                 .provider
                 .get_catalog_provider()
@@ -192,9 +185,33 @@ async fn create_inner(
                     endpoints: es.into_iter().map(Into::into).collect(),
                 })
                 .collect::<Vec<_>>(),
-        );
-        api_token.token.catalog = Some(catalog);
+        )))
+    };
+    let vsc_fut = async {
+        Ok::<_, KeystoneApiError>(
+            state
+                .provider
+                .get_token_provider()
+                .issue_token_context(state, &ctx, &authz_info)
+                .await?,
+        )
+    };
+    // The catalog result is wrapped so that only an issuance failure ends the
+    // join: a catalog failure must not cancel the token issuance in flight
+    // (audit, last-active and revocation bookkeeping). Cancelling the
+    // read-only catalog fetch on an issuance failure is harmless.
+    let (mut vsc, catalog) = tokio::try_join!(vsc_fut, async {
+        Ok::<_, KeystoneApiError>(catalog_fut.await)
+    })?;
+    let catalog = catalog?;
+    if let Some(ip) = audit_ip {
+        vsc.set_peer_addr(ip.to_string());
     }
+
+    let mut api_token = TokenResponse {
+        token: TokenBuilder::try_from(&vsc)?.build()?,
+    };
+    api_token.token.catalog = catalog;
     let response = (
         StatusCode::CREATED,
         [(
@@ -420,7 +437,7 @@ mod tests {
         let mut token_mock = MockTokenProvider::default();
         let vsc_for_mock = {
             use openstack_keystone_core_types::auth::AuthzInfoBuilder;
-            use openstack_keystone_core_types::resource::ProjectBuilder;
+            use openstack_keystone_core_types::resource::ProjectRefBuilder;
             use openstack_keystone_core_types::role::RoleRefBuilder;
             use openstack_keystone_core_types::token::FernetToken;
             let user_resp = openstack_keystone_core_types::identity::UserResponseBuilder::default()
@@ -445,19 +462,20 @@ mod tests {
                         .unwrap(),
                 ])
                 .scope(ScopeInfo::Project {
-                    project: ProjectBuilder::default()
+                    project: ProjectRefBuilder::default()
                         .id("pid")
                         .domain_id("pdid")
                         .enabled(true)
                         .name("pname")
                         .build()
                         .unwrap(),
-                    project_domain: DomainBuilder::default()
-                        .id("pdid")
-                        .name("pdname")
-                        .enabled(true)
-                        .build()
-                        .unwrap(),
+                    project_domain:
+                        openstack_keystone_core_types::resource::DomainRefBuilder::default()
+                            .id("pdid")
+                            .name("pdname")
+                            .enabled(true)
+                            .build()
+                            .unwrap(),
                 })
                 .build()
                 .unwrap();
@@ -1500,7 +1518,7 @@ mod tests {
         let mut token_mock = MockTokenProvider::default();
         let vsc_for_mock = {
             use openstack_keystone_core_types::auth::AuthzInfoBuilder;
-            use openstack_keystone_core_types::resource::ProjectBuilder;
+            use openstack_keystone_core_types::resource::ProjectRefBuilder;
             use openstack_keystone_core_types::token::FernetToken;
             let user_resp = openstack_keystone_core_types::identity::UserResponseBuilder::default()
                 .id("uid")
@@ -1518,19 +1536,20 @@ mod tests {
             let authz = AuthzInfoBuilder::default()
                 .roles(vec![])
                 .scope(ScopeInfo::Project {
-                    project: ProjectBuilder::default()
+                    project: ProjectRefBuilder::default()
                         .id("pid")
                         .domain_id("pdid")
                         .enabled(true)
                         .name("pname")
                         .build()
                         .unwrap(),
-                    project_domain: DomainBuilder::default()
-                        .id("pdid")
-                        .name("pdname")
-                        .enabled(true)
-                        .build()
-                        .unwrap(),
+                    project_domain:
+                        openstack_keystone_core_types::resource::DomainRefBuilder::default()
+                            .id("pdid")
+                            .name("pdname")
+                            .enabled(true)
+                            .build()
+                            .unwrap(),
                 })
                 .build()
                 .unwrap();
@@ -1836,7 +1855,7 @@ mod tests {
         let mut token_mock = MockTokenProvider::default();
         let vsc_for_mock = {
             use openstack_keystone_core_types::auth::AuthzInfoBuilder;
-            use openstack_keystone_core_types::resource::ProjectBuilder;
+            use openstack_keystone_core_types::resource::ProjectRefBuilder;
             use openstack_keystone_core_types::token::FernetToken;
             let user_resp = openstack_keystone_core_types::identity::UserResponseBuilder::default()
                 .id("uid")
@@ -1854,19 +1873,20 @@ mod tests {
             let authz = AuthzInfoBuilder::default()
                 .roles(vec![])
                 .scope(ScopeInfo::Project {
-                    project: ProjectBuilder::default()
+                    project: ProjectRefBuilder::default()
                         .id("pid")
                         .domain_id("pdid")
                         .enabled(true)
                         .name("pname")
                         .build()
                         .unwrap(),
-                    project_domain: DomainBuilder::default()
-                        .id("pdid")
-                        .name("pdname")
-                        .enabled(true)
-                        .build()
-                        .unwrap(),
+                    project_domain:
+                        openstack_keystone_core_types::resource::DomainRefBuilder::default()
+                            .id("pdid")
+                            .name("pdname")
+                            .enabled(true)
+                            .build()
+                            .unwrap(),
                 })
                 .build()
                 .unwrap();

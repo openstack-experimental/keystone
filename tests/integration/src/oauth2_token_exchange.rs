@@ -38,7 +38,7 @@ use openstack_keystone_core_types::application_credential::*;
 use openstack_keystone_core_types::oauth2_client::{
     Audience, GrantType, OAuth2ClientResourceCreateBuilder,
 };
-use openstack_keystone_core_types::resource::{DomainBuilder, ProjectBuilder};
+use openstack_keystone_core_types::resource::{DomainRefBuilder, ProjectRefBuilder};
 use openstack_keystone_core_types::role::*;
 
 use crate::assignment::grant_role_to_user_on_project;
@@ -149,13 +149,13 @@ async fn mint_app_cred_subject_token(
             &ExecutionContext::internal(state),
             &ctx,
             &ScopeInfo::Project {
-                project: ProjectBuilder::default()
+                project: ProjectRefBuilder::default()
                     .id(cred.project_id.clone())
                     .name(project.id.clone())
                     .domain_id(domain_id.to_string())
                     .enabled(true)
                     .build()?,
-                project_domain: DomainBuilder::default()
+                project_domain: DomainRefBuilder::default()
                     .id(domain_id.to_string())
                     .name(domain_id.to_string())
                     .enabled(true)

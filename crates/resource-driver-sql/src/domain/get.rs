@@ -12,15 +12,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
+use sea_orm::{DatabaseConnection, FromQueryResult};
 
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::resource::ResourceProviderError;
-use openstack_keystone_core_types::resource::Domain;
+use openstack_keystone_core_types::resource::{Domain, DomainRef};
 
 use crate::entity::{prelude::Project as DbProject, project as db_project};
+
+/// The columns of the domain row read for [`DomainRef`].
+#[derive(Debug, FromQueryResult)]
+struct DomainRefRow {
+    id: String,
+    name: String,
+    enabled: Option<bool>,
+}
 
 /// Get the enabled status of a domain.
 ///
@@ -60,19 +68,56 @@ pub async fn get_domain_by_id<I: AsRef<str>>(
     db: &DatabaseConnection,
     domain_id: I,
 ) -> Result<Option<Domain>, ResourceProviderError> {
-    let entry = DbProject::find_by_id(domain_id.as_ref())
-        .filter(db_project::Column::IsDomain.eq(true))
-        .one(db)
-        .await
-        .context("fetching domain by id")?;
-    match entry {
+    // The options are keyed by the same ID: no need to wait for the domain.
+    let (entry, options) = tokio::join!(
+        DbProject::find_by_id(domain_id.as_ref())
+            .filter(db_project::Column::IsDomain.eq(true))
+            .one(db),
+        crate::project_option::list_by_project_id(db, domain_id.as_ref())
+    );
+    match entry.context("fetching domain by id")? {
         Some(model) => {
             let mut domain: Domain = model.try_into()?;
-            domain.options = crate::project_option::list_by_project_id(db, &domain.id).await?;
+            domain.options = options?;
             Ok(Some(domain))
         }
         None => Ok(None),
     }
+}
+
+/// Get the short representation of a domain by its ID.
+///
+/// A single query on the project row: the options are not loaded.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `domain_id`: ID of the domain.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `DomainRef` if found, or an
+/// `Error`.
+pub async fn get_domain_ref_by_id<I: AsRef<str>>(
+    db: &DatabaseConnection,
+    domain_id: I,
+) -> Result<Option<DomainRef>, ResourceProviderError> {
+    let row = DbProject::find_by_id(domain_id.as_ref())
+        .filter(db_project::Column::IsDomain.eq(true))
+        .select_only()
+        .columns([
+            db_project::Column::Id,
+            db_project::Column::Name,
+            db_project::Column::Enabled,
+        ])
+        .into_model::<DomainRefRow>()
+        .one(db)
+        .await
+        .context("fetching the short domain by id")?;
+    Ok(row.map(|row| DomainRef {
+        // python keystone defaults to `true` when unset
+        enabled: row.enabled.unwrap_or(true),
+        id: row.id,
+        name: row.name,
+    }))
 }
 
 /// Get a domain by its name.
@@ -135,6 +180,43 @@ mod tests {
                 [true.into(), "name".into(), 1u64.into()]
             ),
         );
+    }
+
+    #[tokio::test]
+    async fn test_get_ref_is_a_single_query_without_options() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![BTreeMap::from([
+                ("id", "1".into()),
+                ("name", "name".into()),
+                ("enabled", Some(true).into()),
+            ])]])
+            .into_connection();
+
+        let domain = get_domain_ref_by_id(&db, "1")
+            .await
+            .unwrap()
+            .expect("entry found");
+        assert_eq!("1", domain.id);
+        assert_eq!("name", domain.name);
+        assert!(domain.enabled);
+        let log = db.into_transaction_log();
+        assert_eq!(1, log.len());
+        assert_eq!(
+            log[0],
+            Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "project"."id", "project"."name", "project"."enabled" FROM "project" WHERE "project"."id" = $1 AND "project"."is_domain" = $2 LIMIT $3"#,
+                ["1".into(), true.into(), 1u64.into()]
+            ),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_ref_not_found() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<BTreeMap<&str, sea_orm::Value>>::new()])
+            .into_connection();
+        assert!(get_domain_ref_by_id(&db, "1").await.unwrap().is_none());
     }
 
     #[tokio::test]

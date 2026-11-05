@@ -623,13 +623,13 @@ async fn hop_subject(
             ..
         } => {
             let project = resource
-                .get_project(&internal, &scope_project_id)
+                .get_project_ref(&internal, &scope_project_id)
                 .await
                 .map_err(OnBehalfOfError::provider)?
                 .filter(|p| p.enabled)
                 .ok_or(AuthenticationError::ProjectDisabled(scope_project_id))?;
             let project_domain = resource
-                .get_domain(&internal, &project.domain_id)
+                .get_domain_ref(&internal, &project.domain_id)
                 .await
                 .map_err(OnBehalfOfError::provider)?
                 .filter(|d| d.enabled)
@@ -641,7 +641,7 @@ async fn hop_subject(
         }
         OpenStackScope::Domain { domain_id, .. } => ScopeInfo::Domain(
             resource
-                .get_domain(&internal, &domain_id)
+                .get_domain_ref(&internal, &domain_id)
                 .await
                 .map_err(OnBehalfOfError::provider)?
                 .filter(|d| d.enabled)
@@ -783,7 +783,7 @@ mod tests {
     use openstack_keystone_core_types::assignment::{Assignment, AssignmentType};
     use openstack_keystone_core_types::identity::UserResponseBuilder;
     use openstack_keystone_core_types::oauth2_client::DelegationPolicy;
-    use openstack_keystone_core_types::resource::{Domain, Project};
+    use openstack_keystone_core_types::resource::ProjectRef;
     use openstack_keystone_core_types::role::RoleRef;
     use openstack_keystone_core_types::token::{
         FernetToken, TokenProviderError, payload::ProjectScopePayloadBuilder,
@@ -877,14 +877,14 @@ mod tests {
 
     fn project(domain_id: &str) -> ScopeInfo {
         ScopeInfo::Project {
-            project: Project {
+            project: ProjectRef {
                 id: "p1".into(),
                 domain_id: domain_id.into(),
                 enabled: true,
                 name: "p".into(),
                 ..Default::default()
             },
-            project_domain: Domain {
+            project_domain: openstack_keystone_core_types::resource::DomainRef {
                 id: domain_id.into(),
                 name: domain_id.into(),
                 enabled: true,
@@ -990,8 +990,8 @@ mod tests {
             .expect_get_user()
             .returning(|_, id| Ok(Some(user(id))));
         let mut resource = MockResourceProvider::default();
-        resource.expect_get_domain().returning(|_, id| {
-            Ok(Some(Domain {
+        resource.expect_get_domain_ref().returning(|_, id| {
+            Ok(Some(openstack_keystone_core_types::resource::DomainRef {
                 id: id.to_string(),
                 name: id.to_string(),
                 enabled: true,

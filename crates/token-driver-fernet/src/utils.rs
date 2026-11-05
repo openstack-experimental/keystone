@@ -374,6 +374,40 @@ pub fn write_time<W: RmpWrite>(wd: &mut W, time: DateTime<Utc>) -> Result<(), Fe
     Ok(())
 }
 
+/// Read the header of a MessagePack array and return its length.
+///
+/// The length is encoded in the marker for up to 15 elements (`FixArray`) and
+/// in a following big-endian `u16`/`u32` for longer arrays (`Array16`,
+/// `Array32`). The writer ([`write_array_len`]) picks the encoding by length,
+/// so the reader must accept all of them: a list with 16 or more entries
+/// (e.g. the audit ids of a long rescope chain, or the groups of a federated
+/// user) is written as an `Array16`.
+///
+/// # Parameters
+/// - `rd`: The reader to read from.
+///
+/// # Returns
+/// A `Result` containing the number of array elements, or
+/// `FernetDriverError::InvalidToken` when the next value is not an array.
+fn read_array_header(rd: &mut &[u8]) -> Result<usize, FernetDriverError> {
+    match read_marker(rd).map_err(ValueReadError::from)? {
+        Marker::FixArray(len) => Ok(usize::from(len)),
+        Marker::Array16 => {
+            let mut buf = [0u8; 2];
+            rd.read_exact(&mut buf)
+                .map_err(|_| FernetDriverError::InvalidToken)?;
+            Ok(usize::from(u16::from_be_bytes(buf)))
+        }
+        Marker::Array32 => {
+            let mut buf = [0u8; 4];
+            rd.read_exact(&mut buf)
+                .map_err(|_| FernetDriverError::InvalidToken)?;
+            usize::try_from(u32::from_be_bytes(buf)).map_err(|_| FernetDriverError::InvalidToken)
+        }
+        _ => Err(FernetDriverError::InvalidToken),
+    }
+}
+
 /// Decode array of audit ids from the payload.
 ///
 /// # Parameters
@@ -385,22 +419,20 @@ pub fn write_time<W: RmpWrite>(wd: &mut W, time: DateTime<Utc>) -> Result<(), Fe
 pub fn read_audit_ids(
     rd: &mut &[u8],
 ) -> Result<impl IntoIterator<Item = String> + use<>, FernetDriverError> {
-    if let Marker::FixArray(len) = read_marker(rd).map_err(ValueReadError::from)? {
-        let mut result: Vec<String> = Vec::new();
-        for _ in 0..len {
-            let marker = read_marker(rd).map_err(ValueReadError::from)?;
-            if let Marker::Bin8 | Marker::Bin16 | Marker::Bin32 = marker {
-                let bin_len = read_bin_len_for_marker(marker, rd)?;
-                let dt = read_bin_data(bin_len, rd)?;
-                let audit_id: String = URL_SAFE_NO_PAD.encode(dt);
-                result.push(audit_id);
-            } else {
-                return Err(FernetDriverError::InvalidToken);
-            }
+    let len = read_array_header(rd)?;
+    let mut result: Vec<String> = Vec::with_capacity(len.min(64));
+    for _ in 0..len {
+        let marker = read_marker(rd).map_err(ValueReadError::from)?;
+        if let Marker::Bin8 | Marker::Bin16 | Marker::Bin32 = marker {
+            let bin_len = read_bin_len_for_marker(marker, rd)?;
+            let dt = read_bin_data(bin_len, rd)?;
+            let audit_id: String = URL_SAFE_NO_PAD.encode(dt);
+            result.push(audit_id);
+        } else {
+            return Err(FernetDriverError::InvalidToken);
         }
-        return Ok(result.into_iter());
     }
-    Err(FernetDriverError::InvalidToken)
+    Ok(result.into_iter())
 }
 
 /// Encode array of audit ids into the payload.
@@ -441,14 +473,12 @@ pub fn write_audit_ids<W: RmpWrite, I: IntoIterator<Item = String>>(
 pub fn read_list_of_uuids(
     rd: &mut &[u8],
 ) -> Result<impl IntoIterator<Item = String> + use<>, FernetDriverError> {
-    if let Marker::FixArray(len) = read_marker(rd).map_err(ValueReadError::from)? {
-        let mut result: Vec<String> = Vec::new();
-        for _ in 0..len {
-            result.push(read_uuid(rd)?);
-        }
-        return Ok(result.into_iter());
+    let len = read_array_header(rd)?;
+    let mut result: Vec<String> = Vec::with_capacity(len.min(64));
+    for _ in 0..len {
+        result.push(read_uuid(rd)?);
     }
-    Err(FernetDriverError::InvalidToken)
+    Ok(result.into_iter())
 }
 
 /// Encode array of bytes into the payload.
@@ -606,6 +636,51 @@ mod tests {
             .into_iter()
             .collect();
         assert_eq!(test, decoded);
+    }
+
+    #[test]
+    fn test_write_read_audit_ids_long_chain() {
+        // `write_array_len` switches from `FixArray` to `Array16` at 16
+        // entries; a rescope chain grows by one audit id per rescope.
+        for count in [15, 16, 17, 300] {
+            let test: Vec<String> = (0..count)
+                .map(|i| URL_SAFE_NO_PAD.encode(Uuid::from_u128(i as u128).as_bytes()))
+                .collect();
+            let mut buf = Vec::new();
+            write_audit_ids(&mut buf, test.clone()).unwrap();
+            let mut decode_data = buf.as_slice();
+            let decoded: Vec<String> = read_audit_ids(&mut decode_data)
+                .unwrap()
+                .into_iter()
+                .collect();
+            assert_eq!(test, decoded, "{count} audit ids");
+            assert!(decode_data.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_write_read_list_of_uuids_long() {
+        for count in [15, 16, 40] {
+            let test: Vec<String> = (0..count)
+                .map(|i| Uuid::from_u128(i as u128 + 1).as_simple().to_string())
+                .collect();
+            let mut buf = Vec::new();
+            write_list_of_uuids(&mut buf, test.clone()).unwrap();
+            let mut decode_data = buf.as_slice();
+            let decoded: Vec<String> = read_list_of_uuids(&mut decode_data)
+                .unwrap()
+                .into_iter()
+                .collect();
+            assert_eq!(test, decoded, "{count} uuids");
+        }
+    }
+
+    #[test]
+    fn test_read_audit_ids_not_array() {
+        let mut buf = Vec::new();
+        write_bool(&mut buf, true).unwrap();
+        let mut decode_data = buf.as_slice();
+        assert!(read_audit_ids(&mut decode_data).is_err());
     }
 
     #[test]

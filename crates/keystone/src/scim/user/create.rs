@@ -172,7 +172,6 @@ mod tests {
         SecurityContext, UserIdentityInfoBuilder,
     };
     use openstack_keystone_core_types::identity::UserResponseBuilder;
-    use openstack_keystone_core_types::resource::Domain;
     use openstack_keystone_core_types::scim::{ScimResourceIndex, ScimResourceProviderError};
 
     use super::*;
@@ -192,14 +191,13 @@ mod tests {
                 name: Some("scim_provisioner".to_string()),
                 domain_id: None,
             }])
-            .scope(ScopeInfo::Domain(Domain {
-                id: domain_id.to_string(),
-                name: String::new(),
-                description: None,
-                enabled: true,
-                extra: Default::default(),
-                options: Default::default(),
-            }))
+            .scope(ScopeInfo::Domain(
+                openstack_keystone_core_types::resource::DomainRef {
+                    id: domain_id.to_string(),
+                    name: String::new(),
+                    enabled: true,
+                },
+            ))
             .build()
             .unwrap();
         let sc = SecurityContext::test_build()

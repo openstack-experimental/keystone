@@ -20,7 +20,7 @@ use validator::Validate;
 use super::common;
 use crate::auth::SecurityContext;
 use crate::error::BuilderError;
-use crate::resource::Domain;
+use crate::resource::DomainRef;
 use crate::token::FernetToken;
 use crate::token::error::TokenProviderError;
 
@@ -84,7 +84,7 @@ impl DomainScopePayload {
     /// IDs from the context.
     pub fn from_security_context(
         ctx: &SecurityContext,
-        domain: &Domain,
+        domain: &DomainRef,
         expires_at: DateTime<Utc>,
     ) -> Result<Self, TokenProviderError> {
         Ok(DomainScopePayloadBuilder::default()
@@ -122,7 +122,7 @@ mod tests {
             .unwrap();
         let ctx = SecurityContext::try_from(auth).unwrap();
 
-        let domain = DomainBuilder::default()
+        let domain = DomainRefBuilder::default()
             .id("did")
             .name("pname")
             .enabled(true)

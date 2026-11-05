@@ -396,7 +396,8 @@ mod tests {
     #[test]
     fn test_validate_password_complex_regex() {
         let mut sc = SecurityComplianceProvider {
-            // Require: digit, letter, min 3 chars (using concatenation, not lookahead)
+            // Require: digit, letter, min 3 chars (using concatenation, not
+            // lookahead)
             password_regex: Some(r"^.*[a-zA-Z].*[0-9].*$".to_string()),
             ..Default::default()
         };
