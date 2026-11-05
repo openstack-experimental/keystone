@@ -414,8 +414,10 @@ impl SecurityContext {
     ///
     /// The returned slice always contains at least one element — the fresh
     /// audit ID generated when the context was constructed. When the context
-    /// was authenticated by a parent token, the parent's audit IDs are carried
-    /// forward.
+    /// was authenticated by a parent token, the root audit ID of the parent's
+    /// chain (its last element) follows the fresh one, as in the Python
+    /// implementation (`[current, root]`). The chain therefore never grows
+    /// beyond two entries, however many times a token is rescoped.
     #[must_use]
     pub fn audit_ids(&self) -> &[String] {
         &self.audit_ids
@@ -428,7 +430,7 @@ impl SecurityContext {
     fn extend_audit_ids_from_auth_result(&mut self, auth: &AuthenticationResult) {
         self.audit_ids.push(auth.audit_id.clone());
         if let AuthenticationContext::Token(token) = &auth.context {
-            self.audit_ids.extend(token.audit_ids().clone());
+            self.audit_ids.extend(token.audit_ids().last().cloned());
         }
     }
 
@@ -1049,7 +1051,8 @@ impl TryFrom<AuthenticationResult> for SecurityContext {
 
         let mut audit_ids = vec![value.audit_id];
         if let AuthenticationContext::Token(token) = &value.context {
-            audit_ids.extend(token.audit_ids().clone());
+            // Only the root of the parent chain is carried forward.
+            audit_ids.extend(token.audit_ids().last().cloned());
         }
         if let Some(expires) = &value.expires_at {
             builder.expires_at(*expires);
@@ -1096,7 +1099,7 @@ impl TryFrom<Vec<AuthenticationResult>> for SecurityContext {
                 builder.authorization(authorization);
             }
             if let AuthenticationContext::Token(token) = &auth.context {
-                audit_ids.extend(token.audit_ids().clone());
+                audit_ids.extend(token.audit_ids().last().cloned());
             };
             builder.auth_methods(auth.context.methods());
         }

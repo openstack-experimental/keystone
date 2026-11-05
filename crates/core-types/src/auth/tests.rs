@@ -1014,8 +1014,9 @@ fn test_mfa_token_audit_ids_extended() {
         .build()
         .unwrap();
     let ctx = SecurityContext::try_from(vec![auth1, auth2]).unwrap();
+    // Only the root (last audit id) of each parent chain is carried forward.
     assert!(ctx.audit_ids().iter().any(|s| s == "parent1"));
-    assert!(ctx.audit_ids().iter().any(|s| s == "parent2"));
+    assert!(!ctx.audit_ids().iter().any(|s| s == "parent2"));
     assert!(ctx.audit_ids().iter().any(|s| s == "parent3"));
 }
 
@@ -1183,9 +1184,10 @@ fn test_fully_resolved_trust_with_roles() {
 #[test]
 fn test_token_ctx_audit_ids_propagated() {
     let ctx = make_token_ctx(make_principal("uid"));
-    assert!(ctx.audit_ids().len() >= 3);
-    assert!(ctx.audit_ids().iter().any(|s| s == "parent1"));
-    assert!(ctx.audit_ids().iter().any(|s| s == "parent2"));
+    // The fresh audit id and the root of the parent chain, as in Python.
+    assert_eq!(ctx.audit_ids().len(), 2);
+    assert!(!ctx.audit_ids().iter().any(|s| s == "parent1"));
+    assert_eq!(ctx.audit_ids().last().map(String::as_str), Some("parent2"));
 }
 
 #[test]
@@ -1545,10 +1547,34 @@ fn test_try_from_single_auth_result_token_audit_ids() {
         .build()
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
-    let has_audit = ctx.audit_ids().iter().any(|s| s == "parent1");
-    assert!(has_audit);
-    let has_auth = ctx.audit_ids().iter().any(|s| s == "parent2");
-    assert!(has_auth);
+    // The fresh audit id plus the root of the parent chain (its last id).
+    assert_eq!(ctx.audit_ids().len(), 2);
+    assert!(!ctx.audit_ids().iter().any(|s| s == "parent1"));
+    assert_eq!(ctx.audit_ids().last().map(String::as_str), Some("parent2"));
+}
+
+#[test]
+fn test_rescope_chain_does_not_grow() {
+    // Rescoping a rescoped token must keep the chain at [current, root].
+    let mut parent_ids = vec!["root".to_string()];
+    for _ in 0..40 {
+        let payload = UnscopedPayloadBuilder::default()
+            .user_id("uid")
+            .audit_ids(parent_ids.clone().into_iter())
+            .methods(vec!["token".to_string()].into_iter())
+            .expires_at(Utc::now())
+            .build()
+            .unwrap();
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Token(FernetToken::Unscoped(payload)))
+            .principal(make_principal("uid"))
+            .build()
+            .unwrap();
+        let ctx = SecurityContext::try_from(auth).unwrap();
+        assert_eq!(ctx.audit_ids().len(), 2);
+        assert_eq!(ctx.audit_ids().last().map(String::as_str), Some("root"));
+        parent_ids = ctx.audit_ids().to_vec();
+    }
 }
 
 // --- AuthenticationContext::is_delegated (OSSA-2026-015 / ADR 0019 §2) ---
