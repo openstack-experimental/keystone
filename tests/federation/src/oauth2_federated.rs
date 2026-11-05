@@ -71,6 +71,20 @@ fn get_config() -> &'static TestConfig {
     CONFIG.with(|c| *c)
 }
 
+/// The address the OP is reached at by the browser and named by the server
+/// (`[DEFAULT] public_endpoint`): `KEYSTONE_PUBLIC_URL`, else `KEYSTONE_URL`.
+///
+/// The browser flows must use it from the first request on: the OP binds the
+/// sign-in to a cookie, which the browser only sends back to the host that
+/// set it, and the upstream IdP redirects to the callback built from the
+/// public endpoint.
+fn public_url() -> String {
+    env::var("KEYSTONE_PUBLIC_URL")
+        .unwrap_or_else(|_| get_config().keystone_url.clone())
+        .trim_end_matches('/')
+        .to_string()
+}
+
 /// The message the OP login page shows for every failed upstream sign-in.
 const UPSTREAM_FAILED: &str = "sign-in with the identity provider failed";
 const KC_PASSWORD: &str = "pass";
@@ -173,9 +187,7 @@ impl Fixture {
                 // built by the server from `[DEFAULT] public_endpoint`, which
                 // can differ from the address the test reaches it at.
                 "{}/v4/oauth2/{domain_id}/{}/federated/callback",
-                env::var("KEYSTONE_PUBLIC_URL")
-                    .unwrap_or_else(|_| config.keystone_url.clone())
-                    .trim_end_matches('/'),
+                public_url(),
                 if device { "device" } else { "authorize" }
             );
             retry(|| async {
@@ -298,11 +310,7 @@ impl Fixture {
     }
 
     fn op(&self, path: &str) -> String {
-        format!(
-            "{}/v4/oauth2/{}/{path}",
-            get_config().keystone_url,
-            self.domain_id
-        )
+        format!("{}/v4/oauth2/{}/{path}", public_url(), self.domain_id)
     }
 
     /// `/authorize` URL of a PKCE-S256 request; returns it with the
