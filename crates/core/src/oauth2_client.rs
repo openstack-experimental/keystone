@@ -53,3 +53,4 @@ pub use verify::{
     verify_oidc_access_token_unscoped, verify_openstack_access_token,
     verify_openstack_subject_token, verify_revocable_access_token, verify_subject_token_jwt,
 };
+pub use verify::{SubjectTokenValidationProfile, verify_subject_token_jwt};
