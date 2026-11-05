@@ -133,7 +133,7 @@ async fn test_create_user_defaults_domain_id_from_scope() {
                 .unwrap())
         });
     let provider = IdentityService::from_driver(backend);
-    let vsc = make_vsc_scoped(ScopeInfo::Domain(make_domain("scoped-did")));
+    let vsc = make_vsc_scoped(ScopeInfo::Domain(make_domain("scoped-did").into()));
     let ctx = ExecutionContext::from_auth(&state, &vsc);
 
     let created = provider

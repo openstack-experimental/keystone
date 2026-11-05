@@ -35,7 +35,7 @@ use openstack_keystone_core_types::identity::{
     UserResponse,
 };
 use openstack_keystone_core_types::mapping::*;
-use openstack_keystone_core_types::resource::{Domain, Project};
+use openstack_keystone_core_types::resource::{DomainRef, ProjectRef};
 
 use crate::auth::ExecutionContext;
 use crate::events::AuditDispatchError;
@@ -149,25 +149,18 @@ fn derive_authz_info(authorizations: &[Authorization]) -> Option<AuthzInfo> {
             project_domain_id,
             roles,
         }) => {
-            let project = Project {
+            let project = ProjectRef {
                 id: project_id.clone(),
                 name: String::new(),
-                description: None,
                 enabled: true,
                 is_domain: false,
                 parent_id: None,
                 domain_id: project_domain_id.clone(),
-                extra: Default::default(),
-                options: Default::default(),
-                tags: Default::default(),
             };
-            let domain = Domain {
+            let domain = DomainRef {
                 id: project_domain_id.clone(),
                 name: String::new(),
-                description: None,
                 enabled: true,
-                extra: Default::default(),
-                options: Default::default(),
             };
             (
                 ScopeInfo::Project {
@@ -178,13 +171,10 @@ fn derive_authz_info(authorizations: &[Authorization]) -> Option<AuthzInfo> {
             )
         }
         Some(Authorization::Domain { domain_id, roles }) => {
-            let domain = Domain {
+            let domain = DomainRef {
                 id: domain_id.clone(),
                 name: String::new(),
-                description: None,
                 enabled: true,
-                extra: Default::default(),
-                options: Default::default(),
             };
             (ScopeInfo::Domain(domain), roles.clone())
         }
@@ -1365,6 +1355,7 @@ mod tests {
     use openstack_keystone_core_types::mapping::rule::{
         ClaimCondition, IdentityBinding, MappingRule, MatchCondition, MatchCriteria,
     };
+    use openstack_keystone_core_types::resource::Project;
     use openstack_keystone_core_types::role::RoleRef;
     use secrecy::SecretString;
     use serde_json::Value;

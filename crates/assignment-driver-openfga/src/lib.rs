@@ -824,13 +824,14 @@ impl AssignmentBackend for OpenFGADriver {
             // actor without a target scope: enumerate the objects the actor
             // holds each role relation on, per target kind.
             //
-            // - effective mode: `list-objects` per (relation, target type), which resolves the
-            //   model (group- and hierarchy-derived grants).
-            // - otherwise: a direct `read` per (target type[, relation]) with a `user` filter and a
-            //   type-scoped `object` (`type:`), which returns only stored tuples for the actor.
-            //   This is the same "direct tuples only" contract the target-scoped branch gives, just
-            //   keyed on the actor -- SCIM deprovisioning needs to sweep a principal's grants
-            //   without knowing every target up front.
+            // - effective mode: `list-objects` per (relation, target type),
+            //   which resolves the model (group- and hierarchy-derived grants).
+            // - otherwise: a direct `read` per (target type[, relation]) with a
+            //   `user` filter and a type-scoped `object` (`type:`), which
+            //   returns only stored tuples for the actor. This is the same
+            //   "direct tuples only" contract the target-scoped branch gives,
+            //   just keyed on the actor -- SCIM deprovisioning needs to sweep a
+            //   principal's grants without knowing every target up front.
             (Some((actor_kind, actor_id)), None) => {
                 let users = mapper.objects_for(actor_kind, actor_id);
                 let target_types = [Kind::Project, Kind::Domain, Kind::System]

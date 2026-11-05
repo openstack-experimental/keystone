@@ -1369,14 +1369,14 @@ mod tests {
             // `ApplicationCredential` arm).
             security_context
                 .set_authorization_scope(ScopeInfo::Project {
-                    project: openstack_keystone_core_types::resource::Project {
+                    project: openstack_keystone_core_types::resource::ProjectRef {
                         id: "p1".to_string(),
                         domain_id: "d1".to_string(),
                         enabled: true,
                         name: "p1".to_string(),
                         ..Default::default()
                     },
-                    project_domain: openstack_keystone_core_types::resource::Domain {
+                    project_domain: openstack_keystone_core_types::resource::DomainRef {
                         id: "d1".to_string(),
                         enabled: true,
                         name: "d1".to_string(),

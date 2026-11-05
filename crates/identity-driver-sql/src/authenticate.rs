@@ -506,8 +506,8 @@ mod tests {
             log[1],
             Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" = $1 ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
-                [1i32.into(), 1u64.into()]
+                r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" IN (SELECT "id" FROM "local_user" WHERE "local_user"."user_id" = $1) ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
+                ["user_id".into(), 1u64.into()]
             )
         );
         assert_eq!(
@@ -703,8 +703,8 @@ mod tests {
             log[1],
             Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" = $1 ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
-                [1i32.into(), 1u64.into()]
+                r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" IN (SELECT "id" FROM "local_user" WHERE "local_user"."user_id" = $1) ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
+                ["user_id".into(), 1u64.into()]
             )
         );
         assert_eq!(
@@ -752,6 +752,7 @@ mod tests {
         let config = Config::default();
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([Vec::<db_local_user::Model>::new()])
+            .append_query_results([Vec::<db_password::Model>::new()])
             .into_connection();
         match authenticate_by_password(
             &config,
@@ -772,10 +773,10 @@ mod tests {
             }
         }
 
-        // Verify that only the initial SELECT was executed (no UPDATE, no extra
-        // lookups)
+        // Verify that only the two concurrent lookups were executed (no
+        // UPDATE, no extra lookups)
         let log = db.into_transaction_log();
-        assert_eq!(log.len(), 1);
+        assert_eq!(log.len(), 2);
         assert_eq!(
             log[0],
             Transaction::from_sql_and_values(

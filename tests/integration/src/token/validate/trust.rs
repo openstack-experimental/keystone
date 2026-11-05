@@ -145,8 +145,8 @@ async fn test_valid() -> Result<(), Report> {
             &ctx,
             &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
                 trust: trust.clone(),
-                project: trust_project,
-                project_domain,
+                project: trust_project.into(),
+                project_domain: project_domain.into(),
             })),
         )
         .await?;
@@ -262,8 +262,8 @@ async fn test_valid_redelegated() -> Result<(), Report> {
             &ctx,
             &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
                 trust: trust.clone(),
-                project: trust_project,
-                project_domain,
+                project: trust_project.into(),
+                project_domain: project_domain.into(),
             })),
         )
         .await?;
@@ -379,8 +379,8 @@ async fn test_fewer_roles() -> Result<(), Report> {
             &ctx,
             &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
                 trust: trust.clone(),
-                project: trust_project,
-                project_domain,
+                project: trust_project.into(),
+                project_domain: project_domain.into(),
             })),
         )
         .await?;
@@ -487,8 +487,8 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
             &ctx,
             &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
                 trust: trust.clone(),
-                project: trust_project,
-                project_domain,
+                project: trust_project.into(),
+                project_domain: project_domain.into(),
             })),
         )
         .await?;
@@ -616,8 +616,8 @@ async fn test_trust_populated_in_api_token_response() -> Result<(), Report> {
             &ctx,
             &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
                 trust: trust.clone(),
-                project: trust_project,
-                project_domain,
+                project: trust_project.into(),
+                project_domain: project_domain.into(),
             })),
         )
         .await?;

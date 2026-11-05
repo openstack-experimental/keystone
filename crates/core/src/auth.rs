@@ -117,7 +117,7 @@ impl ValidatedSecurityContext {
             let user_domain = state
                 .provider
                 .get_resource_provider()
-                .get_domain(&ExecutionContext::internal(state), domain_id)
+                .get_domain_ref(&ExecutionContext::internal(state), domain_id)
                 .await
                 .auth_context("fetching user domain")?
                 .ok_or(ResourceProviderError::DomainNotFound(domain_id.clone()))
@@ -896,6 +896,7 @@ async fn resolve_system_roles(
                 &ExecutionContext::internal(state),
                 &RoleListParameters {
                     name: Some("reader".into()),
+                    skip_options: true,
                     ..Default::default()
                 },
             )

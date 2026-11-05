@@ -108,6 +108,7 @@ pub(super) async fn create(
                     &RoleListParametersBuilder::default()
                         .name(name.clone())
                         .domain_id(role.domain_id.clone())
+                        .skip_options(true)
                         .build()?,
                 )
                 .await?

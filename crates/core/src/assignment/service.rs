@@ -21,7 +21,7 @@
 //! active backend and union the results (§5). The routing table is an immutable
 //! [`AssignmentBundle`] swapped in whole on every config / binding change (§9).
 use async_trait::async_trait;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use arc_swap::{ArcSwap, ArcSwapOption};
@@ -322,19 +322,17 @@ impl AssignmentService {
             // §6 escalation blast radius).
             TargetKind::System => return Ok(bundle.global.clone()),
             TargetKind::Domain => target_id.to_string(),
-            TargetKind::Project => {
-                ctx.state()
-                    .provider
-                    .get_resource_provider()
-                    .get_project(ctx, target_id)
-                    .await?
-                    .ok_or_else(|| {
-                        AssignmentProviderError::from(ResourceProviderError::ProjectNotFound(
-                            target_id.to_string(),
-                        ))
-                    })?
-                    .domain_id
-            }
+            TargetKind::Project => ctx
+                .state()
+                .provider
+                .get_resource_provider()
+                .get_project_domain_id(ctx, target_id)
+                .await?
+                .ok_or_else(|| {
+                    AssignmentProviderError::from(ResourceProviderError::ProjectNotFound(
+                        target_id.to_string(),
+                    ))
+                })?,
         };
 
         // Read into an owned value in its own statement: a guard held as a
@@ -753,18 +751,39 @@ impl AssignmentApi for AssignmentService {
             merged
         };
 
-        if !assignments.is_empty() && params.include_names.is_some_and(|x| x) {
-            let roles: BTreeMap<String, Role> = ctx
-                .state()
-                .provider
-                .get_role_provider()
-                .list_roles(ctx, &RoleListParameters::default())
-                .await?
-                .into_iter()
-                .map(|x| (x.id.clone(), x))
+        if params.include_names.is_some_and(|x| x) {
+            // The drivers may have named the roles already (the implied roles
+            // come with their names): look up only the remaining ones, and
+            // skip the rest of the role table and the role options.
+            let role_ids: BTreeSet<String> = assignments
+                .iter()
+                .filter(|assignment| assignment.role_name.is_none())
+                .map(|assignment| assignment.role_id.clone())
                 .collect();
-            for assignment in assignments.iter_mut() {
-                assignment.role_name = roles.get(&assignment.role_id).map(|role| role.name.clone());
+            if !role_ids.is_empty() {
+                let roles: BTreeMap<String, Role> = ctx
+                    .state()
+                    .provider
+                    .get_role_provider()
+                    .list_roles(
+                        ctx,
+                        &RoleListParameters {
+                            ids: Some(role_ids.into_iter().collect()),
+                            skip_options: true,
+                            ..Default::default()
+                        },
+                    )
+                    .await?
+                    .into_iter()
+                    .map(|x| (x.id.clone(), x))
+                    .collect();
+                for assignment in assignments
+                    .iter_mut()
+                    .filter(|assignment| assignment.role_name.is_none())
+                {
+                    assignment.role_name =
+                        roles.get(&assignment.role_id).map(|role| role.name.clone());
+                }
             }
         }
 

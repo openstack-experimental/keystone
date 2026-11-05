@@ -296,6 +296,10 @@ pub async fn hash_password(
 }
 
 /// Verify the password matches the hashed value.
+///
+/// The span covers the hashing off the async executor, including the wait
+/// for a blocking-pool thread.
+#[tracing::instrument(name = "password.verify", level = "debug", skip_all)]
 pub async fn verify_password<H: AsRef<str>>(
     conf: &Config,
     password: &SecretString,

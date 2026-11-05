@@ -39,7 +39,7 @@ use openstack_keystone_core::token::MockTokenProvider;
 use openstack_keystone_core_types::assignment::*;
 use openstack_keystone_core_types::auth::*;
 use openstack_keystone_core_types::identity::UserResponseBuilder;
-use openstack_keystone_core_types::resource::{Domain, Project, ProjectBuilder};
+use openstack_keystone_core_types::resource::{Domain, Project, ProjectRefBuilder};
 use openstack_keystone_core_types::role::RoleRefBuilder;
 use openstack_keystone_core_types::token::ProjectScopePayload;
 use openstack_keystone_webauthn::api::init_extension;
@@ -97,14 +97,14 @@ fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
         .authorization(
             AuthzInfoBuilder::default()
                 .scope(ScopeInfo::Project {
-                    project: ProjectBuilder::default()
+                    project: ProjectRefBuilder::default()
                         .id("pid")
                         .domain_id("project_domain_id")
                         .enabled(true)
                         .name("project_name")
                         .build()
                         .unwrap(),
-                    project_domain: project_domain.clone(),
+                    project_domain: project_domain.clone().into(),
                 })
                 .roles(vec![
                     RoleRefBuilder::default()

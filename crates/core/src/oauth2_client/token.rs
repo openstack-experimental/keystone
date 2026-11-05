@@ -162,13 +162,13 @@ async fn scope_info_from_authorization(
     match authorization {
         Authorization::Project { project_id, .. } => {
             let project = resource_provider
-                .get_project(exec, project_id)
+                .get_project_ref(exec, project_id)
                 .await
                 .auth_context("fetching oauth2 client_credentials scope project")?
                 .ok_or_else(|| ResourceProviderError::ProjectNotFound(project_id.clone()))
                 .auth_context("fetching oauth2 client_credentials scope project")?;
             let project_domain = resource_provider
-                .get_domain(exec, &project.domain_id)
+                .get_domain_ref(exec, &project.domain_id)
                 .await
                 .auth_context("fetching oauth2 client_credentials scope project domain")?
                 .ok_or_else(|| ResourceProviderError::DomainNotFound(project.domain_id.clone()))
@@ -180,7 +180,7 @@ async fn scope_info_from_authorization(
         }
         Authorization::Domain { domain_id, .. } => {
             let domain = resource_provider
-                .get_domain(exec, domain_id)
+                .get_domain_ref(exec, domain_id)
                 .await
                 .auth_context("fetching oauth2 client_credentials scope domain")?
                 .ok_or_else(|| ResourceProviderError::DomainNotFound(domain_id.clone()))

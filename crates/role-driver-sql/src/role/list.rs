@@ -46,6 +46,9 @@ fn get_list_query(
     if let Some(name) = &params.name {
         select = select.filter(db_role::Column::Name.eq(name));
     }
+    if let Some(ids) = &params.ids {
+        select = select.filter(db_role::Column::Id.is_in(ids.iter().map(String::as_str)));
+    }
 
     let mut cursor = select.cursor_by(db_role::Column::Id);
     if let Some(marker) = &params.pagination.marker {
@@ -82,10 +85,16 @@ pub async fn list(
     db: &DatabaseConnection,
     params: &RoleListParameters,
 ) -> Result<Vec<Role>, RoleProviderError> {
+    if params.ids.as_ref().is_some_and(Vec::is_empty) {
+        return Ok(Vec::new());
+    }
     let rows = get_list_query(params)?
         .all(db)
         .await
         .context("listing roles")?;
+    if params.skip_options || rows.is_empty() {
+        return rows.into_iter().map(TryInto::try_into).collect();
+    }
     let options = rows
         .load_many(RoleOption, db)
         .await
@@ -242,5 +251,71 @@ pub(super) mod tests {
 
         let roles = list(&db, &RoleListParameters::default()).await.unwrap();
         assert_eq!(roles[0].options.immutable, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_query_ids() {
+        assert_eq!(
+            r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" WHERE "role"."id" IN ('a', 'b')"#,
+            QuerySelect::query(
+                &mut get_list_query(&RoleListParameters {
+                    ids: Some(vec!["a".into(), "b".into()]),
+                    ..Default::default()
+                })
+                .unwrap()
+            )
+            .to_string(PostgresQueryBuilder)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_skip_options_runs_one_query() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_role_mock("1", "foo")]])
+            .into_connection();
+
+        let roles = list(
+            &db,
+            &RoleListParameters {
+                skip_options: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(1, roles.len());
+        assert_eq!(1, db.into_transaction_log().len());
+    }
+
+    #[tokio::test]
+    async fn test_list_with_options_runs_two_queries() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_role_mock("1", "foo")]])
+            .append_query_results([Vec::<crate::entity::role_option::Model>::new()])
+            .into_connection();
+
+        list(&db, &RoleListParameters::default()).await.unwrap();
+
+        assert_eq!(2, db.into_transaction_log().len());
+    }
+
+    #[tokio::test]
+    async fn test_list_empty_ids_does_not_query() {
+        // No result is queued: a query would fail the mock.
+        let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+
+        assert!(
+            list(
+                &db,
+                &RoleListParameters {
+                    ids: Some(Vec::new()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
     }
 }

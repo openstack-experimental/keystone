@@ -22,7 +22,7 @@ use openstack_keystone_core_types::auth::{
 use openstack_keystone_core_types::identity::{UserOptions, UserResponse, UserResponseBuilder};
 use openstack_keystone_core_types::mapping::authorization::Authorization;
 use openstack_keystone_core_types::mapping::{MappingContext, VirtualUser};
-use openstack_keystone_core_types::resource::Project;
+use openstack_keystone_core_types::resource::{Project, ProjectRef};
 use openstack_keystone_core_types::role::{RoleRef, RoleRefBuilder};
 use openstack_keystone_core_types::token::TokenRestriction;
 use openstack_keystone_core_types::trust::Trust;
@@ -54,13 +54,10 @@ fn make_user_identity(user_id: impl Into<String>) -> PrincipalInfo {
     let ui = UserIdentityInfo {
         user_id: uid.clone(),
         user: Some(u),
-        user_domain: Some(openstack_keystone_core_types::resource::Domain {
+        user_domain: Some(openstack_keystone_core_types::resource::DomainRef {
             id: "d1".to_string(),
-            description: None,
             enabled: true,
             name: "default".to_string(),
-            extra: HashMap::new(),
-            options: Default::default(),
         }),
         user_groups: Vec::new(),
     };
@@ -87,26 +84,20 @@ fn make_project(pid: impl Into<String>) -> Project {
 
 fn make_project_scope(pid: impl Into<String>) -> ScopeInfo {
     ScopeInfo::Project {
-        project: make_project(pid),
-        project_domain: openstack_keystone_core_types::resource::Domain {
+        project: make_project(pid).into(),
+        project_domain: openstack_keystone_core_types::resource::DomainRef {
             id: "d1".to_string(),
-            description: None,
             enabled: true,
             name: "default".to_string(),
-            extra: HashMap::new(),
-            options: Default::default(),
         },
     }
 }
 
 fn make_domain_scope(did: impl Into<String>) -> ScopeInfo {
-    ScopeInfo::Domain(openstack_keystone_core_types::resource::Domain {
+    ScopeInfo::Domain(openstack_keystone_core_types::resource::DomainRef {
         id: did.into(),
-        description: None,
         enabled: true,
         name: "default".to_string(),
-        extra: HashMap::new(),
-        options: Default::default(),
     })
 }
 
@@ -131,14 +122,11 @@ fn make_trust_scope(
             redelegation_count: None,
             roles,
         },
-        project: make_project(project),
-        project_domain: openstack_keystone_core_types::resource::Domain {
+        project: make_project(project).into(),
+        project_domain: openstack_keystone_core_types::resource::DomainRef {
             id: "d1".to_string(),
-            description: None,
             enabled: true,
             name: "default".to_string(),
-            extra: HashMap::new(),
-            options: Default::default(),
         },
     }))
 }
@@ -174,62 +162,45 @@ fn role_ref_with_domain(
 }
 
 fn disabled_domain_scope(did: impl Into<String>) -> ScopeInfo {
-    ScopeInfo::Domain(openstack_keystone_core_types::resource::Domain {
+    ScopeInfo::Domain(openstack_keystone_core_types::resource::DomainRef {
         id: did.into(),
-        description: None,
         enabled: false,
         name: "disabled".to_string(),
-        extra: HashMap::new(),
-        options: Default::default(),
     })
 }
 
 fn disabled_project_scope(pid: impl Into<String>) -> ScopeInfo {
     ScopeInfo::Project {
-        project: Project {
-            tags: Default::default(),
+        project: ProjectRef {
             id: pid.into(),
             domain_id: "d1".to_string(),
             enabled: false,
             name: "p".to_string(),
-            description: None,
             is_domain: false,
             parent_id: None,
-            extra: HashMap::new(),
-            options: Default::default(),
         },
-        project_domain: openstack_keystone_core_types::resource::Domain {
+        project_domain: openstack_keystone_core_types::resource::DomainRef {
             id: "d1".to_string(),
-            description: None,
             enabled: true,
             name: "default".to_string(),
-            extra: HashMap::new(),
-            options: Default::default(),
         },
     }
 }
 
 fn disabled_project_domain_scope(pid: impl Into<String>) -> ScopeInfo {
     ScopeInfo::Project {
-        project: Project {
-            tags: Default::default(),
+        project: ProjectRef {
             id: pid.into(),
             domain_id: "d1".to_string(),
             enabled: true,
             name: "p".to_string(),
-            description: None,
             is_domain: false,
             parent_id: None,
-            extra: HashMap::new(),
-            options: Default::default(),
         },
-        project_domain: openstack_keystone_core_types::resource::Domain {
+        project_domain: openstack_keystone_core_types::resource::DomainRef {
             id: "d1".to_string(),
-            description: None,
             enabled: false,
             name: "disabled".to_string(),
-            extra: HashMap::new(),
-            options: Default::default(),
         },
     }
 }
@@ -255,25 +226,18 @@ fn disabled_trust_scope(
             redelegation_count: None,
             roles,
         },
-        project: Project {
-            tags: Default::default(),
+        project: ProjectRef {
             id: project.to_string(),
             domain_id: "d1".to_string(),
             enabled: false,
             name: "p".to_string(),
-            description: None,
             is_domain: false,
             parent_id: None,
-            extra: HashMap::new(),
-            options: Default::default(),
         },
-        project_domain: openstack_keystone_core_types::resource::Domain {
+        project_domain: openstack_keystone_core_types::resource::DomainRef {
             id: "d1".to_string(),
-            description: None,
             enabled: true,
             name: "default".to_string(),
-            extra: HashMap::new(),
-            options: Default::default(),
         },
     }))
 }
@@ -299,25 +263,18 @@ fn disabled_trust_project_domain_scope(
             redelegation_count: None,
             roles,
         },
-        project: Project {
-            tags: Default::default(),
+        project: ProjectRef {
             id: project.to_string(),
             domain_id: "d1".to_string(),
             enabled: true,
             name: "p".to_string(),
-            description: None,
             is_domain: false,
             parent_id: None,
-            extra: HashMap::new(),
-            options: Default::default(),
         },
-        project_domain: openstack_keystone_core_types::resource::Domain {
+        project_domain: openstack_keystone_core_types::resource::DomainRef {
             id: "d1".to_string(),
-            description: None,
             enabled: false,
             name: "disabled".to_string(),
-            extra: HashMap::new(),
-            options: Default::default(),
         },
     }))
 }
@@ -1474,14 +1431,13 @@ async fn test_new_for_scope_populates_missing_user_domain_from_resource_provider
 
     let mut resource_mock = MockResourceProvider::default();
     resource_mock
-        .expect_get_domain()
+        .expect_get_domain_ref()
         .withf(|_e, domain_id: &str| domain_id == "d1")
         .returning(|_e, id| {
-            Ok(Some(openstack_keystone_core_types::resource::Domain {
+            Ok(Some(openstack_keystone_core_types::resource::DomainRef {
                 id: id.to_string(),
                 name: "d1".to_string(),
                 enabled: true,
-                ..Default::default()
             }))
         });
 
@@ -2783,14 +2739,11 @@ async fn test_new_for_scope_delegated_roles_never_exceed_delegation_matrix() {
     };
     let trust_project_scope = ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
         trust: trust.clone(),
-        project: make_project(pid),
-        project_domain: openstack_keystone_core_types::resource::Domain {
+        project: make_project(pid).into(),
+        project_domain: openstack_keystone_core_types::resource::DomainRef {
             id: "d1".to_string(),
-            description: None,
             enabled: true,
             name: "default".to_string(),
-            extra: HashMap::new(),
-            options: Default::default(),
         },
     }));
     let authz = AuthzInfoBuilder::default()

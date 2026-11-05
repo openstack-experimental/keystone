@@ -56,6 +56,47 @@ pub struct Domain {
     pub options: ProjectOptions,
 }
 
+/// Short domain data.
+///
+/// Carries what the authorization scope and the token validation need. It
+/// deliberately has no `options`, `extra` and `description`: loading the
+/// options costs an additional query for every lookup.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct DomainRef {
+    /// If set to true, domain is enabled. If set to false, domain is disabled.
+    pub enabled: bool,
+
+    /// The domain ID.
+    #[validate(length(min = 1, max = 64))]
+    pub id: String,
+
+    /// The domain name.
+    #[validate(length(min = 1, max = 255))]
+    pub name: String,
+}
+
+impl From<Domain> for DomainRef {
+    fn from(value: Domain) -> Self {
+        Self {
+            enabled: value.enabled,
+            id: value.id,
+            name: value.name,
+        }
+    }
+}
+
+impl From<&Domain> for DomainRef {
+    fn from(value: &Domain) -> Self {
+        Self {
+            enabled: value.enabled,
+            id: value.id.clone(),
+            name: value.name.clone(),
+        }
+    }
+}
+
 /// New domain data.
 #[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]

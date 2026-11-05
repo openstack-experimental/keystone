@@ -1798,12 +1798,6 @@ mod resource {
                 project: ProjectCreate,
             ) -> Result<Project, ResourceProviderError>;
 
-            async fn get_project_parents<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                project_id: &'a str,
-            ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
-
             async fn create_project_tag<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -1842,6 +1836,12 @@ mod resource {
                 domain_id: &'a str,
             ) -> Result<Option<Domain>, ResourceProviderError>;
 
+            async fn get_domain_ref<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+            ) -> Result<Option<DomainRef>, ResourceProviderError>;
+
             async fn get_domain_enabled<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -1862,6 +1862,30 @@ mod resource {
             ) -> Result<Option<Project>, ResourceProviderError>;
 
             async fn get_project_subtree<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
+
+            async fn get_project_domain_id<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<Option<String>, ResourceProviderError>;
+
+            async fn get_project_ref<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<Option<ProjectRef>, ResourceProviderError>;
+
+            async fn get_project_parent_ids<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<Option<Vec<String>>, ResourceProviderError>;
+
+            async fn get_project_parents<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
                 project_id: &'a str,

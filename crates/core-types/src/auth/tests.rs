@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::resource::Project;
 use chrono::Duration;
 use std::collections::HashMap;
 
@@ -101,25 +102,19 @@ fn make_project2() -> Project {
     }
 }
 
-fn make_domain() -> Domain {
-    Domain {
+fn make_domain() -> DomainRef {
+    DomainRef {
         id: "did".into(),
         name: "default".into(),
         enabled: true,
-        description: None,
-        extra: HashMap::new(),
-        options: Default::default(),
     }
 }
 
-fn make_disabled_domain() -> Domain {
-    Domain {
+fn make_disabled_domain() -> DomainRef {
+    DomainRef {
         id: "did".into(),
         name: "default".into(),
         enabled: false,
-        description: None,
-        extra: HashMap::new(),
-        options: Default::default(),
     }
 }
 
@@ -176,17 +171,17 @@ impl AllScopes {
             .unwrap();
         Self {
             project: ScopeInfo::Project {
-                project: make_project(),
+                project: make_project().into(),
                 project_domain: make_domain(),
             },
             project2: ScopeInfo::Project {
-                project: make_project2(),
+                project: make_project2().into(),
                 project_domain: make_domain(),
             },
             domain: ScopeInfo::Domain(make_domain().clone()),
             trust: ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
                 trust: trust.clone(),
-                project: make_project(),
+                project: make_project().into(),
                 project_domain: make_domain(),
             })),
             system: ScopeInfo::System("all".into()),
@@ -258,7 +253,7 @@ fn make_auth_result_project(
         .principal(principal)
         .authorization(AuthzInfo {
             scope: ScopeInfo::Project {
-                project,
+                project: project.into(),
                 project_domain: make_domain(),
             },
             roles,
@@ -327,17 +322,13 @@ fn make_trust_with_roles(roles: Option<Vec<RoleRef>>) -> SecurityContext {
         .authorization(AuthzInfo {
             scope: ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
                 trust: make_trust("uid"),
-                project: Project {
-                    tags: Default::default(),
+                project: ProjectRef {
                     id: "project_id".into(),
                     domain_id: "domain_id".into(),
                     enabled: true,
                     name: "project_name".into(),
-                    description: None,
                     is_domain: false,
                     parent_id: None,
-                    extra: HashMap::new(),
-                    options: Default::default(),
                 },
                 project_domain: make_domain(),
             })),
@@ -413,7 +404,7 @@ fn test_authn_validate_user_mismatch() {
 fn test_authz_validate_project() {
     assert!(
         ScopeInfo::Project {
-            project: make_project(),
+            project: make_project().into(),
             project_domain: make_domain(),
         }
         .validate()
@@ -424,7 +415,7 @@ fn test_authz_validate_project() {
 #[test]
 fn test_authz_validate_project_disabled() {
     if let Err(AuthenticationError::ProjectDisabled(..)) = (ScopeInfo::Project {
-        project: make_disabled_project(),
+        project: make_disabled_project().into(),
         project_domain: make_domain(),
     })
     .validate()
@@ -618,7 +609,7 @@ fn test_validate_scope_boundarires_trust() {
     let trust = make_trust_with_project(&p.id);
     let trust_scope = ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
         trust: trust.clone(),
-        project: p.clone(),
+        project: p.clone().into(),
         project_domain: make_domain(),
     }));
     let system = ScopeInfo::System("all".into());
@@ -637,7 +628,7 @@ fn test_validate_scope_boundarires_trust() {
     // `calculate_effective_roles()`'s Trust-on-Project handling).
     assert!(
         ctx.validate_scope_boundaries(&ScopeInfo::Project {
-            project: p,
+            project: p.into(),
             project_domain: make_domain(),
         })
         .is_ok()
@@ -645,7 +636,7 @@ fn test_validate_scope_boundarires_trust() {
     // A different project is still rejected.
     assert!(matches!(
         ctx.validate_scope_boundaries(&ScopeInfo::Project {
-            project: p2,
+            project: p2.into(),
             project_domain: make_domain(),
         }),
         Err(AuthenticationError::ScopeNotAllowed)
@@ -693,7 +684,7 @@ fn test_validate_scope_boundarires_trust() {
     );
     assert!(matches!(
         ctx_from_bearer_token.validate_scope_boundaries(&ScopeInfo::Project {
-            project: p3,
+            project: p3.into(),
             project_domain: make_domain(),
         }),
         Err(AuthenticationError::ScopeNotAllowed)
@@ -862,7 +853,7 @@ fn test_identity_validate_principal_disabled_domain() {
 #[test]
 fn test_authz_validation_disabled_project() {
     let scope = ScopeInfo::Project {
-        project: make_disabled_project(),
+        project: make_disabled_project().into(),
         project_domain: make_domain(),
     };
     assert!(matches!(
@@ -1138,7 +1129,7 @@ fn test_validate_trust_principal_match() {
 fn test_try_set_roles_success() {
     let mut authz = AuthzInfo {
         scope: ScopeInfo::Project {
-            project: make_project(),
+            project: make_project().into(),
             project_domain: make_domain(),
         },
         roles: None,
@@ -1294,7 +1285,7 @@ fn test_set_token_restriction_is_readable_via_getter() {
 fn test_set_authorization_scope_success() {
     let mut ctx = make_password_context(make_principal("uid"));
     let scope = ScopeInfo::Project {
-        project: make_project(),
+        project: make_project().into(),
         project_domain: make_domain(),
     };
     assert!(ctx.set_authorization_scope(scope.clone()).is_ok());
@@ -1325,7 +1316,7 @@ fn test_set_authorization_scope_preserves_roles() {
 
     // Re-scope to Project — roles should be preserved
     let new_scope = ScopeInfo::Project {
-        project: make_project(),
+        project: make_project().into(),
         project_domain: make_domain(),
     };
     assert!(ctx.set_authorization_scope(new_scope).is_ok());
@@ -1488,7 +1479,7 @@ fn test_authz_roles_multiple() {
 fn test_authz_validate_trust_project() {
     let scope = ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
         trust: make_trust_no_project(),
-        project: make_project(),
+        project: make_project().into(),
         project_domain: make_domain(),
     }));
     assert!(scope.validate().is_ok());
@@ -1498,7 +1489,7 @@ fn test_authz_validate_trust_project() {
 fn test_authz_validate_trust_project_disabled_project() {
     let scope = ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
         trust: make_trust_no_project(),
-        project: make_disabled_project(),
+        project: make_disabled_project().into(),
         project_domain: make_domain(),
     }));
     assert!(matches!(
@@ -1511,7 +1502,7 @@ fn test_authz_validate_trust_project_disabled_project() {
 fn test_authz_validate_trust_project_disabled_domain() {
     let scope = ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
         trust: make_trust_no_project(),
-        project: make_project(),
+        project: make_project().into(),
         project_domain: make_disabled_domain(),
     }));
     assert!(matches!(
@@ -1633,9 +1624,9 @@ fn make_trust_project_info(trust_id: &str, project_id: &str) -> TrustProjectInfo
             .impersonation(false)
             .build()
             .unwrap(),
-        project: Project {
+        project: ProjectRef {
             id: project_id.into(),
-            ..make_project()
+            ..make_project().into()
         },
         project_domain: make_domain(),
     }
@@ -1651,7 +1642,7 @@ fn test_scope_info_domain_eq_same_id_and_enabled() {
 
 #[test]
 fn test_scope_info_domain_eq_different_id_is_false() {
-    let other = Domain {
+    let other = DomainRef {
         id: "other_did".into(),
         ..make_domain()
     };
@@ -1669,11 +1660,11 @@ fn test_scope_info_domain_eq_different_enabled_is_false() {
 #[test]
 fn test_scope_info_project_eq_same_fields() {
     let a = ScopeInfo::Project {
-        project: make_project(),
+        project: make_project().into(),
         project_domain: make_domain(),
     };
     let b = ScopeInfo::Project {
-        project: make_project(),
+        project: make_project().into(),
         project_domain: make_domain(),
     };
     assert_eq!(a, b);
@@ -1682,11 +1673,11 @@ fn test_scope_info_project_eq_same_fields() {
 #[test]
 fn test_scope_info_project_eq_different_project_id_is_false() {
     let a = ScopeInfo::Project {
-        project: make_project(),
+        project: make_project().into(),
         project_domain: make_domain(),
     };
     let b = ScopeInfo::Project {
-        project: make_project2(),
+        project: make_project2().into(),
         project_domain: make_domain(),
     };
     assert_ne!(a, b);
@@ -1695,13 +1686,13 @@ fn test_scope_info_project_eq_different_project_id_is_false() {
 #[test]
 fn test_scope_info_project_eq_different_domain_id_is_false() {
     let a = ScopeInfo::Project {
-        project: make_project(),
+        project: make_project().into(),
         project_domain: make_domain(),
     };
     let b = ScopeInfo::Project {
-        project: Project {
+        project: ProjectRef {
             domain_id: "other_did".into(),
-            ..make_project()
+            ..make_project().into()
         },
         project_domain: make_domain(),
     };
@@ -1711,11 +1702,11 @@ fn test_scope_info_project_eq_different_domain_id_is_false() {
 #[test]
 fn test_scope_info_project_eq_different_project_enabled_is_false() {
     let a = ScopeInfo::Project {
-        project: make_project(),
+        project: make_project().into(),
         project_domain: make_domain(),
     };
     let b = ScopeInfo::Project {
-        project: make_disabled_project(),
+        project: make_disabled_project().into(),
         project_domain: make_domain(),
     };
     assert_ne!(a, b);
@@ -1724,11 +1715,11 @@ fn test_scope_info_project_eq_different_project_enabled_is_false() {
 #[test]
 fn test_scope_info_project_eq_different_project_domain_enabled_is_false() {
     let a = ScopeInfo::Project {
-        project: make_project(),
+        project: make_project().into(),
         project_domain: make_domain(),
     };
     let b = ScopeInfo::Project {
-        project: make_project(),
+        project: make_project().into(),
         project_domain: make_disabled_domain(),
     };
     assert_ne!(a, b);
@@ -1770,7 +1761,7 @@ fn test_scope_info_cross_variant_never_equal() {
     );
     assert_ne!(
         ScopeInfo::Project {
-            project: make_project(),
+            project: make_project().into(),
             project_domain: make_domain(),
         },
         ScopeInfo::Unscoped
@@ -1862,7 +1853,7 @@ fn make_workload_principal() -> PrincipalInfo {
 fn test_service_grant_scope_bound_to_target_project() {
     let ctx = make_service_grant_ctx("uid", "pid");
     let project_scope = ScopeInfo::Project {
-        project: make_project(),
+        project: make_project().into(),
         project_domain: make_domain(),
     };
     assert!(ctx.validate_scope_boundaries(&project_scope).is_ok());
@@ -1905,7 +1896,7 @@ fn test_service_client_only_unscoped() {
     for scope in [
         ScopeInfo::Domain(make_domain()),
         ScopeInfo::Project {
-            project: make_project(),
+            project: make_project().into(),
             project_domain: make_domain(),
         },
         ScopeInfo::System("system".into()),
@@ -1981,7 +1972,7 @@ fn test_on_behalf_of_plain_subject_scopes() {
     assert!(ctx.validate().is_ok());
     assert!(
         ctx.validate_scope_boundaries(&ScopeInfo::Project {
-            project: make_project(),
+            project: make_project().into(),
             project_domain: make_domain(),
         })
         .is_ok()
@@ -2006,9 +1997,9 @@ fn test_on_behalf_of_delegated_subject_bound_to_its_project() {
         make_principal("uid"),
     );
     let project = |id: &str| ScopeInfo::Project {
-        project: Project {
+        project: ProjectRef {
             id: id.into(),
-            ..make_project()
+            ..make_project().into()
         },
         project_domain: make_domain(),
     };

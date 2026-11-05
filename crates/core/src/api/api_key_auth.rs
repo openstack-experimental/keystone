@@ -543,7 +543,7 @@ async fn hydrate_ephemeral_context(
     let domain = state
         .provider
         .get_resource_provider()
-        .get_domain(&exec, domain_id)
+        .get_domain_ref(&exec, domain_id)
         .await
         .map_err(|e| {
             warn!(error = %e, "api_key scope domain lookup failed");
@@ -588,7 +588,6 @@ mod tests {
         AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
         SecurityContext, UserIdentityInfoBuilder,
     };
-    use openstack_keystone_core_types::resource::Domain;
 
     fn vsc_with_scope(scope: ScopeInfo) -> ValidatedSecurityContext {
         let user = UserIdentityInfoBuilder::default()
@@ -616,52 +615,43 @@ mod tests {
 
     #[test]
     fn domain_scope_matching_domain_id_is_domain_scoped() {
-        let vsc = vsc_with_scope(ScopeInfo::Domain(Domain {
-            id: "domain-1".to_string(),
-            name: String::new(),
-            description: None,
-            enabled: true,
-            extra: Default::default(),
-            options: Default::default(),
-        }));
+        let vsc = vsc_with_scope(ScopeInfo::Domain(
+            openstack_keystone_core_types::resource::DomainRef {
+                id: "domain-1".to_string(),
+                name: String::new(),
+                enabled: true,
+            },
+        ));
         assert!(is_domain_scoped(&vsc, "domain-1"));
     }
 
     #[test]
     fn domain_scope_mismatched_domain_id_is_not_domain_scoped() {
-        let vsc = vsc_with_scope(ScopeInfo::Domain(Domain {
-            id: "domain-1".to_string(),
-            name: String::new(),
-            description: None,
-            enabled: true,
-            extra: Default::default(),
-            options: Default::default(),
-        }));
+        let vsc = vsc_with_scope(ScopeInfo::Domain(
+            openstack_keystone_core_types::resource::DomainRef {
+                id: "domain-1".to_string(),
+                name: String::new(),
+                enabled: true,
+            },
+        ));
         assert!(!is_domain_scoped(&vsc, "domain-2"));
     }
 
     #[test]
     fn project_scope_is_never_domain_scoped() {
         let vsc = vsc_with_scope(ScopeInfo::Project {
-            project: openstack_keystone_core_types::resource::Project {
-                tags: Default::default(),
+            project: openstack_keystone_core_types::resource::ProjectRef {
                 id: "project-1".to_string(),
                 domain_id: "domain-1".to_string(),
                 name: String::new(),
-                description: None,
                 enabled: true,
                 is_domain: false,
                 parent_id: None,
-                extra: Default::default(),
-                options: Default::default(),
             },
-            project_domain: Domain {
+            project_domain: openstack_keystone_core_types::resource::DomainRef {
                 id: "domain-1".to_string(),
                 name: String::new(),
-                description: None,
                 enabled: true,
-                extra: Default::default(),
-                options: Default::default(),
             },
         });
         assert!(!is_domain_scoped(&vsc, "domain-1"));

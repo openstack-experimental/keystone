@@ -30,7 +30,7 @@ use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core_types::auth::{AuthenticationContext, ScopeInfo, SecurityContext};
 use openstack_keystone_core_types::mapping::MappingContext;
 use openstack_keystone_core_types::mapping::authorization::Authorization;
-use openstack_keystone_core_types::resource::{Domain, Project};
+use openstack_keystone_core_types::resource::{DomainRef, ProjectRef};
 use tracing::{debug, warn};
 
 use crate::api::types::{Catalog, CatalogService};
@@ -206,25 +206,18 @@ fn derive_scope_from_authorizations(
                 project_domain_id,
                 ..
             } => {
-                let domain = Domain {
+                let domain = DomainRef {
                     id: project_domain_id.clone(),
                     name: String::new(),
-                    description: None,
                     enabled: true,
-                    extra: Default::default(),
-                    options: Default::default(),
                 };
-                let project = Project {
-                    tags: Default::default(),
+                let project = ProjectRef {
                     id: project_id.clone(),
                     domain_id: project_domain_id.clone(),
                     name: String::new(),
-                    description: None,
                     enabled: true,
                     is_domain: false,
                     parent_id: None,
-                    extra: Default::default(),
-                    options: Default::default(),
                 };
                 Ok(ScopeInfo::Project {
                     project,
@@ -232,13 +225,10 @@ fn derive_scope_from_authorizations(
                 })
             }
             Authorization::Domain { domain_id, .. } => {
-                let domain = Domain {
+                let domain = DomainRef {
                     id: domain_id.clone(),
                     name: String::new(),
-                    description: None,
                     enabled: true,
-                    extra: Default::default(),
-                    options: Default::default(),
                 };
                 Ok(ScopeInfo::Domain(domain))
             }

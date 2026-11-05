@@ -23,7 +23,6 @@
 use serde_json::json;
 
 use openstack_keystone_core_types::domain_config::DomainConfig;
-use openstack_keystone_core_types::resource::Project;
 
 use super::*;
 use crate::domain_config::backend::{DomainConfigBackend, MockDomainConfigBackend};
@@ -99,16 +98,8 @@ fn assignment(actor: &str, target: &str, role: &str, kind: AssignmentType) -> As
 async fn state_with_project_domain(domain_id: &'static str) -> ServiceState {
     let mut resource = MockResourceProvider::default();
     resource
-        .expect_get_project()
-        .returning(move |_, project_id| {
-            Ok(Some(Project {
-                id: project_id.to_string(),
-                name: project_id.to_string(),
-                domain_id: domain_id.to_string(),
-                enabled: true,
-                ..Default::default()
-            }))
-        });
+        .expect_get_project_domain_id()
+        .returning(move |_, _| Ok(Some(domain_id.to_string())));
     get_mocked_state(
         None,
         Some(Provider::mocked_builder().mock_resource(resource)),

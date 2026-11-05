@@ -47,7 +47,7 @@ use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::oauth2_client::{
     Audience, DelegationPolicy, OAuth2ClientResource, OAuth2ClientResourceCreateBuilder,
 };
-use openstack_keystone_core_types::resource::{DomainBuilder, ProjectBuilder};
+use openstack_keystone_core_types::resource::{DomainRefBuilder, ProjectRefBuilder};
 use openstack_keystone_core_types::service_grant::*;
 use openstack_keystone_service_grant_driver_raft::RaftServiceGrantBackend;
 
@@ -146,13 +146,13 @@ pub(crate) async fn user_context(
             &ExecutionContext::internal(state),
             &ctx,
             &ScopeInfo::Project {
-                project: ProjectBuilder::default()
+                project: ProjectRefBuilder::default()
                     .id(project.id.clone())
                     .name(project.name.clone())
                     .domain_id(project.domain_id.clone())
                     .enabled(true)
                     .build()?,
-                project_domain: DomainBuilder::default()
+                project_domain: DomainRefBuilder::default()
                     .id(project.domain_id.clone())
                     .name(project.domain_id.clone())
                     .enabled(true)

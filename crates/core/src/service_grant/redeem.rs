@@ -213,7 +213,7 @@ pub async fn redeem_loaded_service_grant(
     // `new_for_scope`), and the target project exists and is enabled.
     let resource = state.provider.get_resource_provider();
     let project = resource
-        .get_project(&internal, grant.target.project_id())
+        .get_project_ref(&internal, grant.target.project_id())
         .await
         .map_err(ServiceGrantRedeemError::provider)?
         .filter(|p| p.enabled)
@@ -221,7 +221,7 @@ pub async fn redeem_loaded_service_grant(
             AuthenticationError::ProjectDisabled(grant.target.project_id().to_string())
         })?;
     let project_domain = resource
-        .get_domain(&internal, &project.domain_id)
+        .get_domain_ref(&internal, &project.domain_id)
         .await
         .map_err(ServiceGrantRedeemError::provider)?
         .filter(|d| d.enabled)
@@ -424,7 +424,7 @@ mod tests {
     use openstack_keystone_core_types::assignment::{Assignment, AssignmentType};
     use openstack_keystone_core_types::identity::UserResponseBuilder;
     use openstack_keystone_core_types::oauth2_client::DelegationPolicy;
-    use openstack_keystone_core_types::resource::{Domain, Project};
+    use openstack_keystone_core_types::resource::ProjectRef;
 
     use super::*;
     use crate::assignment::MockAssignmentProvider;
@@ -567,8 +567,8 @@ mod tests {
             ))
         });
         let mut resource = MockResourceProvider::default();
-        resource.expect_get_project().returning(|_, id| {
-            Ok(Some(Project {
+        resource.expect_get_project_ref().returning(|_, id| {
+            Ok(Some(ProjectRef {
                 id: id.to_string(),
                 domain_id: "d1".into(),
                 enabled: true,
@@ -576,8 +576,8 @@ mod tests {
                 ..Default::default()
             }))
         });
-        resource.expect_get_domain().returning(|_, id| {
-            Ok(Some(Domain {
+        resource.expect_get_domain_ref().returning(|_, id| {
+            Ok(Some(openstack_keystone_core_types::resource::DomainRef {
                 id: id.to_string(),
                 name: id.to_string(),
                 enabled: true,

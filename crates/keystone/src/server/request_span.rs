@@ -134,6 +134,8 @@ macro_rules! server_span {
             http.user_agent = Empty,
             http.status_code = Empty,
             http.url = Empty,
+            db.time_us = Empty,
+            db.queries = Empty,
             $($($extra)*)?
         )
     };
@@ -213,7 +215,10 @@ pub async fn server_span(
     openstack_keystone_telemetry::set_remote_parent(&span, req.headers());
 
     #[cfg_attr(not(feature = "otel"), allow(unused_mut))]
-    let mut response = next.run(req).instrument(span.clone()).await;
+    let (mut response, db) =
+        crate::server::db_timing::scope(next.run(req).instrument(span.clone())).await;
+    span.record("db.time_us", db.micros());
+    span.record("db.queries", db.queries());
 
     let status = response.status();
     span.record("http.response.status_code", status.as_u16());

@@ -242,8 +242,8 @@ async fn warn_on_unresolvable_auth_methods(state: &ServiceState) {
 }
 
 /// Periodic best-effort housekeeping on a 60s tick: federation provider
-/// cleanup, expired revocation events purge, per-plugin rate-limit keyed-store shrink (ADR 0025 §7), and
-/// global rate-limit stale-entry eviction (ADR 0022).
+/// cleanup, expired revocation events purge, per-plugin rate-limit keyed-store
+/// shrink (ADR 0025 §7), and global rate-limit stale-entry eviction (ADR 0022).
 async fn cleanup(cancel: CancellationToken, state: ServiceState) {
     let mut interval = time::interval(Duration::from_secs(60));
     interval.tick().await;
@@ -454,7 +454,10 @@ async fn reconnect_db_on_config_change(cancel: CancellationToken, state: Service
                         }
                         db_reload::apply_db_tls(&mut opt, &config.database.tls);
                         drop(config);
-                        match state.db.reconnect(opt).await {
+                        match state
+                            .db
+                            .reconnect_with(opt, crate::server::db_timing::install)
+                            .await {
                             Ok(()) => {
                                 info!("Database connection reloaded");
                                 current_dsn = new_dsn;

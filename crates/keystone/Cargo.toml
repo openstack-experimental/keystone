@@ -102,7 +102,7 @@ toml.workspace = true
 tonic = { workspace = true, features = ["server"] }
 time.workspace = true
 tower.workspace = true
-tower-http = { workspace = true, features = ["compression-br", "compression-deflate", "compression-gzip", "normalize-path", "request-id", "sensitive-headers", "trace", "util"] }
+tower-http = { workspace = true, features = ["normalize-path", "request-id", "sensitive-headers", "trace", "util"] }
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-error = "0.2"
@@ -162,6 +162,15 @@ fips = [
 # Embedded Swagger UI served at `/swagger-ui`. Off by default; the OpenAPI
 # document at `/api-docs/openapi.json` is always served.
 swagger-ui = ["dep:utoipa-swagger-ui"]
+
+# HTTP response compression (br, deflate, gzip). Off by default: deflating every
+# JSON body cost ~10% of the throughput under load; terminate compression at
+# the reverse proxy instead.
+compression = [
+  "tower-http/compression-br",
+  "tower-http/compression-deflate",
+  "tower-http/compression-gzip",
+]
 openfga = ["dep:openstack-keystone-assignment-driver-openfga"]
 # RFC 5424 syslog audit sink (`[audit] sink = { type = "syslog", .. }`).
 audit-syslog = ["cadf/syslog"]

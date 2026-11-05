@@ -37,7 +37,7 @@ use crate::application_credential::ApplicationCredential;
 use crate::assignment::AssignmentProviderError;
 use crate::error::BuilderError;
 use crate::identity::{Group, UserResponse};
-use crate::resource::{Domain, Project};
+use crate::resource::{DomainRef, ProjectRef};
 use crate::role::RoleRef;
 use crate::token::{FernetToken, TokenRestriction};
 use crate::trust::Trust;
@@ -482,7 +482,7 @@ impl SecurityContext {
     ///
     /// * `domain` - The [`Domain`] object resolved from the database for the
     ///   user's domain ID.
-    pub fn populate_user_domain(&mut self, domain: crate::resource::Domain) {
+    pub fn populate_user_domain(&mut self, domain: DomainRef) {
         if let IdentityInfo::User(ref mut user_info) = self.principal.identity
             && user_info.user_domain.is_none()
         {
@@ -689,11 +689,12 @@ impl SecurityContext {
     pub fn validate(&self) -> Result<(), AuthenticationError> {
         self.principal.validate()?;
         match &self.authentication_context {
-            // Trust and ApplicationCredential are bounded objects that carry their own
-            // user_id. If it differs from the principal's user_id, the context is
-            // misconstructed or malicious. Other authentication methods derive the
-            // principal directly at authentication time and do not have a separate
-            // bounded object restriction, so no check is needed.
+            // Trust and ApplicationCredential are bounded objects that carry
+            // their own user_id. If it differs from the principal's user_id,
+            // the context is misconstructed or malicious. Other authentication
+            // methods derive the principal directly at authentication time and
+            // do not have a separate bounded object restriction, so no check is
+            // needed.
             AuthenticationContext::ApplicationCredential {
                 application_credential,
                 ..
@@ -1246,7 +1247,7 @@ pub struct UserIdentityInfo {
 
     /// Resolved user domain information.
     #[builder(default)]
-    pub user_domain: Option<Domain>,
+    pub user_domain: Option<DomainRef>,
 
     /// Resolved user groups object.
     #[builder(default)]
@@ -1337,7 +1338,7 @@ pub struct PrincipalIdentityInfo {
 
     /// Domain the principal belongs to.
     #[builder(default)]
-    pub domain: Option<crate::resource::Domain>,
+    pub domain: Option<DomainRef>,
 
     /// Human-readable name resolved by the mapping engine (e.g., mapping rule's
     /// user_name). Set when authentication goes through a mapping-based
@@ -1787,22 +1788,22 @@ pub struct TrustProjectInfo {
     /// Trust information.
     pub trust: Trust,
     /// Project information for the trust scope.
-    pub project: Project,
+    pub project: ProjectRef,
     /// Domain information for the trust scope.
-    pub project_domain: Domain,
+    pub project_domain: DomainRef,
 }
 
 /// Authorization information.
 #[derive(Clone, Debug)]
 pub enum ScopeInfo {
     /// Domain scope.
-    Domain(Domain),
+    Domain(DomainRef),
     /// Project scope.
     Project {
-        /// Project information.
-        project: Project,
+        /// Project information (short form: no options and tags).
+        project: ProjectRef,
         /// Domain information for the project scope.
-        project_domain: Domain,
+        project_domain: DomainRef,
     },
     /// System scope.
     System(String),

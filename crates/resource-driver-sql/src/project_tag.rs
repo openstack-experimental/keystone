@@ -13,6 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! # Project tags
+use std::collections::HashMap;
+
 use sea_orm::ConnectionTrait;
 use sea_orm::entity::*;
 use sea_orm::query::*;
@@ -51,6 +53,34 @@ where
         .into_iter()
         .map(|row| row.name)
         .collect())
+}
+
+/// The tags of several projects with one query.
+///
+/// # Returns
+/// The tags per project ID, each list sorted alphabetically. Projects without
+/// tags are absent.
+pub async fn list_by_project_ids<C>(
+    db: &C,
+    project_ids: Vec<String>,
+) -> Result<HashMap<String, Vec<String>>, ResourceProviderError>
+where
+    C: ConnectionTrait,
+{
+    let mut res: HashMap<String, Vec<String>> = HashMap::new();
+    if project_ids.is_empty() {
+        return Ok(res);
+    }
+    for row in DbProjectTag::find()
+        .filter(db_project_tag::Column::ProjectId.is_in(project_ids))
+        .order_by_asc(db_project_tag::Column::Name)
+        .all(db)
+        .await
+        .context("fetching tags of the projects")?
+    {
+        res.entry(row.project_id).or_default().push(row.name);
+    }
+    Ok(res)
 }
 
 /// Ensure the project exists.

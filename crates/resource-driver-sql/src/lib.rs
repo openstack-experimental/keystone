@@ -32,6 +32,8 @@ pub mod entity;
 mod project;
 mod project_option;
 mod project_tag;
+#[cfg(test)]
+mod sqlite_tests;
 
 #[derive(Default)]
 pub struct SqlBackend {}
@@ -74,6 +76,24 @@ impl ResourceBackend for SqlBackend {
         domain_id: &'a str,
     ) -> Result<bool, ResourceProviderError> {
         Ok(domain::get_domain_enabled(&state.db.connection(), domain_id).await?)
+    }
+
+    /// Get the short representation of a domain by ID.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `domain_id`: ID of the domain.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `DomainRef` if found, or an
+    /// `Error`.
+    #[tracing::instrument(name = "driver.sql.resource.get_domain_ref", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn get_domain_ref<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+    ) -> Result<Option<DomainRef>, ResourceProviderError> {
+        Ok(domain::get_domain_ref_by_id(&state.db.connection(), domain_id).await?)
     }
 
     /// Create new domain.
@@ -274,11 +294,65 @@ impl ResourceBackend for SqlBackend {
         Ok(project::get_project_by_name(&state.db.connection(), name, domain_id).await?)
     }
 
-    /// Get project parents.
+    /// Get the ID of the domain a project belongs to.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `project_id`: The ID of the project.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the domain ID if the project
+    /// exists, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.resource.get_project_domain_id", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn get_project_domain_id<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Option<String>, ResourceProviderError> {
+        Ok(project::get_project_domain_id(&state.db.connection(), project_id).await?)
+    }
+
+    /// Get the short representation of a project (no options and tags).
     ///
     /// # Parameters
     /// - `state`: Service state containing the database connection.
     /// - `project_id`: ID of the project.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `ProjectRef` if the project
+    /// exists, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.resource.get_project_ref", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn get_project_ref<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Option<ProjectRef>, ResourceProviderError> {
+        Ok(project::get_project_ref(&state.db.connection(), project_id).await?)
+    }
+
+    /// Get the IDs of the project parents.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `project_id`: The ID of the project.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the parent IDs, the closest
+    /// first, if the project exists, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.resource.get_project_parent_ids", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn get_project_parent_ids<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Option<Vec<String>>, ResourceProviderError> {
+        Ok(project::get_project_parent_ids(&state.db.connection(), project_id).await?)
+    }
+
+    /// Get project parents.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `project_id`: The ID of the project.
     ///
     /// # Returns
     /// A `Result` containing an `Option` with the `Vec<Project>` if found, or

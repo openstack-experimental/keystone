@@ -363,7 +363,7 @@ mod tests {
 
     fn trust_delegated_vsc() -> openstack_keystone_core::auth::ValidatedSecurityContext {
         use openstack_keystone_core_types::identity::UserResponseBuilder;
-        use openstack_keystone_core_types::resource::{Domain, Project};
+        use openstack_keystone_core_types::resource::{Domain, ProjectRef};
         use openstack_keystone_core_types::trust::Trust;
 
         let user = UserResponseBuilder::default()
@@ -380,14 +380,14 @@ mod tests {
                 name: Some("member".to_string()),
             }])
             .scope(ScopeInfo::Project {
-                project: Project {
+                project: ProjectRef {
                     id: "project-1".to_string(),
                     domain_id: "domain-1".to_string(),
                     enabled: true,
                     name: "project".to_string(),
                     ..Default::default()
                 },
-                project_domain: Domain {
+                project_domain: openstack_keystone_core_types::resource::DomainRef {
                     id: "domain-1".to_string(),
                     name: "domain".to_string(),
                     enabled: true,
@@ -433,7 +433,7 @@ mod tests {
         app_cred_expires_at: chrono::DateTime<chrono::Utc>,
     ) -> openstack_keystone_core::auth::ValidatedSecurityContext {
         use openstack_keystone_core_types::identity::UserResponseBuilder;
-        use openstack_keystone_core_types::resource::{Domain, Project};
+        use openstack_keystone_core_types::resource::{Domain, ProjectRef};
 
         let user = UserResponseBuilder::default()
             .id("user-1")
@@ -449,14 +449,14 @@ mod tests {
                 name: Some("member".to_string()),
             }])
             .scope(ScopeInfo::Project {
-                project: Project {
+                project: ProjectRef {
                     id: "project-1".to_string(),
                     domain_id: "domain-1".to_string(),
                     enabled: true,
                     name: "project".to_string(),
                     ..Default::default()
                 },
-                project_domain: Domain {
+                project_domain: openstack_keystone_core_types::resource::DomainRef {
                     id: "domain-1".to_string(),
                     name: "domain".to_string(),
                     enabled: true,

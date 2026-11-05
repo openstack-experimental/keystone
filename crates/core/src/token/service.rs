@@ -34,7 +34,7 @@ use openstack_keystone_core_types::auth::{
     AuthzInfo, AuthzInfoBuilder, ScopeInfo, SecurityContext, TrustProjectInfo,
 };
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
-use openstack_keystone_core_types::resource::{Domain, ResourceProviderError};
+use openstack_keystone_core_types::resource::{DomainRef, ResourceProviderError};
 use openstack_keystone_core_types::role::{Role, RoleListParameters, RoleRef};
 use openstack_keystone_core_types::token::{
     FernetToken, TokenRestriction, TokenRestrictionCreate, TokenRestrictionListParameters,
@@ -112,25 +112,17 @@ impl TokenService {
 
     /// Build [`AuthzInfo`] from a token by fetching scope objects
     /// from DB.
-    ///
-    /// `known_domain` is the caller's already-resolved user domain: when a
-    /// project scope's `domain_id` matches it, that `Domain` is reused
-    /// instead of issuing a second `get_domain` lookup for the same row.
     async fn build_authz_info_from_fernet_token(
         &self,
         state: &ServiceState,
         token: &FernetToken,
-        known_domain: &Domain,
     ) -> Result<AuthzInfo, TokenProviderError> {
         let ctx = ExecutionContext::internal(state);
-        let get_project_domain = async |domain_id: &str| -> Result<Domain, TokenProviderError> {
-            if domain_id == known_domain.id {
-                return Ok(known_domain.clone());
-            }
+        let get_project_domain = async |domain_id: &str| -> Result<DomainRef, TokenProviderError> {
             Ok(state
                 .provider
                 .get_resource_provider()
-                .get_domain(&ctx, domain_id)
+                .get_domain_ref(&ctx, domain_id)
                 .await?
                 .ok_or(ResourceProviderError::DomainNotFound(domain_id.to_owned()))?)
         };
@@ -139,7 +131,7 @@ impl TokenService {
                 let project = state
                     .provider
                     .get_resource_provider()
-                    .get_project(&ctx, &data.project_id)
+                    .get_project_ref(&ctx, &data.project_id)
                     .await?
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
@@ -157,7 +149,7 @@ impl TokenService {
                 let project = state
                     .provider
                     .get_resource_provider()
-                    .get_project(&ctx, &data.project_id)
+                    .get_project_ref(&ctx, &data.project_id)
                     .await?
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
@@ -175,7 +167,7 @@ impl TokenService {
                 let project = state
                     .provider
                     .get_resource_provider()
-                    .get_project(&ctx, &data.project_id)
+                    .get_project_ref(&ctx, &data.project_id)
                     .await?
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
@@ -191,7 +183,7 @@ impl TokenService {
                 let project = state
                     .provider
                     .get_resource_provider()
-                    .get_project(&ctx, &data.project_id)
+                    .get_project_ref(&ctx, &data.project_id)
                     .await?
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
@@ -213,7 +205,7 @@ impl TokenService {
                 let project = state
                     .provider
                     .get_resource_provider()
-                    .get_project(&ctx, &data.project_id)
+                    .get_project_ref(&ctx, &data.project_id)
                     .await?
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
@@ -345,34 +337,53 @@ impl TokenService {
                     .ok_or_else(|| TrustProviderError::TrustNotFound(data.trust_id.clone()))?,
                 token: Some(token.clone()),
             },
-            // No other payload types require to substitute the AuthenticationContext
+            // No other payload types require to substitute the
+            // AuthenticationContext
             _ => AuthenticationContext::Token(token.clone()),
         };
-        let user = state
-            .provider
-            .get_identity_provider()
-            .get_user(ctx, token.user_id())
-            .await?
-            .ok_or_else(|| {
-                // Either the user was deleted after the token was issued, or
-                // this node has not seen the user yet: the age of the token
-                // tells which.
-                tracing::warn!(
-                    user_id = %token.user_id(),
-                    issued_at = %token.issued_at(),
-                    expires_at = %token.expires_at(),
-                    "the user of a valid token cannot be found"
-                );
-                TokenProviderError::UserNotFound(token.user_id().clone())
-            })?;
-        let user_domain = state
-            .provider
-            .get_resource_provider()
-            .get_domain(ctx, &user.domain_id)
-            .await?
-            .ok_or(ResourceProviderError::DomainNotFound(
-                user.domain_id.clone(),
-            ))?;
+        // The user and the token scope are independent of each other. The
+        // user domain is usually the very domain the scope already carries
+        // (the project or domain the token is scoped to), so it is only
+        // fetched when that is not the case.
+        let identity_provider = state.provider.get_identity_provider();
+        let user_fut = async {
+            identity_provider
+                .get_user(ctx, token.user_id())
+                .await?
+                .ok_or_else(|| {
+                    // Either the user was deleted after the token was
+                    // issued, or this node has not seen the user yet: the
+                    // age of the token tells which.
+                    tracing::warn!(
+                        user_id = %token.user_id(),
+                        issued_at = %token.issued_at(),
+                        expires_at = %token.expires_at(),
+                        "the user of a valid token cannot be found"
+                    );
+                    TokenProviderError::UserNotFound(token.user_id().clone())
+                })
+        };
+        let authz_fut = self.build_authz_info_from_fernet_token(state, &token);
+        let (user, authz_info) = tokio::try_join!(user_fut, authz_fut)?;
+        let scope_domain = match &authz_info.scope {
+            ScopeInfo::Domain(domain) => Some(domain),
+            ScopeInfo::Project { project_domain, .. } => Some(project_domain),
+            ScopeInfo::TrustProject(info) => Some(&info.project_domain),
+            ScopeInfo::System(_) | ScopeInfo::Unscoped => None,
+        };
+        let user_domain = match scope_domain {
+            Some(domain) if domain.id == user.domain_id => domain.clone(),
+            _ => state
+                .provider
+                .get_resource_provider()
+                .get_domain_ref(ctx, &user.domain_id)
+                .await?
+                .ok_or_else(|| {
+                    TokenProviderError::from(ResourceProviderError::DomainNotFound(
+                        user.domain_id.clone(),
+                    ))
+                })?,
+        };
         let mut auth_result_builder = AuthenticationResultBuilder::default();
 
         auth_result_builder
@@ -387,11 +398,7 @@ impl TokenService {
                 ),
             })
             .expires_at(*token.expires_at())
-            .authorization(
-                // populate scope info
-                self.build_authz_info_from_fernet_token(state, &token, &user_domain)
-                    .await?,
-            );
+            .authorization(authz_info);
         if let FernetToken::Restricted(restriction) = &token {
             if !restriction.allow_renew {
                 return Err(AuthenticationError::TokenRenewalForbidden.into());
@@ -591,7 +598,14 @@ impl TokenApi for TokenService {
                 .state()
                 .provider
                 .get_role_provider()
-                .list_roles(ctx, &RoleListParameters::default())
+                .list_roles(
+                    ctx,
+                    &RoleListParameters {
+                        ids: Some(tr.role_ids.iter().cloned().collect()),
+                        skip_options: true,
+                        ..Default::default()
+                    },
+                )
                 .await?
                 .into_iter()
                 .map(|role| (role.id.clone(), role))
@@ -892,8 +906,8 @@ mod tests {
         resource_mock
             .expect_get_domain_enabled()
             .returning(|_, _| Ok(true));
-        resource_mock.expect_get_domain().returning(|_, id| {
-            Ok(Some(Domain {
+        resource_mock.expect_get_domain_ref().returning(|_, id| {
+            Ok(Some(openstack_keystone_core_types::resource::DomainRef {
                 id: id.to_string(),
                 name: "domain".to_string(),
                 enabled: true,
@@ -902,10 +916,10 @@ mod tests {
         });
         let token_clone2 = token.clone();
         resource_mock
-            .expect_get_project()
+            .expect_get_project_ref()
             .withf(move |_, id: &'_ str| id == token_clone2.project_id().unwrap())
             .returning(|_, id: &'_ str| {
-                Ok(Some(Project {
+                Ok(Some(ProjectRef {
                     id: id.to_string(),
                     name: "project".to_string(),
                     enabled: true,
@@ -1081,8 +1095,8 @@ mod tests {
                 ))
             });
         let mut resource_mock = MockResourceProvider::default();
-        resource_mock.expect_get_domain().returning(|_, id| {
-            Ok(Some(Domain {
+        resource_mock.expect_get_domain_ref().returning(|_, id| {
+            Ok(Some(openstack_keystone_core_types::resource::DomainRef {
                 id: id.to_string(),
                 name: "domain".to_string(),
                 enabled: true,

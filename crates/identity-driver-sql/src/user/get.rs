@@ -27,7 +27,7 @@ use crate::entity::{
     federated_user as db_federated_user, local_user as db_local_user,
     nonlocal_user as db_nonlocal_user,
     prelude::{FederatedUser, LocalUser, NonlocalUser, User as DbUser, UserOption},
-    user as db_user,
+    user as db_user, user_option as db_user_option,
 };
 use crate::federated_user::MergeFederatedUserData;
 use crate::local_user;
@@ -70,19 +70,22 @@ pub async fn get(
     db: &DatabaseConnection,
     user_id: &str,
 ) -> Result<Option<UserResponse>, IdentityProviderError> {
-    let user_entry: Option<db_user::Model> = get_main_entry(db, user_id).await?;
+    // Independent statements: issue them together instead of one after the
+    // other.
+    //
+    // The latest password only feeds `password_expires_at`, which is set when
+    // the password is created and only if `password_expires_days` is
+    // configured. Without it the password statement is skipped.
+    let with_password = conf.security_compliance.password_expires_days.is_some();
+    let (user_entry, user_opts, local_user_with_passwords) = tokio::join!(
+        get_main_entry(db, user_id),
+        UserOption::find()
+            .filter(db_user_option::Column::UserId.eq(user_id))
+            .all(db),
+        local_user::load_local_user_by_id(db, user_id, with_password)
+    );
 
-    if let Some(user) = user_entry {
-        let (user_opts, local_user_with_passwords) = tokio::join!(
-            user.find_related(UserOption).all(db),
-            local_user::load_local_user_with_latest_password(
-                db,
-                Some(&user_id),
-                None::<&str>,
-                None::<&str>,
-            )
-        );
-
+    if let Some(user) = user_entry? {
         let mut user_builder = UserResponseBuilder::default();
         user_builder.merge_user_data(
             &user,
@@ -245,7 +248,6 @@ mod tests {
     use openstack_keystone_config::Config;
 
     use super::*;
-    use crate::entity::user_option as db_user_option;
     use crate::user::tests::*;
 
     #[tokio::test]
@@ -272,8 +274,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_user_local() {
-        let (lu, pw) = local_user::tests::get_local_user_with_password_mock("1", 1)
+    async fn test_get_user_local_no_password_expiry() {
+        let (lu, _) = local_user::tests::get_local_user_with_password_mock("1", 1)
             .into_iter()
             .next()
             .unwrap();
@@ -294,10 +296,6 @@ mod tests {
             .append_query_results([
                 // Third query result - local user
                 vec![lu],
-            ])
-            .append_query_results([
-                // Fourth query result - latest password for the local user
-                vec![pw],
             ])
             .into_connection();
         let config = Config::default();
@@ -330,7 +328,79 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" INNER JOIN "user" ON "user"."id" = "user_option"."user_id" WHERE "user"."id" = $1"#,
+                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" = $1"#,
+                    ["1".into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "local_user"."id", "local_user"."user_id", "local_user"."domain_id", "local_user"."name", "local_user"."failed_auth_count", "local_user"."failed_auth_at" FROM "local_user" WHERE "local_user"."user_id" = $1 LIMIT $2"#,
+                    ["1".into(), 1u64.into()]
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_user_local_with_password_expiry() {
+        let (lu, pw) = local_user::tests::get_local_user_with_password_mock("1", 1)
+            .into_iter()
+            .next()
+            .unwrap();
+        // Create MockDatabase with mock query results
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([
+                // First query result - select user itself
+                vec![get_user_mock("1")],
+            ])
+            .append_query_results([
+                //// Second query result - user options
+                vec![db_user_option::Model {
+                    user_id: "1".into(),
+                    option_id: "1000".into(),
+                    option_value: Some("true".into()),
+                }],
+            ])
+            .append_query_results([
+                // Third query result - local user
+                vec![lu],
+            ])
+            .append_query_results([
+                // Fourth query result - latest password for the local user
+                vec![pw],
+            ])
+            .into_connection();
+        let mut config = Config::default();
+        config.security_compliance.password_expires_days = Some(90);
+        assert_eq!(
+            get(&config, &db, "1").await.unwrap().unwrap(),
+            UserResponse {
+                id: "1".into(),
+                domain_id: "foo_domain".into(),
+                name: "Apple Cake".to_owned(),
+                enabled: true,
+                options: UserOptions {
+                    ignore_change_password_upon_first_use: Some(true),
+                    ..Default::default()
+                },
+                default_project_id: None,
+                extra: std::collections::HashMap::new(),
+                federated: None,
+                password_expires_at: None
+            }
+        );
+
+        // Checking transaction log
+        assert_eq!(
+            db.into_transaction_log(),
+            [
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
+                    ["1".into(), 1u64.into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" = $1"#,
                     ["1".into()]
                 ),
                 Transaction::from_sql_and_values(
@@ -340,8 +410,8 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" = $1 ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
-                    [1i32.into(), 1u64.into()]
+                    r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" IN (SELECT "id" FROM "local_user" WHERE "local_user"."user_id" = $1) ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
+                    ["1".into(), 1u64.into()]
                 ),
             ]
         );

@@ -35,7 +35,7 @@ pub mod tests {
         AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
         SecurityContext, UserIdentityInfoBuilder,
     };
-    use openstack_keystone_core_types::resource::{Domain, Project};
+    use openstack_keystone_core_types::resource::{DomainRef, ProjectRef};
     use openstack_keystone_core_types::role::RoleRef;
 
     use crate::keystone::{Service, ServiceState};
@@ -65,18 +65,17 @@ pub mod tests {
                 domain_id: None,
             }])
             .scope(ScopeInfo::Project {
-                project: Project {
+                project: ProjectRef {
                     id: "project_id".to_string(),
                     domain_id: "domain_id".to_string(),
                     enabled: true,
                     name: "admin".to_string(),
                     ..Default::default()
                 },
-                project_domain: Domain {
+                project_domain: DomainRef {
                     id: "domain_id".to_string(),
                     name: "domain_name".to_string(),
                     enabled: true,
-                    ..Default::default()
                 },
             })
             .build()
@@ -89,7 +88,7 @@ pub mod tests {
                     UserIdentityInfoBuilder::default()
                         .user_id("uid")
                         .user(user)
-                        .user_domain(openstack_keystone_core_types::resource::Domain {
+                        .user_domain(openstack_keystone_core_types::resource::DomainRef {
                             id: "domain_id".to_string(),
                             name: "domain_name".to_string(),
                             enabled: true,
@@ -124,18 +123,17 @@ pub mod tests {
                 domain_id: None,
             }])
             .scope(ScopeInfo::Project {
-                project: Project {
+                project: ProjectRef {
                     id: "project_id".to_string(),
                     domain_id: "domain_id".to_string(),
                     enabled: true,
                     name: "admin".to_string(),
                     ..Default::default()
                 },
-                project_domain: Domain {
+                project_domain: DomainRef {
                     id: "domain_id".to_string(),
                     name: "domain_name".to_string(),
                     enabled: true,
-                    ..Default::default()
                 },
             })
             .build()
@@ -148,7 +146,7 @@ pub mod tests {
                     UserIdentityInfoBuilder::default()
                         .user_id("uid")
                         .user(user)
-                        .user_domain(openstack_keystone_core_types::resource::Domain {
+                        .user_domain(openstack_keystone_core_types::resource::DomainRef {
                             id: "domain_id".to_string(),
                             name: "domain_name".to_string(),
                             enabled: true,

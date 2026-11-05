@@ -245,7 +245,7 @@ pub(crate) mod tests {
             AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
             SecurityContext, UserIdentityInfoBuilder,
         };
-        use openstack_keystone_core_types::resource::{Domain, Project};
+        use openstack_keystone_core_types::resource::{Domain, ProjectRef};
         use openstack_keystone_core_types::role::RoleRef;
 
         /// A resolved, enabled user identity in an enabled domain --
@@ -285,14 +285,14 @@ pub(crate) mod tests {
         ) -> ValidatedSecurityContext {
             let authz = AuthzInfoBuilder::default()
                 .scope(ScopeInfo::Project {
-                    project: Project {
+                    project: ProjectRef {
                         id: project_id.to_string(),
                         domain_id: "d1".to_string(),
                         enabled: true,
                         name: "project".to_string(),
                         ..Default::default()
                     },
-                    project_domain: Domain {
+                    project_domain: openstack_keystone_core_types::resource::DomainRef {
                         id: "d1".to_string(),
                         name: "d1".to_string(),
                         enabled: true,
@@ -345,14 +345,14 @@ pub(crate) mod tests {
         ) -> ValidatedSecurityContext {
             let authz = AuthzInfoBuilder::default()
                 .scope(ScopeInfo::Project {
-                    project: Project {
+                    project: ProjectRef {
                         id: delegation_project_id.to_string(),
                         domain_id: "d1".to_string(),
                         enabled: true,
                         name: "project".to_string(),
                         ..Default::default()
                     },
-                    project_domain: Domain {
+                    project_domain: openstack_keystone_core_types::resource::DomainRef {
                         id: "d1".to_string(),
                         name: "d1".to_string(),
                         enabled: true,

@@ -302,7 +302,8 @@ pub struct FederationProtocol {
     #[validate(length(max = 64))]
     pub protocol_id: String,
 
-    // TODO: unique ID should potentially belong to the IDP and not to the protocol
+    // TODO: unique ID should potentially belong to the IDP and not to the
+    // protocol
     /// Unique ID of the associated user.
     #[validate(length(max = 255))]
     pub unique_id: String,

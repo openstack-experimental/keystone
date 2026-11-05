@@ -207,7 +207,8 @@ pub(crate) async fn authenticate_upstream(
     let token_response = exchange_code(
         &metadata.token_endpoint,
         client_id,
-        // Exposure boundary: unwrapped only to build the token-endpoint request.
+        // Exposure boundary: unwrapped only to build the token-endpoint
+        // request.
         idp.oidc_client_secret.as_ref().map(|s| s.expose_secret()),
         code,
         &auth_state.redirect_uri,
