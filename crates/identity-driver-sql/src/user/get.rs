@@ -21,7 +21,9 @@ use openstack_keystone_config::Config;
 use openstack_keystone_core::auth::AuthenticationError;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::identity::IdentityProviderError;
-use openstack_keystone_core_types::identity::{UserOptions, UserResponse, UserResponseBuilder};
+use openstack_keystone_core_types::identity::{
+    UserCore, UserOptions, UserResponse, UserResponseBuilder,
+};
 
 use crate::entity::{
     federated_user as db_federated_user, local_user as db_local_user,
@@ -73,16 +75,15 @@ pub async fn get(
     // Independent statements: issue them together instead of one after the
     // other.
     //
-    // The latest password only feeds `password_expires_at`, which is set when
-    // the password is created and only if `password_expires_days` is
-    // configured. Without it the password statement is skipped.
-    let with_password = conf.security_compliance.password_expires_days.is_some();
+    // The latest password is always loaded: `password_expires_at` comes from
+    // the stored `expires_at` of the row, which can be set (and remain) even
+    // when `password_expires_days` is not configured.
     let (user_entry, user_opts, local_user_with_passwords) = tokio::join!(
         get_main_entry(db, user_id),
         UserOption::find()
             .filter(db_user_option::Column::UserId.eq(user_id))
             .all(db),
-        local_user::load_local_user_by_id(db, user_id, with_password)
+        local_user::load_local_user_by_id(db, user_id, true)
     );
 
     if let Some(user) = user_entry? {
@@ -128,6 +129,51 @@ pub async fn get(
     }
 
     Ok(None)
+}
+
+/// Get the minimal user data required to authorize a request.
+///
+/// Reads the main `user` row only. The user options are fetched solely when
+/// the inactivity policy can influence the result (the cutoff is configured
+/// and the user has a `last_active_at`), since `ignore_user_inactivity` is the
+/// only option that feeds the effective `enabled` flag. Local, nonlocal,
+/// federated and password data are not touched.
+///
+/// # Parameters
+/// - `conf`: The system configuration.
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the [`UserCore`] if found, or an
+/// `Error`.
+pub async fn get_core(
+    conf: &Config,
+    db: &DatabaseConnection,
+    user_id: &str,
+) -> Result<Option<UserCore>, IdentityProviderError> {
+    let Some(user) = get_main_entry(db, user_id).await? else {
+        return Ok(None);
+    };
+    let cutoff = conf.security_compliance.get_user_last_activity_cutof_date();
+    let ignore_user_inactivity = if cutoff.is_some() && user.last_active_at.is_some() {
+        UserOptions::from_iter(
+            UserOption::find()
+                .filter(db_user_option::Column::UserId.eq(user_id))
+                .all(db)
+                .await
+                .context("fetching user options")?,
+        )
+        .ignore_user_inactivity
+        .is_some_and(|val| val)
+    } else {
+        false
+    };
+    Ok(Some(UserCore {
+        enabled: crate::user::effective_enabled(&user, ignore_user_inactivity, cutoff.as_ref()),
+        id: user.id,
+        domain_id: user.domain_id,
+    }))
 }
 
 /// Cheaply resolve a user reference (ID, or exact name and domain ID) to the
@@ -297,6 +343,10 @@ mod tests {
                 // Third query result - local user
                 vec![lu],
             ])
+            .append_query_results([
+                // Fourth query result - latest password (none)
+                Vec::<crate::entity::password::Model>::new(),
+            ])
             .into_connection();
         let config = Config::default();
         assert_eq!(
@@ -334,6 +384,11 @@ mod tests {
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
                     r#"SELECT "local_user"."id", "local_user"."user_id", "local_user"."domain_id", "local_user"."name", "local_user"."failed_auth_count", "local_user"."failed_auth_at" FROM "local_user" WHERE "local_user"."user_id" = $1 LIMIT $2"#,
+                    ["1".into(), 1u64.into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" IN (SELECT "id" FROM "local_user" WHERE "local_user"."user_id" = $1) ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
                     ["1".into(), 1u64.into()]
                 ),
             ]
@@ -415,6 +470,142 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn test_get_core_single_query_without_inactivity_policy() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_user_mock("1")]])
+            .into_connection();
+
+        let core = get_core(&Config::default(), &db, "1")
+            .await
+            .unwrap()
+            .expect("user found");
+        assert_eq!(
+            core,
+            UserCore {
+                id: "1".into(),
+                domain_id: "foo_domain".into(),
+                enabled: true,
+            }
+        );
+        // Only the main `user` row: no options, local/nonlocal/federated or
+        // password statements.
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 1);
+        assert!(log[0].statements()[0].sql.contains(r#"FROM "user""#));
+    }
+
+    #[tokio::test]
+    async fn test_get_core_missing() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<db_user::Model>::new()])
+            .into_connection();
+        assert!(
+            get_core(&Config::default(), &db, "1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_core_disabled_user_skips_options() {
+        let mut user = get_user_mock("1");
+        user.enabled = Some(false);
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user]])
+            .into_connection();
+        let core = get_core(&Config::default(), &db, "1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!core.enabled);
+        assert_eq!(db.into_transaction_log().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_get_core_inactive_user_disabled() {
+        let mut config = Config::default();
+        config
+            .security_compliance
+            .disable_user_account_days_inactive = Some(30);
+        let mut user = get_user_mock("1");
+        user.last_active_at = Some(chrono::Utc::now().date_naive() - chrono::TimeDelta::days(90));
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user]])
+            .append_query_results([Vec::<db_user_option::Model>::new()])
+            .into_connection();
+        let core = get_core(&config, &db, "1").await.unwrap().unwrap();
+        assert!(!core.enabled, "inactive past the cutoff => disabled");
+        // user row + user options
+        assert_eq!(db.into_transaction_log().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_core_inactive_user_exempt_by_option() {
+        let mut config = Config::default();
+        config
+            .security_compliance
+            .disable_user_account_days_inactive = Some(30);
+        let mut user = get_user_mock("1");
+        user.last_active_at = Some(chrono::Utc::now().date_naive() - chrono::TimeDelta::days(90));
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user]])
+            .append_query_results([vec![db_user_option::Model {
+                user_id: "1".into(),
+                option_id: "1004".into(),
+                option_value: Some("true".into()),
+            }]])
+            .into_connection();
+        let core = get_core(&config, &db, "1").await.unwrap().unwrap();
+        assert!(core.enabled, "ignore_user_inactivity exempts the user");
+    }
+
+    #[tokio::test]
+    async fn test_get_core_recently_active_user_skips_nothing_needed() {
+        let mut config = Config::default();
+        config
+            .security_compliance
+            .disable_user_account_days_inactive = Some(30);
+        let mut user = get_user_mock("1");
+        user.last_active_at = Some(chrono::Utc::now().date_naive());
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user]])
+            .append_query_results([Vec::<db_user_option::Model>::new()])
+            .into_connection();
+        let core = get_core(&config, &db, "1").await.unwrap().unwrap();
+        assert!(core.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_get_core_matches_full_get_enabled() {
+        // Same row + options must yield the same effective `enabled` as `get`.
+        let mut config = Config::default();
+        config
+            .security_compliance
+            .disable_user_account_days_inactive = Some(30);
+        let (lu, _) = local_user::tests::get_local_user_with_password_mock("1", 1)
+            .into_iter()
+            .next()
+            .unwrap();
+        let mut user = get_user_mock("1");
+        user.last_active_at = Some(chrono::Utc::now().date_naive() - chrono::TimeDelta::days(90));
+        let full_db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user.clone()]])
+            .append_query_results([Vec::<db_user_option::Model>::new()])
+            .append_query_results([vec![lu]])
+            .append_query_results([Vec::<crate::entity::password::Model>::new()])
+            .into_connection();
+        let core_db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user]])
+            .append_query_results([Vec::<db_user_option::Model>::new()])
+            .into_connection();
+        let full = get(&config, &full_db, "1").await.unwrap().unwrap();
+        let core = get_core(&config, &core_db, "1").await.unwrap().unwrap();
+        assert_eq!(full.enabled, core.enabled);
+        assert_eq!(full.domain_id, core.domain_id);
     }
 
     #[tokio::test]

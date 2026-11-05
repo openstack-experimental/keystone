@@ -54,6 +54,7 @@ fn make_user_identity(user_id: impl Into<String>) -> PrincipalInfo {
     let ui = UserIdentityInfo {
         user_id: uid.clone(),
         user: Some(u),
+        user_core: None,
         user_domain: Some(openstack_keystone_core_types::resource::DomainRef {
             id: "d1".to_string(),
             enabled: true,
@@ -1458,6 +1459,7 @@ async fn test_new_for_scope_populates_missing_user_domain_from_resource_provider
         identity: IdentityInfo::User(UserIdentityInfo {
             user_id: "uid".to_string(),
             user: Some(user),
+            user_core: None,
             user_domain: None,
             user_groups: Vec::new(),
         }),

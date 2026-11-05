@@ -135,6 +135,10 @@ fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
     token_mock
         .expect_authorize_by_token()
         .returning(move |_, _, _, _| Ok(vsc_clone.clone()));
+    let vsc_request = vsc_for_mock.clone();
+    token_mock
+        .expect_authorize_request_token()
+        .returning(move |_, _| Ok(vsc_request.clone()));
     token_mock
         .expect_issue_token_context()
         .returning(move |_, _, _| Ok(vsc_for_mock.clone()));

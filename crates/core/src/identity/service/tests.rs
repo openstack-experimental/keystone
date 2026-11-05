@@ -23,7 +23,7 @@ use serde_json::json;
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::credential::{Credential, CredentialBuilder};
 use openstack_keystone_core_types::identity::{
-    UserCreateBuilder, UserResponseBuilder, UserUpdateBuilder,
+    UserCore, UserCreateBuilder, UserResponseBuilder, UserUpdateBuilder,
 };
 
 use super::*;
@@ -180,6 +180,96 @@ async fn test_get_user() {
             .build()
             .unwrap(),
     );
+}
+
+#[tokio::test]
+async fn test_get_user_core_does_not_load_full_user() {
+    let state = get_mocked_state(None, None).await;
+    let mut backend = MockIdentityBackend::default();
+    backend.expect_get_user().never();
+    backend
+        .expect_get_user_core()
+        .once()
+        .withf(|_, uid: &'_ str| uid == "uid")
+        .returning(|_, _| {
+            Ok(Some(UserCore {
+                id: "uid".into(),
+                domain_id: "domain_id".into(),
+                enabled: true,
+            }))
+        });
+    let provider = IdentityService::from_driver(backend);
+
+    crate::request_cache::RequestCache::scope(async {
+        let ctx = ExecutionContext::internal(&state);
+        let core = provider.get_user_core(&ctx, "uid").await.unwrap().unwrap();
+        assert_eq!(core.domain_id, "domain_id");
+        // Second lookup in the same request is served from the request cache
+        // (the backend expectation above is `once`).
+        assert!(provider.get_user_core(&ctx, "uid").await.unwrap().is_some());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_get_user_core_does_not_poison_full_user_cache() {
+    let state = get_mocked_state(None, None).await;
+    let mut backend = MockIdentityBackend::default();
+    backend.expect_get_user_core().returning(|_, _| {
+        Ok(Some(UserCore {
+            id: "uid".into(),
+            domain_id: "domain_id".into(),
+            enabled: true,
+        }))
+    });
+    // The full lookup must still hit the backend after a core lookup.
+    backend.expect_get_user().once().returning(|_, _| {
+        Ok(Some(
+            UserResponseBuilder::default()
+                .id("uid")
+                .domain_id("domain_id")
+                .enabled(true)
+                .name("name")
+                .build()
+                .unwrap(),
+        ))
+    });
+    let provider = IdentityService::from_driver(backend);
+
+    crate::request_cache::RequestCache::scope(async {
+        let ctx = ExecutionContext::internal(&state);
+        provider.get_user_core(&ctx, "uid").await.unwrap();
+        let full = provider.get_user(&ctx, "uid").await.unwrap().unwrap();
+        assert_eq!(full.name, "name");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_get_user_core_reuses_full_user_cached_in_request() {
+    let state = get_mocked_state(None, None).await;
+    let mut backend = MockIdentityBackend::default();
+    backend.expect_get_user_core().never();
+    backend.expect_get_user().once().returning(|_, _| {
+        Ok(Some(
+            UserResponseBuilder::default()
+                .id("uid")
+                .domain_id("domain_id")
+                .enabled(false)
+                .name("name")
+                .build()
+                .unwrap(),
+        ))
+    });
+    let provider = IdentityService::from_driver(backend);
+
+    crate::request_cache::RequestCache::scope(async {
+        let ctx = ExecutionContext::internal(&state);
+        provider.get_user(&ctx, "uid").await.unwrap();
+        let core = provider.get_user_core(&ctx, "uid").await.unwrap().unwrap();
+        assert!(!core.enabled);
+    })
+    .await;
 }
 
 #[tokio::test]

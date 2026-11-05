@@ -36,7 +36,7 @@ use openstack_keystone_config::Interface;
 use crate::application_credential::ApplicationCredential;
 use crate::assignment::AssignmentProviderError;
 use crate::error::BuilderError;
-use crate::identity::{Group, UserResponse};
+use crate::identity::{Group, UserCore, UserResponse};
 use crate::resource::{DomainRef, ProjectRef};
 use crate::role::RoleRef;
 use crate::token::{FernetToken, TokenRestriction};
@@ -1154,6 +1154,7 @@ impl PrincipalInfo {
                     user.user
                         .as_ref()
                         .map(|user_resp| user_resp.domain_id.clone())
+                        .or_else(|| user.user_core.as_ref().map(|core| core.domain_id.clone()))
                 }
             }
             IdentityInfo::Principal(principal) => {
@@ -1248,6 +1249,13 @@ pub struct UserIdentityInfo {
     #[builder(default)]
     pub user: Option<UserResponse>,
 
+    /// Minimal user data, set instead of [`Self::user`] when the request was
+    /// authenticated without loading the complete user record (see
+    /// `TokenApi::authorize_request_token`). Consumers needing more than
+    /// identity, domain and the enabled flag must load the full user.
+    #[builder(default)]
+    pub user_core: Option<UserCore>,
+
     /// Resolved user domain information.
     #[builder(default)]
     pub user_domain: Option<DomainRef>,
@@ -1287,23 +1295,26 @@ impl UserIdentityInfo {
             )
             .into());
         }
-        if let Some(user) = &self.user {
-            if user.id != self.user_id {
+        let (id, enabled) = match (&self.user, &self.user_core) {
+            (Some(user), _) => (&user.id, user.enabled),
+            (None, Some(core)) => (&core.id, core.enabled),
+            (None, None) => {
                 warn!(
-                    "User data does not match the user_id attribute: {} vs {}",
-                    self.user_id, user.id
+                    "User data must be resolved in the AuthenticatedInfo before validating: {:?}",
+                    self
                 );
                 return Err(AuthenticationError::Unauthorized);
             }
-            if !user.enabled {
-                return Err(AuthenticationError::UserDisabled(self.user_id.clone()));
-            }
-        } else {
+        };
+        if *id != self.user_id {
             warn!(
-                "User data must be resolved in the AuthenticatedInfo before validating: {:?}",
-                self
+                "User data does not match the user_id attribute: {} vs {}",
+                self.user_id, id
             );
             return Err(AuthenticationError::Unauthorized);
+        }
+        if !enabled {
+            return Err(AuthenticationError::UserDisabled(self.user_id.clone()));
         }
         if let Some(user_domain) = &self.user_domain {
             if !user_domain.enabled {

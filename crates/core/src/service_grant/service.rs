@@ -505,6 +505,7 @@ mod tests {
             identity: IdentityInfo::User(UserIdentityInfo {
                 user_id: uid.to_string(),
                 user: None,
+                user_core: None,
                 user_domain: Some(openstack_keystone_core_types::resource::DomainRef {
                     id: "d1".into(),
                     enabled: true,

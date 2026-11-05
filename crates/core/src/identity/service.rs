@@ -46,6 +46,9 @@ use crate::resource::error::ResourceProviderError;
 
 /// Request-cache namespace for [`UserResponse`] lookups by `user_id`.
 const USER_CACHE_NS: &str = "identity.user";
+/// Request-cache namespace of the minimal user data. Kept apart from
+/// [`USER_CACHE_NS`] so partial data can never be served as a full user.
+const USER_CORE_CACHE_NS: &str = "identity.user_core";
 /// Request-cache namespace for [`Group`] lookups by `group_id`.
 const GROUP_CACHE_NS: &str = "identity.group";
 
@@ -1211,6 +1214,7 @@ impl IdentityApi for IdentityService {
             self.forget_id_mapping(ctx, user_id).await?;
         }
         cache_remove(USER_CACHE_NS, user_id);
+        cache_remove(USER_CORE_CACHE_NS, user_id);
         Ok(())
     }
 
@@ -1252,6 +1256,36 @@ impl IdentityApi for IdentityService {
             cache_set(USER_CACHE_NS, user_id, user.clone());
         }
         Ok(user)
+    }
+
+    /// Get the minimal user data required to authorize a request.
+    ///
+    /// Serves a full user already loaded in this request when there is one,
+    /// otherwise asks the driver for the minimal record. The result is cached
+    /// in its own request-cache namespace, never in the full user one.
+    #[tracing::instrument(name = "provider.identity.get_user_core", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn get_user_core<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        user_id: &'a str,
+    ) -> Result<Option<UserCore>, IdentityProviderError> {
+        if let Some(user) = cache_get::<UserResponse>(USER_CACHE_NS, user_id) {
+            return Ok(Some(UserCore::from(&user)));
+        }
+        if let Some(core) = cache_get::<UserCore>(USER_CORE_CACHE_NS, user_id) {
+            return Ok(Some(core));
+        }
+        let (backend, local_id) = self.resolve_public_id(ctx, user_id).await?;
+        let mut core = backend.get_user_core(ctx.state(), &local_id).await?;
+        if !Arc::ptr_eq(&backend, &self.backend_driver)
+            && let Some(core) = &mut core
+        {
+            core.id = user_id.to_string();
+        }
+        if let Some(core) = &core {
+            cache_set(USER_CORE_CACHE_NS, user_id, core.clone());
+        }
+        Ok(core)
     }
 
     /// Get `domain_id` of a user.
@@ -1902,6 +1936,7 @@ impl IdentityApi for IdentityService {
                 .await;
         }
         cache_set(USER_CACHE_NS, user_id, user.clone());
+        cache_remove(USER_CORE_CACHE_NS, user_id);
         Ok(user)
     }
 
@@ -1937,6 +1972,7 @@ impl IdentityApi for IdentityService {
             on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
         }?;
         cache_remove(USER_CACHE_NS, user_id);
+        cache_remove(USER_CORE_CACHE_NS, user_id);
         Ok(())
     }
 

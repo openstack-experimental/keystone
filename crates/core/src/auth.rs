@@ -111,9 +111,12 @@ impl ValidatedSecurityContext {
         // Populate user_domain before validation, since validate() requires it
         if let IdentityInfo::User(user_info) = &ctx.principal().identity
             && user_info.user_domain.is_none()
-            && let Some(domain) = &user_info.user
+            && let Some(domain_id) = user_info
+                .user
+                .as_ref()
+                .map(|u| &u.domain_id)
+                .or_else(|| user_info.user_core.as_ref().map(|c| &c.domain_id))
         {
-            let domain_id = &domain.domain_id;
             let user_domain = state
                 .provider
                 .get_resource_provider()
@@ -228,9 +231,14 @@ impl ValidatedSecurityContext {
                 // TODO: this hints to eventual necessity to include trustor
                 // information in the Context statically.
                 if let IdentityInfo::User(user) = &ctx.principal().identity {
-                    if let Some(user) = &user.user
-                        && user.domain_id != trustor.domain_id
-                    {
+                    // The request path carries only `user_core`. When neither
+                    // is present, check the trustor domain (fail closed).
+                    let trustee_domain = user
+                        .user
+                        .as_ref()
+                        .map(|u| &u.domain_id)
+                        .or_else(|| user.user_core.as_ref().map(|c| &c.domain_id));
+                    if trustee_domain != Some(&trustor.domain_id) {
                         let trustor_domain_enabled = state
                             .provider
                             .get_resource_provider()

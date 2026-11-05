@@ -34,6 +34,7 @@ use openstack_keystone_core_types::auth::{
     AuthzInfo, AuthzInfoBuilder, ScopeInfo, SecurityContext, TrustProjectInfo,
 };
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
+use openstack_keystone_core_types::identity::UserCore;
 use openstack_keystone_core_types::resource::{DomainRef, ResourceProviderError};
 use openstack_keystone_core_types::role::{Role, RoleListParameters, RoleRef};
 use openstack_keystone_core_types::token::{
@@ -51,6 +52,15 @@ use crate::token::{
     TokenApi, TokenProviderError,
     backend::{TokenBackend, TokenRestrictionBackend},
 };
+
+/// How much of the token owner the validation resolves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UserDetail {
+    /// The complete user record.
+    Full,
+    /// Only [`UserCore`]: identity, domain and the effective enabled flag.
+    Core,
+}
 
 pub struct TokenService {
     config: Config,
@@ -221,6 +231,33 @@ impl TokenService {
         Ok(AuthzInfoBuilder::default().scope(scope).build()?)
     }
 
+    /// Shared body of the `authorize_*` entry points.
+    async fn authorize_by_token_with_detail(
+        &self,
+        ctx: &ExecutionContext<'_>,
+        credential: &SecretString,
+        allow_expired: Option<bool>,
+        window_seconds: Option<i64>,
+        user_detail: UserDetail,
+    ) -> Result<ValidatedSecurityContext, TokenProviderError> {
+        let vsc = self
+            .validate_to_context_impl(
+                ctx,
+                credential.expose_secret(),
+                allow_expired,
+                window_seconds,
+                user_detail,
+            )
+            .await?;
+
+        if let FernetToken::Restricted(restriction) = vsc.token()?
+            && !restriction.allow_renew
+        {
+            return Err(AuthenticationError::TokenRenewalForbidden.into());
+        }
+        Ok(vsc)
+    }
+
     /// Validate the token and produce a [`ValidatedSecurityContext`].
     ///
     /// Thin wrapper around [`Self::validate_to_context_inner`] recording
@@ -236,11 +273,12 @@ impl TokenService {
         credential: &str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
+        user_detail: UserDetail,
     ) -> Result<ValidatedSecurityContext, TokenProviderError> {
         let driver = self.config.token.provider.to_string();
         let start = std::time::Instant::now();
         let result = self
-            .validate_to_context_inner(ctx, credential, allow_expired, window_seconds)
+            .validate_to_context_inner(ctx, credential, allow_expired, window_seconds, user_detail)
             .await;
         crate::token::TOKEN_METRICS.record_validation(
             &driver,
@@ -260,6 +298,7 @@ impl TokenService {
         credential: &str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
+        user_detail: UserDetail,
     ) -> Result<ValidatedSecurityContext, TokenProviderError> {
         let token = self.backend_driver.decode(credential)?;
         let state = ctx.state();
@@ -346,25 +385,33 @@ impl TokenService {
         // (the project or domain the token is scoped to), so it is only
         // fetched when that is not the case.
         let identity_provider = state.provider.get_identity_provider();
+        let user_not_found = || {
+            // Either the user was deleted after the token was issued, or
+            // this node has not seen the user yet: the age of the token
+            // tells which.
+            tracing::warn!(
+                user_id = %token.user_id(),
+                issued_at = %token.issued_at(),
+                expires_at = %token.expires_at(),
+                "the user of a valid token cannot be found"
+            );
+            TokenProviderError::UserNotFound(token.user_id().clone())
+        };
         let user_fut = async {
-            identity_provider
-                .get_user(ctx, token.user_id())
-                .await?
-                .ok_or_else(|| {
-                    // Either the user was deleted after the token was
-                    // issued, or this node has not seen the user yet: the
-                    // age of the token tells which.
-                    tracing::warn!(
-                        user_id = %token.user_id(),
-                        issued_at = %token.issued_at(),
-                        expires_at = %token.expires_at(),
-                        "the user of a valid token cannot be found"
-                    );
-                    TokenProviderError::UserNotFound(token.user_id().clone())
-                })
+            match user_detail {
+                    UserDetail::Full => identity_provider
+                        .get_user(ctx, token.user_id())
+                        .await?
+                        .map(|user| (UserCore::from(&user), Some(user))),
+                    UserDetail::Core => identity_provider
+                        .get_user_core(ctx, token.user_id())
+                        .await?
+                        .map(|core| (core, None)),
+                }
+                .ok_or_else(user_not_found)
         };
         let authz_fut = self.build_authz_info_from_fernet_token(state, &token);
-        let (user, authz_info) = tokio::try_join!(user_fut, authz_fut)?;
+        let ((user_core, user), authz_info) = tokio::try_join!(user_fut, authz_fut)?;
         let scope_domain = match &authz_info.scope {
             ScopeInfo::Domain(domain) => Some(domain),
             ScopeInfo::Project { project_domain, .. } => Some(project_domain),
@@ -372,30 +419,32 @@ impl TokenService {
             ScopeInfo::System(_) | ScopeInfo::Unscoped => None,
         };
         let user_domain = match scope_domain {
-            Some(domain) if domain.id == user.domain_id => domain.clone(),
+            Some(domain) if domain.id == user_core.domain_id => domain.clone(),
             _ => state
                 .provider
                 .get_resource_provider()
-                .get_domain_ref(ctx, &user.domain_id)
+                .get_domain_ref(ctx, &user_core.domain_id)
                 .await?
                 .ok_or_else(|| {
                     TokenProviderError::from(ResourceProviderError::DomainNotFound(
-                        user.domain_id.clone(),
+                        user_core.domain_id.clone(),
                     ))
                 })?,
         };
         let mut auth_result_builder = AuthenticationResultBuilder::default();
 
+        let mut user_identity = UserIdentityInfoBuilder::default();
+        user_identity
+            .user_id(token.user_id())
+            .user_domain(user_domain.clone());
+        match user {
+            Some(user) => user_identity.user(user),
+            None => user_identity.user_core(user_core),
+        };
         auth_result_builder
             .context(auth_context)
             .principal(PrincipalInfo {
-                identity: IdentityInfo::User(
-                    UserIdentityInfoBuilder::default()
-                        .user_id(token.user_id())
-                        .user(user.clone())
-                        .user_domain(user_domain.clone())
-                        .build()?,
-                ),
+                identity: IdentityInfo::User(user_identity.build()?),
             })
             .expires_at(*token.expires_at())
             .authorization(authz_info);
@@ -464,21 +513,32 @@ impl TokenApi for TokenService {
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
     ) -> Result<ValidatedSecurityContext, TokenProviderError> {
-        let vsc = self
-            .validate_to_context_impl(
-                ctx,
-                credential.expose_secret(),
-                allow_expired,
-                window_seconds,
-            )
-            .await?;
+        self.authorize_by_token_with_detail(
+            ctx,
+            credential,
+            allow_expired,
+            window_seconds,
+            UserDetail::Full,
+        )
+        .await
+    }
 
-        if let FernetToken::Restricted(restriction) = vsc.token()?
-            && !restriction.allow_renew
-        {
-            return Err(AuthenticationError::TokenRenewalForbidden.into());
-        }
-        Ok(vsc)
+    /// Authenticate a request by token without loading the complete user.
+    ///
+    /// Same checks as [`Self::authorize_by_token`]; the resulting context
+    /// carries only [`UserCore`] (see `UserIdentityInfo::user_core`).
+    #[tracing::instrument(
+        name = "provider.token.authorize_request_token",
+        level = "debug",
+        skip_all
+    )]
+    async fn authorize_request_token<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        credential: &SecretString,
+    ) -> Result<ValidatedSecurityContext, TokenProviderError> {
+        self.authorize_by_token_with_detail(ctx, credential, Some(false), None, UserDetail::Core)
+            .await
     }
 
     /// Validate the token and produce a [`ValidatedSecurityContext`].
@@ -490,8 +550,14 @@ impl TokenApi for TokenService {
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
     ) -> Result<ValidatedSecurityContext, TokenProviderError> {
-        self.validate_to_context_impl(ctx, credential, allow_expired, window_seconds)
-            .await
+        self.validate_to_context_impl(
+            ctx,
+            credential,
+            allow_expired,
+            window_seconds,
+            UserDetail::Full,
+        )
+        .await
     }
 
     /// Issue a token and produce a [`ValidatedSecurityContext`].
@@ -601,7 +667,7 @@ impl TokenApi for TokenService {
                 .list_roles(
                     ctx,
                     &RoleListParameters {
-                        ids: Some(tr.role_ids.iter().cloned().collect()),
+                        ids: Some(tr.role_ids.to_vec()),
                         skip_options: true,
                         ..Default::default()
                     },
@@ -964,6 +1030,155 @@ mod tests {
                 panic!("token must be revoked: {:?}", other)
             }
         }
+    }
+
+    /// Builds the mocks for a request-token authentication where only the
+    /// minimal user (`get_user_core`) may be consulted; the complete user
+    /// lookup is forbidden.
+    async fn request_token_state(
+        token: &FernetToken,
+        config: &Config,
+        core_enabled: bool,
+        revoked: bool,
+    ) -> ServiceState {
+        let mut revoke_mock = MockRevokeProvider::default();
+        revoke_mock
+            .expect_is_token_revoked()
+            .returning(move |_, _| Ok(revoked));
+
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_get_user().never();
+        identity_mock
+            .expect_get_user_core()
+            .returning(move |_, id| {
+                Ok(Some(UserCore {
+                    id: id.to_string(),
+                    domain_id: "user_domain_id".into(),
+                    enabled: core_enabled,
+                }))
+            });
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_domain_enabled()
+            .returning(|_, _| Ok(true));
+        resource_mock.expect_get_domain_ref().returning(|_, id| {
+            Ok(Some(openstack_keystone_core_types::resource::DomainRef {
+                id: id.to_string(),
+                name: "domain".to_string(),
+                enabled: true,
+                ..Default::default()
+            }))
+        });
+        let project_id = token.project_id().unwrap().clone();
+        resource_mock
+            .expect_get_project_ref()
+            .returning(move |_, _| {
+                Ok(Some(ProjectRef {
+                    id: project_id.clone(),
+                    name: "project".to_string(),
+                    enabled: true,
+                    ..Default::default()
+                }))
+            });
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock.expect_list_role_assignments().returning(
+            |_, q: &RoleAssignmentListParameters| {
+                Ok(vec![Assignment {
+                    role_id: "rid".into(),
+                    role_name: Some("role_name".into()),
+                    actor_id: q.user_id.clone().unwrap(),
+                    target_id: q.project_id.clone().unwrap(),
+                    r#type: AssignmentType::UserProject,
+                    inherited: false,
+                    implied_via: None,
+                }])
+            },
+        );
+        let provider = Provider::mocked_builder()
+            .mock_assignment(assignment_mock)
+            .mock_identity(identity_mock)
+            .mock_revoke(revoke_mock)
+            .mock_resource(resource_mock);
+        get_mocked_state(Some(config.clone()), Some(provider)).await
+    }
+
+    fn backend_returning(token: &FernetToken) -> MockTokenBackend {
+        let mut backend = MockTokenBackend::default();
+        let t = token.clone();
+        backend.expect_decode().returning(move |_| Ok(t.clone()));
+        backend
+    }
+
+    /// The request-token path resolves the user through `get_user_core` only
+    /// and yields a context that carries `user_core` instead of a full user.
+    #[tokio::test]
+    async fn test_authorize_request_token_uses_minimal_user() {
+        let token = generate_token(Some(TimeDelta::hours(1))).unwrap();
+        let config = setup_config();
+        let provider = get_provider(&config, Some(backend_returning(&token)));
+        let state = request_token_state(&token, &config, true, false).await;
+
+        let vsc = provider
+            .authorize_request_token(
+                &ExecutionContext::internal(&state),
+                &"token".to_string().into(),
+            )
+            .await
+            .expect("authorized");
+        match &vsc.inner().principal().identity {
+            IdentityInfo::User(info) => {
+                assert!(info.user.is_none(), "full user must not be loaded");
+                let core = info.user_core.as_ref().expect("minimal user present");
+                assert_eq!(core.id, token.user_id().as_str());
+                assert!(info.user_domain.is_some());
+            }
+            other => panic!("unexpected identity: {other:?}"),
+        }
+    }
+
+    /// A disabled user is rejected on the minimal path as well.
+    #[tokio::test]
+    async fn test_authorize_request_token_disabled_user_rejected() {
+        let token = generate_token(Some(TimeDelta::hours(1))).unwrap();
+        let config = setup_config();
+        let provider = get_provider(&config, Some(backend_returning(&token)));
+        let state = request_token_state(&token, &config, false, false).await;
+
+        let res = provider
+            .authorize_request_token(
+                &ExecutionContext::internal(&state),
+                &"token".to_string().into(),
+            )
+            .await;
+        assert!(
+            matches!(
+                res,
+                Err(TokenProviderError::Authentication(
+                    AuthenticationError::UserDisabled(_)
+                ))
+            ),
+            "got {res:?}"
+        );
+    }
+
+    /// Revocation is still enforced on the minimal path.
+    #[tokio::test]
+    async fn test_authorize_request_token_revoked_rejected() {
+        let token = generate_token(Some(TimeDelta::hours(1))).unwrap();
+        let config = setup_config();
+        let provider = get_provider(&config, Some(backend_returning(&token)));
+        let state = request_token_state(&token, &config, true, true).await;
+
+        let res = provider
+            .authorize_request_token(
+                &ExecutionContext::internal(&state),
+                &"token".to_string().into(),
+            )
+            .await;
+        assert!(
+            matches!(res, Err(TokenProviderError::TokenRevoked)),
+            "got {res:?}"
+        );
     }
 
     /// Builds a `Config` with a single `[auth_plugin.<name>]` section whose

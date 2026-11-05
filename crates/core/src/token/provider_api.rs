@@ -44,6 +44,25 @@ pub trait TokenApi: Send + Sync {
         window_seconds: Option<i64>,
     ) -> Result<ValidatedSecurityContext, TokenProviderError>;
 
+    /// Authenticate a request by token without loading the complete user.
+    ///
+    /// Performs the same checks as [`Self::authorize_by_token`] with default
+    /// expiration handling, but resolves only the minimal user data (see
+    /// `UserIdentityInfo::user_core`). For request authentication where
+    /// handlers do not need the complete user record.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `credential`: The token credential.
+    async fn authorize_request_token<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        credential: &SecretString,
+    ) -> Result<ValidatedSecurityContext, TokenProviderError> {
+        self.authorize_by_token(ctx, credential, Some(false), None)
+            .await
+    }
+
     /// Validate the token and produce a [`ValidatedSecurityContext`].
     ///
     /// Decodes the fernet token, checks expiration and revocation, builds
