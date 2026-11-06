@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keystone-rs
+spec:
+  template:
+    spec:
+      containers:
+        - name: keystone
+          resources:
+            requests:
+              cpu: "4"
+            limits:
+              cpu: "24"
+          env:
+            - name: LD_PRELOAD
+              value: /usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+            - name: MALLOC_CONF
+              value: background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:0
+            - name: OS_OTEL__ENABLED
+              value: "false"
+            - name: OS_OTEL__METRICS_ENABLED
+              value: "false"
+            - name: OS_RESOURCE__CACHING
+              value: "true"
+            - name: OS_DATABASE__MAX_POOL_SIZE
+              value: "60"
+            # As wide as keystone-py's worker processes, and queue instead of
+            # answering 503 when the hashing pool is busy.
+            - name: OS_IDENTITY__PASSWORD_HASHING_THREADS
+              value: "24"
+            - name: OS_IDENTITY__PASSWORD_HASHING_QUEUE_FULL
+              value: wait
