@@ -21,6 +21,7 @@ use openstack_keystone_core::keystone::Service;
 use openstack_keystone_core_types::assignment::*;
 
 mod application_credential;
+mod password;
 mod trust;
 
 async fn grant_role_to_user_on_project<U: Into<String>, P: Into<String>, R: Into<String>>(

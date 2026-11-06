@@ -225,6 +225,27 @@ pub trait IdentityBackend: Send + Sync {
         user_id: &'a str,
     ) -> Result<Option<UserResponse>, IdentityProviderError>;
 
+    /// Get the minimal user data required to authorize a request.
+    ///
+    /// Drivers should override this with a lookup that skips everything but
+    /// the identity, the domain and the effective `enabled` flag. The default
+    /// loads the complete user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to retrieve.
+    async fn get_user_core<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<Option<UserCore>, IdentityProviderError> {
+        Ok(self
+            .get_user(state, user_id)
+            .await?
+            .as_ref()
+            .map(UserCore::from))
+    }
+
     /// Get single user by ID.
     ///
     /// # Parameters

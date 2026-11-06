@@ -20,7 +20,7 @@ use validator::Validate;
 use super::common;
 use crate::auth::SecurityContext;
 use crate::error::BuilderError;
-use crate::resource::Project;
+use crate::resource::ProjectRef;
 use crate::token::FernetToken;
 use crate::token::error::TokenProviderError;
 
@@ -84,7 +84,7 @@ impl ProjectScopePayload {
     /// IDs from the context.
     pub fn from_security_context(
         ctx: &SecurityContext,
-        project: &Project,
+        project: &ProjectRef,
         expires_at: DateTime<Utc>,
     ) -> Result<Self, TokenProviderError> {
         Ok(ProjectScopePayloadBuilder::default()
@@ -129,7 +129,9 @@ mod tests {
             .enabled(true)
             .build()
             .unwrap();
-        let payload = ProjectScopePayload::from_security_context(&ctx, &project, now).unwrap();
+        let payload =
+            ProjectScopePayload::from_security_context(&ctx, &ProjectRef::from(&project), now)
+                .unwrap();
         assert_eq!(now, payload.expires_at);
         assert_eq!("uid", payload.user_id);
         assert_eq!(vec!["password"], payload.methods);

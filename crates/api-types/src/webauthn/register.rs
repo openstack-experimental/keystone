@@ -142,7 +142,7 @@ impl TryFrom<UserPasskeyRegistrationFinishRequest>
     fn try_from(value: UserPasskeyRegistrationFinishRequest) -> Result<Self, Self::Error> {
         Ok(Self {
             id: value.id,
-            raw_id: URL_SAFE.decode(value.raw_id)?.into(),
+            raw_id: URL_SAFE.decode(value.raw_id)?,
             type_: value.type_,
             response: value.response.try_into()?,
             extensions: value.extensions.into(),
@@ -203,8 +203,8 @@ impl TryFrom<AuthenticatorAttestationResponseRaw>
 
     fn try_from(value: AuthenticatorAttestationResponseRaw) -> Result<Self, Self::Error> {
         Ok(Self {
-            attestation_object: URL_SAFE.decode(value.attestation_object)?.into(),
-            client_data_json: URL_SAFE.decode(value.client_data_json)?.into(),
+            attestation_object: URL_SAFE.decode(value.attestation_object)?,
+            client_data_json: URL_SAFE.decode(value.client_data_json)?,
             transports: value
                 .transports
                 .map(|i| i.into_iter().map(Into::into).collect::<Vec<_>>()),

@@ -153,7 +153,7 @@ async fn mount_extensions(mut app: Router, startup: &Startup) -> Result<Router, 
 
 /// Build and apply the shared request/response middleware stack (request-id
 /// minting, per-request cache scope, body limit, tracing span, access/error
-/// logging, compression, request-id propagation). When traces are exported
+/// logging, request-id propagation). When traces are exported
 /// (`span_options` is `Some`) the OpenTelemetry server span wraps everything
 /// below `TraceLayer`.
 ///
@@ -237,10 +237,17 @@ fn apply_middleware(
         // latency folded into the message text. Must stay after TraceLayer
         // so it runs inside the request span.
         .layer(middleware::from_fn(log_request))
-        // Logs the body of any 4xx/5xx response. Must stay before
-        // `.compression()` so it reads the body while it's still plain JSON.
-        .layer(middleware::from_fn(log_error_body))
-        .compression()
+        // Logs the body of any 4xx/5xx response.
+        .layer(middleware::from_fn(log_error_body));
+
+    // Off unless built with the `compression` feature: deflating every JSON
+    // body costs ~10% of the throughput under load, and the reverse proxy in
+    // front of the service is the place to do it. Kept outside `log_error_body`
+    // so that middleware still reads the body while it is plain JSON.
+    #[cfg(feature = "compression")]
+    let middleware = middleware.compression();
+
+    let middleware = middleware
         .sensitive_response_headers(sensitive_headers)
         // Propagate the header to the response before it reaches `TraceLayer`.
         .layer(PropagateRequestIdLayer::new(x_request_id));

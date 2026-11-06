@@ -100,6 +100,7 @@ pub async fn mint_nova_admin_token(
     for role_name in &vendordata_cfg.nova_auth_roles {
         let params = RoleListParametersBuilder::default()
             .name(role_name.clone())
+            .skip_options(true)
             .build()
             .map_err(|e| VendordataProviderError::NovaUnavailable(e.to_string()))?;
         let mut found = state
@@ -118,25 +119,18 @@ pub async fn mint_nova_admin_token(
 
     let (scope, is_system) = match auth_scope {
         NovaAuthScope::Project { project_id } => {
-            let project = openstack_keystone_core_types::resource::Project {
+            let project = openstack_keystone_core_types::resource::ProjectRef {
                 id: project_id.clone(),
                 name: String::new(),
-                description: None,
                 enabled: true,
                 is_domain: false,
                 parent_id: None,
                 domain_id: String::new(),
-                extra: Default::default(),
-                options: Default::default(),
-                tags: Default::default(),
             };
-            let project_domain = openstack_keystone_core_types::resource::Domain {
+            let project_domain = openstack_keystone_core_types::resource::DomainRef {
                 id: String::new(),
                 name: String::new(),
-                description: None,
                 enabled: true,
-                extra: Default::default(),
-                options: Default::default(),
             };
             (
                 ScopeInfo::Project {

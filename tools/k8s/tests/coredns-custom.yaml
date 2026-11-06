@@ -1,0 +1,12 @@
+# Makes the externally visible Keystone name (`[DEFAULT] public_endpoint`)
+# resolve inside the cluster, so pods can follow issuer, jwks and callback
+# URLs built from it. k3s' CoreDNS imports `/etc/coredns/custom/*.override`
+# from this ConfigMap. The `keystone-rs` service serves port 80 for it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  keystone.override: |
+    rewrite name keystone-rs.local keystone-rs.default.svc.cluster.local

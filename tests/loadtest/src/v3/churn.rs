@@ -21,6 +21,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::v3::role_assignment::auth_role_id;
+use crate::v3::user::random_seeded_cred;
 use crate::v3::util::{
     DEFAULT_DOMAIN_ID, Undo, admin_token, call, create, create_user, password_auth_body,
 };
@@ -34,8 +35,18 @@ pub async fn cycle(user: &mut GooseUser) -> TransactionResult {
 
 async fn run(user: &mut GooseUser, undo: &mut Undo) -> TransactionResult {
     let token = admin_token(user);
-    let Some((user_id, password)) = create_user(user, undo).await? else {
-        return Ok(());
+    // Users are long lived in real deployments: use a seeded one instead of
+    // creating and deleting a user every iteration. The user-delete hooks
+    // (OAuth2 sessions, plugin identities) are not what this scenario is
+    // about. An empty pool falls back to a throwaway user.
+    let (user_id, password) = match random_seeded_cred() {
+        Some(cred) => (cred.id.clone(), cred.password.clone()),
+        None => {
+            let Some(created) = create_user(user, undo).await? else {
+                return Ok(());
+            };
+            created
+        }
     };
     let Some(project_id) = create(
         user,

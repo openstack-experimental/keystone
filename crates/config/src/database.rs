@@ -30,6 +30,13 @@ pub struct DatabaseSection {
     #[serde(default)]
     pub connection_debug: u8,
 
+    /// Maximum number of connections the pool keeps open (mirrors oslo_db's
+    /// `max_pool_size`). Unset uses the driver default of 10. Every in-flight
+    /// request holds a connection per query, so a small pool makes requests
+    /// queue behind each other long before the database is busy.
+    #[serde(default)]
+    pub max_pool_size: Option<u32>,
+
     /// TLS material for the DB connection: client cert/key for mTLS and the
     /// CA used to validate the DB server's certificate. Populated either by
     /// an external process (SPIRE Helper, cert-manager, manual ops rotating

@@ -461,7 +461,7 @@ async fn app_cred_token(
 )> {
     use openstack_keystone::auth::*;
     use openstack_keystone_core_types::application_credential::ApplicationCredentialCreate;
-    use openstack_keystone_core_types::resource::{DomainBuilder, ProjectBuilder};
+    use openstack_keystone_core_types::resource::{DomainRefBuilder, ProjectRefBuilder};
     use openstack_keystone_core_types::role::RoleRefBuilder;
 
     let cred = f
@@ -509,13 +509,13 @@ async fn app_cred_token(
             &ExecutionContext::internal(&f.state),
             &SecurityContext::try_from(auth)?,
             &ScopeInfo::Project {
-                project: ProjectBuilder::default()
+                project: ProjectRefBuilder::default()
                     .id(f.project_id.clone())
                     .name(f.project_id.clone())
                     .domain_id(f.domain_id.clone())
                     .enabled(true)
                     .build()?,
-                project_domain: DomainBuilder::default()
+                project_domain: DomainRefBuilder::default()
                     .id(f.domain_id.clone())
                     .name(f.domain_id.clone())
                     .enabled(true)

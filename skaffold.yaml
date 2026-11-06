@@ -28,10 +28,20 @@ manifests:
       - tools/k8s/tests/callback
   rawYaml:
     - tools/k8s/tests/selenium.yaml
+    - tools/k8s/tests/coredns-custom.yaml
 deploy:
   statusCheck: true
   statusCheckDeadlineSeconds: 300
   tolerateFailuresUntilDeadline: true
+  kubectl:
+    hooks:
+      after:
+        - host:
+            # CoreDNS reads the custom `*.override` files at start only.
+            command:
+              - sh
+              - -c
+              - kubectl -n kube-system rollout restart deploy/coredns && kubectl -n kube-system rollout status deploy/coredns --timeout=120s
   helm:
     releases:
       - name: cloudnative-pg
@@ -211,14 +221,23 @@ deploy:
                 done
                 echo "OAuth2 signing key ensured for domain default"
         - host:
-            # Extend catalog with identity-rs catalog entry
+            # Extend catalog with identity-rs catalog entry.
+            #
+            # Both endpoints MUST carry the region (RegionOne, created by the
+            # py-keystone bootstrap): tempest filters the catalog by interface
+            # AND region, and when no endpoint matches the region it silently
+            # falls back to the first catalog entry (`public`,
+            # http://keystone-rs.local, which does not resolve in-cluster)
+            # instead of the `internal` one. The commands are idempotent, so
+            # failures are not masked with `|| true`.
             command:
               - sh
               - -c
               - |
+                set -e
                 kubectl exec keystone-rs-0 -c keystone -- keystone-manage catalog service create --name keystone-rs --type identity-rs --enabled || true
-                kubectl exec keystone-rs-0 -c keystone -- keystone-manage catalog endpoint create --service-name keystone-rs --interface public --url "http://keystone-rs.local" --enabled || true
-                kubectl exec keystone-rs-0 -c keystone -- keystone-manage catalog endpoint create --service-name keystone-rs --interface internal --url "http://keystone-rs.default.svc.cluster.local:8080" --enabled || true
+                kubectl exec keystone-rs-0 -c keystone -- keystone-manage catalog endpoint create --service-name keystone-rs --interface public --region-id RegionOne --url "http://keystone-rs.local" --enabled
+                kubectl exec keystone-rs-0 -c keystone -- keystone-manage catalog endpoint create --service-name keystone-rs --interface internal --region-id RegionOne --url "http://keystone-rs.default.svc.cluster.local:8080" --enabled
 
 verify:
   - &api_test_v3
@@ -232,6 +251,8 @@ verify:
           value: "info,reqwest=off,h2=off,hyper=off"
         - name: "KEYSTONE_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
+        - name: "KEYSTONE_PUBLIC_URL"
+          value: "http://keystone-rs.local"
         - name: "OS_AUTH_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
         - name: "OS_USERNAME"
@@ -258,6 +279,8 @@ verify:
           value: "debug,reqwest=off,h2=off,hyper=off"
         - name: "KEYSTONE_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
+        - name: "KEYSTONE_PUBLIC_URL"
+          value: "http://keystone-rs.local"
         - name: "OS_AUTH_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
         - name: "OS_USERNAME"
@@ -362,6 +385,8 @@ verify:
           value: "http://selenium-service:4444"
         - name: "KEYSTONE_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
+        - name: "KEYSTONE_PUBLIC_URL"
+          value: "http://keystone-rs.local"
         - name: "KEYCLOAK_URL"
           value: "http://keycloak:8080"
         - name: "KEYCLOAK_PASSWORD"
@@ -401,6 +426,15 @@ profiles:
       - op: replace
         path: /manifests/kustomize/paths/0
         value: tools/k8s/keystone/overlays/skaffold-soak-otel
+
+  # Tuned for the rs vs py load tests: one pod of each, CPU requests 4 and
+  # limits 24, jemalloc, 24 hashing threads and 24 uwsgi processes:
+  # `skaffold run -m keystone -p local,loadtest`.
+  - name: loadtest
+    patches:
+      - op: replace
+        path: /manifests/kustomize/paths/0
+        value: tools/k8s/keystone/overlays/skaffold-loadtest
 
   # JWS (ES256) tokens instead of the fernet default, to test both providers:
   # `skaffold run -m keystone -p local,jws`. Profiles replace the one kustomize

@@ -32,6 +32,8 @@ pub mod entity;
 mod implied_role;
 mod role;
 mod role_option;
+#[cfg(test)]
+mod sqlite_tests;
 //mod role_imply;
 
 #[derive(Default)]

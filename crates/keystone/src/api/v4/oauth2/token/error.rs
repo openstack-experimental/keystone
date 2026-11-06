@@ -181,8 +181,8 @@ impl Oauth2TokenError {
             dpop_nonce: None,
             // RFC 6749 §5.2 predates 429 and has no dedicated error code for
             // rate limiting; `invalid_request` is the closest defined code
-            // (malformed/unacceptable request). The `429` status + `Retry-After`
-            // header are the authoritative signal for clients.
+            // (malformed/unacceptable request). The `429` status +
+            // `Retry-After` header are the authoritative signal for clients.
             error: "invalid_request",
             error_description: "rate limit exceeded".to_string(),
         }
@@ -197,7 +197,7 @@ impl Oauth2TokenError {
     pub(crate) fn internal(description: impl Into<String>) -> Self {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "invalid_request",
+            "server_error",
             description,
         )
     }

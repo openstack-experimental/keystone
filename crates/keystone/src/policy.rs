@@ -16,7 +16,7 @@ use std::time::SystemTime;
 
 use reqwest::{Client, Url};
 use serde_json::{Value, json};
-use tracing::{Level, debug};
+use tracing::{Instrument, Level, debug};
 
 use openstack_keystone_core::auth::ValidatedSecurityContext;
 
@@ -137,17 +137,25 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
 
             debug!("checking policy decision with OPA using http");
             let url = self.base_url.join(policy_name.as_ref())?;
-            let res: PolicyEvaluationResult = self
-                .http_client
-                .post(url)
-                .json(&json!({"input": input}))
-                .send()
-                .await
-                .map_err(|e| PolicyError::IO(std::io::Error::other(e)))?
-                .json::<OpaResponse>()
-                .await
-                .map_err(|e| PolicyError::IO(std::io::Error::other(e)))?
-                .result;
+            // Separate span so a trace tells the OPA round trip apart from
+            // building the input and handling the decision.
+            let res: PolicyEvaluationResult = async {
+                self.http_client
+                    .post(url)
+                    .json(&json!({"input": input}))
+                    .send()
+                    .await
+                    .map_err(|e| PolicyError::IO(std::io::Error::other(e)))?
+                    .json::<OpaResponse>()
+                    .await
+                    .map_err(|e| PolicyError::IO(std::io::Error::other(e)))
+                    .map(|response| response.result)
+            }
+            .instrument(tracing::debug_span!(
+                "policy.opa.request",
+                policy = policy_name
+            ))
+            .await?;
 
             span.record("result", serde_json::to_string(&res)?);
             debug!("authorized={}", res.allow());

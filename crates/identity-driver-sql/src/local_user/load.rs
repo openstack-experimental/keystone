@@ -16,6 +16,7 @@ use std::collections::HashMap;
 
 use sea_orm::entity::*;
 use sea_orm::query::*;
+use sea_orm::sea_query::Query;
 
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::identity::IdentityProviderError;
@@ -75,6 +76,59 @@ pub async fn load_local_user_with_passwords<
     Ok(results.first().cloned())
 }
 
+/// Load local user record by the user ID, optionally with its latest password.
+///
+/// Lookup by the user ID needs no round trip to learn the local user ID first:
+/// the password is selected through a subquery, so both statements run
+/// concurrently. Callers that do not consult the password (i.e. password
+/// expiration is not configured) skip that statement entirely.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+/// - `with_latest_password`: Whether to fetch the latest password.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `(local_user::Model,
+/// Option<password::Model>)` if found, or an `Error`. The password is `None`
+/// when it was not requested.
+pub async fn load_local_user_by_id<C: ConnectionTrait>(
+    db: &C,
+    user_id: &str,
+    with_latest_password: bool,
+) -> Result<Option<(local_user::Model, Option<password::Model>)>, IdentityProviderError> {
+    let (local_user, latest_password) = tokio::join!(
+        LocalUser::find()
+            .filter(local_user::Column::UserId.eq(user_id))
+            .one(db),
+        async {
+            if !with_latest_password {
+                return Ok(None);
+            }
+            Password::find()
+                .filter(
+                    password::Column::LocalUserId.in_subquery(
+                        Query::select()
+                            .column(local_user::Column::Id)
+                            .from(LocalUser)
+                            .and_where(local_user::Column::UserId.eq(user_id))
+                            .to_owned(),
+                    ),
+                )
+                .order_by(password::Column::CreatedAtInt, Order::Desc)
+                .one(db)
+                .await
+        }
+    );
+    let Some(local_user) = local_user.context("fetching local user")? else {
+        return Ok(None);
+    };
+    Ok(Some((
+        local_user,
+        latest_password.context("fetching latest user password")?,
+    )))
+}
+
 /// Load local user record with only its latest password from database.
 ///
 /// Same lookup as [`load_local_user_with_passwords`] but for callers that
@@ -101,10 +155,11 @@ pub async fn load_local_user_with_latest_password<
     name: Option<S2>,
     domain_id: Option<S3>,
 ) -> Result<Option<(local_user::Model, Option<password::Model>)>, IdentityProviderError> {
-    let mut select = LocalUser::find();
     if let Some(user_id) = user_id {
-        select = select.filter(local_user::Column::UserId.eq(user_id.as_ref()))
-    } else {
+        return load_local_user_by_id(db, user_id.as_ref(), true).await;
+    }
+    let mut select = LocalUser::find();
+    {
         select = select
             .filter(
                 local_user::Column::Name.eq(name
@@ -311,8 +366,8 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" = $1 ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
-                    [1i32.into(), 1u64.into()]
+                    r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" IN (SELECT "id" FROM "local_user" WHERE "local_user"."user_id" = $1) ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
+                    ["user_id".into(), 1u64.into()]
                 ),
             ]
         );
@@ -322,6 +377,7 @@ mod tests {
     async fn test_load_local_user_with_latest_password_no_local_user() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([Vec::<local_user::Model>::new()])
+            .append_query_results([Vec::<password::Model>::new()])
             .into_connection();
         let result =
             load_local_user_with_latest_password(&db, Some("user_id"), None::<&str>, None::<&str>)
@@ -329,9 +385,9 @@ mod tests {
                 .unwrap();
         assert!(result.is_none());
 
-        // Only the local_user lookup should run: no password query issued
-        // once the user is not found.
-        assert_eq!(db.into_transaction_log().len(), 1);
+        // Both lookups are issued concurrently, so the password query runs
+        // even when there is no local user.
+        assert_eq!(db.into_transaction_log().len(), 2);
     }
 
     #[tokio::test]

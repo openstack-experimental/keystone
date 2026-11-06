@@ -161,12 +161,16 @@ pub fn init(verbose: u8, cfg: &crate::config::LoadedConfig) -> Result<Guards> {
     };
 
     let mut log_layers = Vec::new();
+    // Most verbose level any layer below admits. `tower_http` is pinned to
+    // INFO in every sink, hence the floor.
+    let mut max_level = LevelFilter::INFO;
 
     // Built before the subscriber exists, so a failure here can only be
     // reported once logging is up (see `Guards::telemetry_error`).
     let (resolved, telemetry, telemetry_error) = init_telemetry(cfg);
 
     if cfg.default.use_stderr {
+        max_level = max_level.max(stderr_default).max(stderr_deps);
         log_layers.push(
             tracing_subscriber::fmt::layer()
                 .with_writer(io::stderr)
@@ -178,6 +182,7 @@ pub fn init(verbose: u8, cfg: &crate::config::LoadedConfig) -> Result<Guards> {
     if cfg.default.use_journal {
         match tracing_journald::layer() {
             Ok(journald_layer) => {
+                max_level = max_level.max(file_level);
                 log_layers.push(
                     journald_layer
                         .with_filter(log_targets(file_level, file_level))
@@ -204,6 +209,7 @@ pub fn init(verbose: u8, cfg: &crate::config::LoadedConfig) -> Result<Guards> {
             .lossy(false)
             .finish(file_appender);
         guard = Some(file_guard);
+        max_level = max_level.max(file_level);
 
         log_layers.push(
             tracing_subscriber::fmt::layer()
@@ -220,6 +226,7 @@ pub fn init(verbose: u8, cfg: &crate::config::LoadedConfig) -> Result<Guards> {
         resolved.as_ref().and_then(|r| r.settings.as_ref()),
     ) && let Some(layer) = handle.tracing_layer()
     {
+        max_level = max_level.max(span_level_filter(settings.span_level));
         // Own filter: only request-level and coarse operation spans leave the
         // process (see `[otel] span_level`); driver DEBUG spans stay local.
         log_layers.push(
@@ -232,9 +239,14 @@ pub fn init(verbose: u8, cfg: &crate::config::LoadedConfig) -> Result<Guards> {
         );
     }
 
+    // `ErrorLayer` has no level hint of its own, which would lift the global
+    // maximum to TRACE. Every disabled DEBUG/TRACE callsite would then be
+    // evaluated against each sink's filter on every call (~5% of CPU under
+    // load); this layer restores the hint so those callsites are skipped.
     tracing_subscriber::registry()
         .with(ErrorLayer::default())
         .with(log_layers)
+        .with(max_level)
         .init();
 
     Ok(Guards {

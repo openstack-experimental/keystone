@@ -96,7 +96,7 @@ ARG OPA_VERSION=1.16.2
 ARG OSC_VERSION=0.13.7
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl-dev libssl3 pkg-config xz-utils jq curl && \
+    ca-certificates libssl-dev libssl3 libjemalloc2 pkg-config xz-utils jq curl && \
     rm -rf /var/lib/apt/lists/* && update-ca-certificates
 
 COPY --from=builder /app/keystone /usr/local/bin/

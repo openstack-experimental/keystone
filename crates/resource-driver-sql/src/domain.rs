@@ -29,7 +29,7 @@ mod update;
 
 pub use create::create;
 pub use delete::delete;
-pub use get::{get_domain_by_id, get_domain_by_name, get_domain_enabled};
+pub use get::{get_domain_by_id, get_domain_by_name, get_domain_enabled, get_domain_ref_by_id};
 pub use list::list;
 pub use update::update;
 

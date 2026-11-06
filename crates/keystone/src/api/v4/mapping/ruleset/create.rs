@@ -287,7 +287,7 @@ mod tests {
             };
 
             let authz = AuthzInfoBuilder::default()
-                .scope(ScopeInfo::Domain(domain.clone()))
+                .scope(ScopeInfo::Domain(domain.clone().into()))
                 .roles(
                     roles
                         .iter()

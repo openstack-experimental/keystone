@@ -280,8 +280,10 @@ mod tests {
             .append_query_results([vec![get_user_mock("1")]])
             // 8. Fetch user options (empty)
             .append_query_results([Vec::<db_user_option::Model>::new()])
-            // 9. Fetch local user (empty - no local user, no password query follows)
+            // 9. Fetch local user (empty - no local user)
             .append_query_results([Vec::<crate::entity::local_user::Model>::new()])
+            // 9b. Fetch latest password (empty - no local user)
+            .append_query_results([Vec::<db_password::Model>::new()])
             // 10. Fetch nonlocal user data (user::get falls back to this when no local_user)
             .append_query_results([vec![db_nonlocal_user::Model {
                 domain_id: "foo_domain".into(),

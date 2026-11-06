@@ -77,6 +77,21 @@ fn token_url(domain_id: &str) -> Result<String> {
         .to_string())
 }
 
+/// The external token endpoint URL a `DPoP` proof is bound to (`htu`).
+///
+/// The server derives it from `[DEFAULT] public_endpoint`, which can differ
+/// from the address the tests reach it at (`KEYSTONE_URL`), e.g. in k3s where
+/// requests go to the service and the pinned endpoint is the ingress host.
+/// `KEYSTONE_PUBLIC_URL` names the former, defaulting to `KEYSTONE_URL`.
+fn htu(domain_id: &str) -> Result<String> {
+    let base = std::env::var("KEYSTONE_PUBLIC_URL")
+        .or_else(|_| std::env::var("KEYSTONE_URL"))?
+        .parse::<url::Url>()?;
+    Ok(base
+        .join(&format!("v4/oauth2/{domain_id}/token"))?
+        .to_string())
+}
+
 /// `client_credentials` with an optional `DPoP` header.
 async fn token(
     domain_id: &str,
@@ -154,7 +169,7 @@ async fn fixture() -> Result<Cc> {
 #[traced_test]
 async fn test_dpop_disabled_ignores_the_proof() -> Result<()> {
     let cc = fixture().await?;
-    let p = proof(&token_url(&cc.domain_id)?, None)?;
+    let p = proof(&htu(&cc.domain_id)?, None)?;
     let (status, _, body) = token(&cc.domain_id, &cc.client_id, &cc.secret, Some(&p)).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["token_type"], "Bearer");
@@ -167,7 +182,7 @@ async fn test_optional_dpop_binds_the_token_after_the_nonce_round_trip() -> Resu
     let cc = fixture().await?;
     let settings = set_dpop(&cc.domain_id, "optional").await?;
     assert_eq!(settings["settings"]["dpop"], "optional", "{settings}");
-    let url = token_url(&cc.domain_id)?;
+    let url = htu(&cc.domain_id)?;
 
     // Without a proof the token stays a bearer token.
     let (status, _, body) = token(&cc.domain_id, &cc.client_id, &cc.secret, None).await?;

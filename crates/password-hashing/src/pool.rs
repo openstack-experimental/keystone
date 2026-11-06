@@ -395,7 +395,16 @@ fn try_retire(shared: &Shared) -> bool {
             .live
             .compare_exchange(live, live - 1, Ordering::SeqCst, Ordering::SeqCst)
         {
-            Ok(_) => return true,
+            Ok(_) => {
+                // `resize` may have grown the pool between the target check
+                // and the exchange, and counted this worker as live. Stay
+                // when that left the pool short.
+                if shared.live.load(Ordering::SeqCst) < shared.target.load(Ordering::SeqCst) {
+                    shared.live.fetch_add(1, Ordering::SeqCst);
+                    return false;
+                }
+                return true;
+            }
             Err(actual) => live = actual,
         }
     }

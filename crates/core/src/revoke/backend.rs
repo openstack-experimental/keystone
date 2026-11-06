@@ -14,6 +14,7 @@
 //! Token revocation: Backends.
 //! Revocation provider Backend trait.
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 
 use openstack_keystone_core_types::revoke::*;
 use openstack_keystone_core_types::token::FernetToken;
@@ -40,6 +41,19 @@ pub trait RevokeBackend: Send + Sync {
         state: &ServiceState,
         event: RevocationEventCreate,
     ) -> Result<RevocationEvent, RevokeProviderError>;
+
+    /// Delete the revocation events that are no longer needed.
+    ///
+    /// Returns the number of deleted events.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `revoked_before` - Delete the events revoked before this moment.
+    async fn delete_expired_revocation_events(
+        &self,
+        state: &ServiceState,
+        revoked_before: DateTime<Utc>,
+    ) -> Result<u64, RevokeProviderError>;
 
     /// Check token revocation.
     ///

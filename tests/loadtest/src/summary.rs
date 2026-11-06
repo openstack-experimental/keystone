@@ -117,12 +117,15 @@ pub fn summarize(metrics: &GooseMetrics) -> Summary {
             *s.status_codes.entry(*code).or_default() += n;
         }
         let (class_times, class_max) = by_class.entry(class(&agg.method, name)).or_default();
-        *class_max = (*class_max).max(agg.raw_data.maximum_time);
-        for (ms, n) in &agg.raw_data.times {
-            *times.entry(*ms).or_default() += n;
-            *class_times.entry(*ms).or_default() += n;
+        let max_ms = usize::try_from(agg.raw_data.maximum_time_us / 1000).unwrap_or(usize::MAX);
+        *class_max = (*class_max).max(max_ms);
+        // Buckets are keyed by their fastest time in microseconds.
+        for (us, n) in agg.raw_data.times_us.iter() {
+            let ms = usize::try_from(*us / 1000).unwrap_or(usize::MAX);
+            *times.entry(ms).or_default() += n;
+            *class_times.entry(ms).or_default() += n;
         }
-        s.latency_ms.max = s.latency_ms.max.max(agg.raw_data.maximum_time);
+        s.latency_ms.max = s.latency_ms.max.max(max_ms);
         if agg.fail_count > 0 {
             s.failing_endpoints.push(Endpoint {
                 name: name.clone(),

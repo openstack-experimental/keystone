@@ -215,10 +215,12 @@ pub(crate) async fn list_expanded<C: ConnectionTrait>(
         .await
         .context("listing implied roles")?;
 
-    // 4. Map the structurally safe database rows cleanly into your RoleLink DTO
-    //    array
-    let rules: Vec<RoleImply> = flat_rows
-        .into_iter()
+    Ok(into_rules(flat_rows))
+}
+
+/// Map the flat database rows into the imply rules.
+fn into_rules(rows: Vec<FlatRoleLinkRow>) -> Vec<RoleImply> {
+    rows.into_iter()
         .map(|row| RoleImply {
             prior_role: openstack_keystone_core_types::role::RoleRef {
                 domain_id: (row.prior_role_domain_id != NULL_DOMAIN_ID)
@@ -233,9 +235,7 @@ pub(crate) async fn list_expanded<C: ConnectionTrait>(
                 name: Some(row.implied_role_name),
             },
         })
-        .collect();
-
-    Ok(rules)
+        .collect()
 }
 
 #[cfg(test)]

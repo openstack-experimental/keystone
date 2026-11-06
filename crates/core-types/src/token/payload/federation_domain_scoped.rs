@@ -20,7 +20,7 @@ use validator::Validate;
 use super::common;
 use crate::auth::{IdentityInfo, OidcContext, SecurityContext};
 use crate::error::BuilderError;
-use crate::resource::Domain;
+use crate::resource::DomainRef;
 use crate::token::FernetToken;
 use crate::token::error::TokenProviderError;
 
@@ -115,7 +115,7 @@ impl FederationDomainScopePayload {
     /// principal is not a traditional user.
     pub fn from_security_context(
         ctx: &SecurityContext,
-        domain: &Domain,
+        domain: &DomainRef,
         oidc: &OidcContext,
         expires_at: DateTime<Utc>,
     ) -> Result<Self, TokenProviderError> {
@@ -166,7 +166,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let domain = DomainBuilder::default()
+        let domain = DomainRefBuilder::default()
             .id("did")
             .name("pname")
             .enabled(true)

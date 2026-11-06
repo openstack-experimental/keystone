@@ -6,3 +6,6 @@ spec:
   instances: 1
   storage:
     size: 1Gi
+  postgresql:
+    parameters:
+      max_connections: "200"

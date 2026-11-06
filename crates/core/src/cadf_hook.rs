@@ -346,6 +346,7 @@ mod tests {
         let ui = UserIdentityInfo {
             user_id: uid.clone(),
             user: Some(u),
+            user_core: None,
             user_domain: None,
             user_groups: Vec::new(),
         };

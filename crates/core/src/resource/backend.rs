@@ -112,6 +112,13 @@ pub trait ResourceBackend: Send + Sync {
         tag: &'a str,
     ) -> Result<(), ResourceProviderError>;
 
+    /// Get the short representation of a domain by ID, without its options.
+    async fn get_domain_ref<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+    ) -> Result<Option<DomainRef>, ResourceProviderError>;
+
     /// Get a single domain by ID.
     ///
     /// # Parameters
@@ -188,6 +195,51 @@ pub trait ResourceBackend: Send + Sync {
         name: &'a str,
         domain_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError>;
+
+    /// Get the ID of the domain a project belongs to.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    ///
+    /// # Returns
+    /// - A `Result` containing an `Option` with the domain ID if the project
+    ///   exists, or an `Error`.
+    async fn get_project_domain_id<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Option<String>, ResourceProviderError>;
+
+    /// Get the short representation of a project (without options and tags).
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    ///
+    /// # Returns
+    /// - A `Result` containing an `Option` with the `ProjectRef` if the project
+    ///   exists, or an `Error`.
+    async fn get_project_ref<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Option<ProjectRef>, ResourceProviderError>;
+
+    /// Get the IDs of the project parents.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    ///
+    /// # Returns
+    /// - A `Result` containing an `Option` with the parent IDs, the closest
+    ///   parent first, if the project exists, or an `Error`.
+    async fn get_project_parent_ids<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Option<Vec<String>>, ResourceProviderError>;
 
     /// Get project parents.
     ///

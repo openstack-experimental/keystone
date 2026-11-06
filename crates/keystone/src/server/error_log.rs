@@ -22,9 +22,7 @@
 //! field failed to parse and why) was otherwise visible only to the client.
 //!
 //! This middleware logs the response body for any 4xx/5xx response,
-//! regardless of where in the stack it was produced. Must be layered before
-//! the compression layer (outside it, i.e. closer to the handler) so it
-//! reads the body while it's still plain JSON.
+//! regardless of where in the stack it was produced.
 
 use axum::body::{Body, to_bytes};
 use axum::extract::Request;

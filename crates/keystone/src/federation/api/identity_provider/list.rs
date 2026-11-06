@@ -82,7 +82,8 @@ pub(super) async fn list(
             // user_auth.principal().domain_id.clone();
             let domain_ids: HashSet<Option<String>> = HashSet::from([
                 None,
-                // TODO: perhaps we should first look at the domain_scope and than user domain.
+                // TODO: perhaps we should first look at the domain_scope and
+                // than user domain.
                 user_auth.principal().domain_id(),
             ]);
             Some(domain_ids)

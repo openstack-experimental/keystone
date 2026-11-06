@@ -275,7 +275,7 @@ mod tests {
         UserIdentityInfoBuilder,
     };
     use openstack_keystone_core_types::identity::UserResponseBuilder;
-    use openstack_keystone_core_types::resource::{Domain, Project};
+    use openstack_keystone_core_types::resource::{Domain, ProjectRef};
     use openstack_keystone_core_types::trust::Trust;
 
     fn trust_context(project_id: Option<&str>) -> AuthenticationContext {
@@ -399,14 +399,14 @@ mod tests {
         let authz = AuthzInfoBuilder::default()
             .roles(vec![])
             .scope(ScopeInfo::Project {
-                project: Project {
+                project: ProjectRef {
                     id: "project-1".to_string(),
                     domain_id: "domain-1".to_string(),
                     enabled: true,
                     name: "project".to_string(),
                     ..Default::default()
                 },
-                project_domain: Domain {
+                project_domain: openstack_keystone_core_types::resource::DomainRef {
                     id: "domain-1".to_string(),
                     name: "domain".to_string(),
                     enabled: true,
@@ -624,14 +624,14 @@ mod tests {
         let authz = AuthzInfoBuilder::default()
             .roles(vec![])
             .scope(ScopeInfo::Project {
-                project: Project {
+                project: ProjectRef {
                     id: "project-2".to_string(),
                     domain_id: "domain-2".to_string(),
                     enabled: true,
                     name: "project".to_string(),
                     ..Default::default()
                 },
-                project_domain: Domain {
+                project_domain: openstack_keystone_core_types::resource::DomainRef {
                     id: "domain-2".to_string(),
                     name: "domain-2".to_string(),
                     enabled: true,

@@ -253,6 +253,82 @@ async fn put<T: Serialize>(
     Ok(())
 }
 
+/// Index of the pending (pre-auth session, device code grant) records by the
+/// user they were authenticated as: ending every pending grant of a deleted
+/// user is a prefix scan instead of a read of every pending record. Pure
+/// index-keyspace key; `kind` is the expiry index kind (`"session"` or
+/// `"device"`).
+fn pending_user_idx_key(user_id: &str, kind: &str, id: &str) -> String {
+    format!("oauth2:pending_user_idx:v1:{user_id}:{kind}:{id}")
+}
+
+fn pending_user_idx_prefix(user_id: &str) -> String {
+    format!("oauth2:pending_user_idx:v1:{user_id}:")
+}
+
+/// Mutations moving the user index entry of a pending record from the user
+/// it had (`old`) to the one it has now (`new`).
+fn pending_user_idx_mutations(
+    kind: &str,
+    id: &str,
+    old: Option<&str>,
+    new: Option<&str>,
+) -> Vec<Mutation> {
+    if old == new {
+        return Vec::new();
+    }
+    let mut mutations = Vec::new();
+    if let Some(old) = old {
+        mutations.push(Mutation::remove_index(pending_user_idx_key(old, kind, id)));
+    }
+    if let Some(new) = new {
+        mutations.push(Mutation::set_index(pending_user_idx_key(new, kind, id)));
+    }
+    mutations
+}
+
+/// Store a pre-auth session, keeping its user index entry in step.
+async fn put_session(storage: &dyn StorageApi, record: &PreAuthSession) -> Result<(), StoreError> {
+    let key = session_key(&record.session_id);
+    let old: Option<PreAuthSession> = get(storage, &key).await?;
+    let mut mutations = vec![Mutation::set(
+        key,
+        record,
+        Metadata::new(),
+        None::<&str>,
+        None,
+    )?];
+    mutations.extend(pending_user_idx_mutations(
+        "session",
+        &record.session_id,
+        old.as_ref().and_then(|o| o.user_id.as_deref()),
+        record.user_id.as_deref(),
+    ));
+    storage.transaction(mutations).await?;
+    Ok(())
+}
+
+/// Store a device code grant, keeping its user index entry in step.
+async fn put_device(storage: &dyn StorageApi, record: &DeviceCodeGrant) -> Result<(), StoreError> {
+    let key = device_code_key(&record.device_code);
+    let old: Option<DeviceCodeGrant> = get(storage, &key).await?;
+    let mut mutations = vec![Mutation::set(
+        key,
+        record,
+        Metadata::new(),
+        None::<&str>,
+        None,
+    )?];
+    mutations.extend(pending_user_idx_mutations(
+        "device",
+        &record.device_code,
+        old.as_ref().and_then(|o| o.user_id.as_deref()),
+        record.user_id.as_deref(),
+    ));
+    storage.transaction(mutations).await?;
+    Ok(())
+}
+
 async fn get<T: DeserializeOwned>(
     storage: &dyn StorageApi,
     key: &str,
@@ -363,9 +439,7 @@ impl RaftOauth2SessionBackend {
         record.pending_user_id = None;
         record.pending_factors = Vec::new();
         record.mfa_attempts = 0;
-        put(storage, session_key(session_id), &record)
-            .await
-            .map_err(store_err)?;
+        put_session(storage, &record).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -386,9 +460,7 @@ impl RaftOauth2SessionBackend {
         record.pending_user_id = None;
         record.pending_factors = Vec::new();
         record.mfa_attempts = 0;
-        put(storage, session_key(session_id), &record)
-            .await
-            .map_err(store_err)?;
+        put_session(storage, &record).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -407,9 +479,7 @@ impl RaftOauth2SessionBackend {
             idp_id: idp_id.to_string(),
             state: upstream_state.to_string(),
         });
-        put(storage, session_key(session_id), &record)
-            .await
-            .map_err(store_err)?;
+        put_session(storage, &record).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -439,9 +509,7 @@ impl RaftOauth2SessionBackend {
         record.pending_user_id = None;
         record.pending_factors = Vec::new();
         record.mfa_attempts = 0;
-        put(storage, session_key(session_id), &record)
-            .await
-            .map_err(store_err)?;
+        put_session(storage, &record).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -462,9 +530,7 @@ impl RaftOauth2SessionBackend {
         record.pending_factors = factors;
         // `mfa_attempts` is deliberately not reset: re-entering the password
         // must not hand out a fresh attempt budget.
-        put(storage, session_key(session_id), &record)
-            .await
-            .map_err(store_err)?;
+        put_session(storage, &record).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -478,9 +544,7 @@ impl RaftOauth2SessionBackend {
             .map_err(store_err)?
             .ok_or_else(|| Oauth2SessionProviderError::NotFound(session_id.to_string()))?;
         record.mfa_attempts = record.mfa_attempts.saturating_add(1);
-        put(storage, session_key(session_id), &record)
-            .await
-            .map_err(store_err)?;
+        put_session(storage, &record).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -495,9 +559,7 @@ impl RaftOauth2SessionBackend {
             .map_err(store_err)?
             .ok_or_else(|| Oauth2SessionProviderError::NotFound(session_id.to_string()))?;
         record.consent_granted = Some(granted);
-        put(storage, session_key(session_id), &record)
-            .await
-            .map_err(store_err)?;
+        put_session(storage, &record).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -847,6 +909,24 @@ impl RaftOauth2SessionBackend {
         Ok(deleted)
     }
 
+    async fn list_pending_grants_by_user_impl(
+        &self,
+        storage: &dyn StorageApi,
+        user_id: &str,
+    ) -> Result<Vec<(String, String)>, Oauth2SessionProviderError> {
+        let prefix = pending_user_idx_prefix(user_id);
+        let keys = storage
+            .prefix_index(prefix.as_bytes())
+            .await
+            .map_err(store_err)?;
+        Ok(keys
+            .iter()
+            .filter_map(|key| key.strip_prefix(&prefix))
+            .filter_map(|rest| rest.split_once(':'))
+            .map(|(kind, id)| (kind.to_string(), id.to_string()))
+            .collect())
+    }
+
     async fn delete_pre_auth_session_impl(
         &self,
         storage: &dyn StorageApi,
@@ -866,6 +946,12 @@ impl RaftOauth2SessionBackend {
                 "session",
                 session_id,
             )));
+            mutations.extend(pending_user_idx_mutations(
+                "session",
+                session_id,
+                record.user_id.as_deref(),
+                None,
+            ));
         }
         storage.transaction(mutations).await.map_err(store_err)?;
         Ok(())
@@ -1400,9 +1486,7 @@ impl RaftOauth2SessionBackend {
         record.pending_user_id = None;
         record.pending_factors = Vec::new();
         record.mfa_attempts = 0;
-        put(storage, device_code_key(device_code), &record)
-            .await
-            .map_err(store_err)?;
+        put_device(storage, &record).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -1421,9 +1505,7 @@ impl RaftOauth2SessionBackend {
             idp_id: idp_id.to_string(),
             state: upstream_state.to_string(),
         });
-        put(storage, device_code_key(device_code), &record)
-            .await
-            .map_err(store_err)?;
+        put_device(storage, &record).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -1452,9 +1534,7 @@ impl RaftOauth2SessionBackend {
         record.pending_user_id = None;
         record.pending_factors = Vec::new();
         record.mfa_attempts = 0;
-        put(storage, device_code_key(device_code), &record)
-            .await
-            .map_err(store_err)?;
+        put_device(storage, &record).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -1477,9 +1557,7 @@ impl RaftOauth2SessionBackend {
         record.pending_factors = factors;
         // `mfa_attempts` is deliberately not reset: re-entering the password
         // must not hand out a fresh attempt budget.
-        put(storage, device_code_key(device_code), &record)
-            .await
-            .map_err(store_err)?;
+        put_device(storage, &record).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -1493,9 +1571,7 @@ impl RaftOauth2SessionBackend {
             .map_err(store_err)?
             .ok_or_else(|| Oauth2SessionProviderError::NotFound(device_code.to_string()))?;
         record.mfa_attempts = record.mfa_attempts.saturating_add(1);
-        put(storage, device_code_key(device_code), &record)
-            .await
-            .map_err(store_err)?;
+        put_device(storage, &record).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -1529,9 +1605,7 @@ impl RaftOauth2SessionBackend {
                 storage.transaction(mutations).await.map_err(store_err)?;
             }
             _ => {
-                put(storage, device_code_key(device_code), &record)
-                    .await
-                    .map_err(store_err)?;
+                put_device(storage, &record).await.map_err(store_err)?;
             }
         }
         Ok(record)
@@ -1548,9 +1622,7 @@ impl RaftOauth2SessionBackend {
             .map_err(store_err)?
             .ok_or_else(|| Oauth2SessionProviderError::NotFound(device_code.to_string()))?;
         record.last_polled_at = Some(polled_at);
-        put(storage, device_code_key(device_code), &record)
-            .await
-            .map_err(store_err)
+        put_device(storage, &record).await.map_err(store_err)
     }
 
     async fn take_device_code_grant_impl(
@@ -1567,6 +1639,13 @@ impl RaftOauth2SessionBackend {
                 Mutation::remove(device_user_code_key(&record.user_code), None::<&str>, None),
                 Mutation::remove_index(expiry_idx_key(record.expires_at, "device", device_code)),
             ];
+            let mut mutations = mutations;
+            mutations.extend(pending_user_idx_mutations(
+                "device",
+                device_code,
+                record.user_id.as_deref(),
+                None,
+            ));
             storage.transaction(mutations).await.map_err(store_err)?;
         }
         Ok(existing)
@@ -1795,6 +1874,16 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         sso_id: &str,
     ) -> Result<(), Oauth2SessionProviderError> {
         self.delete_sso_session_impl(self.storage(state)?, sso_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.list_pending_grants_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn list_pending_grants_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<Vec<(String, String)>, Oauth2SessionProviderError> {
+        self.list_pending_grants_by_user_impl(self.storage(state)?, user_id)
             .await
     }
 
@@ -3926,6 +4015,98 @@ mod tests {
             .collect();
         ids.sort();
         assert_eq!(ids, ["sso-1", "sso-2"]);
+    }
+
+    #[tokio::test]
+    async fn test_pending_grants_by_user_index_follows_the_authenticated_user() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        let session = sample_session_create();
+        let session_id = session.session_id.clone();
+        backend
+            .create_pre_auth_session_impl(&storage, session)
+            .await
+            .unwrap();
+        let grant = sample_device_grant_create();
+        let device_code = grant.device_code.clone();
+        backend
+            .create_device_code_grant_impl(&storage, grant)
+            .await
+            .unwrap();
+        // Not authenticated yet: nobody owns them.
+        assert!(
+            backend
+                .list_pending_grants_by_user_impl(&storage, "user-1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        backend
+            .mark_pre_auth_session_authenticated_impl(&storage, &session_id, "user-1", 1, vec![])
+            .await
+            .unwrap();
+        backend
+            .mark_device_code_grant_authenticated_impl(&storage, &device_code, "user-1", 1, vec![])
+            .await
+            .unwrap();
+        let mut owned = backend
+            .list_pending_grants_by_user_impl(&storage, "user-1")
+            .await
+            .unwrap();
+        owned.sort();
+        let mut expected = vec![
+            ("device".to_string(), device_code.clone()),
+            ("session".to_string(), session_id.clone()),
+        ];
+        expected.sort();
+        assert_eq!(owned, expected);
+        assert!(
+            backend
+                .list_pending_grants_by_user_impl(&storage, "user-2")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Re-authenticating as someone else moves the entries.
+        backend
+            .mark_pre_auth_session_authenticated_impl(&storage, &session_id, "user-2", 2, vec![])
+            .await
+            .unwrap();
+        assert_eq!(
+            backend
+                .list_pending_grants_by_user_impl(&storage, "user-1")
+                .await
+                .unwrap(),
+            vec![("device".to_string(), device_code.clone())]
+        );
+        assert_eq!(
+            backend
+                .list_pending_grants_by_user_impl(&storage, "user-2")
+                .await
+                .unwrap(),
+            vec![("session".to_string(), session_id.clone())]
+        );
+
+        // Deleting or taking the records drops the entries.
+        backend
+            .delete_pre_auth_session_impl(&storage, &session_id)
+            .await
+            .unwrap();
+        backend
+            .take_device_code_grant_impl(&storage, &device_code)
+            .await
+            .unwrap();
+        for user in ["user-1", "user-2"] {
+            assert!(
+                backend
+                    .list_pending_grants_by_user_impl(&storage, user)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+        }
     }
 
     #[tokio::test]

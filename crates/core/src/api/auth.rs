@@ -240,12 +240,7 @@ where
             let token_result = state
                 .provider
                 .get_token_provider()
-                .authorize_by_token(
-                    &ExecutionContext::internal(&state),
-                    &auth_token,
-                    Some(false),
-                    None,
-                )
+                .authorize_request_token(&ExecutionContext::internal(&state), &auth_token)
                 .await;
             let reason = token_result
                 .as_ref()
@@ -991,8 +986,10 @@ mod tests {
         let db = sea_orm::DatabaseConnection::default();
 
         let mut token_mock = MockTokenProvider::new();
-        token_mock.expect_authorize_by_token().once().returning(
-            move |_exec, _token, _allow_rescope, _restrict_to| {
+        token_mock
+            .expect_authorize_request_token()
+            .once()
+            .returning(move |_exec, _token| {
                 let mut security_context = SecurityContextTestingBuilder::default()
                     .authentication_context(AuthenticationContext::Password)
                     .principal(
@@ -1011,8 +1008,7 @@ mod tests {
                 // Fully resolve the context by setting authorization
                 security_context.set_authorization_scope(ScopeInfo::Unscoped)?;
                 Ok(ValidatedSecurityContext::test_new(security_context))
-            },
-        );
+            });
 
         let provider = Provider::mocked_builder()
             .mock_mapping(MockMappingProvider::new())
@@ -1076,8 +1072,10 @@ mod tests {
             .push("10.0.0.0/8".parse().unwrap());
 
         let mut token_mock = MockTokenProvider::new();
-        token_mock.expect_authorize_by_token().once().returning(
-            move |_exec, _token, _allow_rescope, _restrict_to| {
+        token_mock
+            .expect_authorize_request_token()
+            .once()
+            .returning(move |_exec, _token| {
                 let mut security_context = SecurityContextTestingBuilder::default()
                     .authentication_context(AuthenticationContext::Password)
                     .principal(
@@ -1095,8 +1093,7 @@ mod tests {
                     .build();
                 security_context.set_authorization_scope(ScopeInfo::Unscoped)?;
                 Ok(ValidatedSecurityContext::test_new(security_context))
-            },
-        );
+            });
 
         let state =
             create_test_state_with_config(MockMappingProvider::new(), config, Some(token_mock))
@@ -1131,8 +1128,10 @@ mod tests {
         let db = sea_orm::DatabaseConnection::default();
 
         let mut token_mock = MockTokenProvider::new();
-        token_mock.expect_authorize_by_token().once().returning(
-            move |_exec, _token, _allow_rescope, _restrict_to| {
+        token_mock
+            .expect_authorize_request_token()
+            .once()
+            .returning(move |_exec, _token| {
                 let mut security_context = SecurityContextTestingBuilder::default()
                     .authentication_context(AuthenticationContext::Ec2Credential)
                     .principal(
@@ -1151,8 +1150,7 @@ mod tests {
                 // Fully resolve the context by setting authorization
                 security_context.set_authorization_scope(ScopeInfo::Unscoped)?;
                 Ok(ValidatedSecurityContext::test_new(security_context))
-            },
-        );
+            });
 
         let provider = Provider::mocked_builder()
             .mock_mapping(MockMappingProvider::new())
@@ -1212,8 +1210,10 @@ mod tests {
         let db = sea_orm::DatabaseConnection::default();
 
         let mut token_mock = MockTokenProvider::new();
-        token_mock.expect_authorize_by_token().once().returning(
-            move |_exec, _token, _allow_rescope, _restrict_to| {
+        token_mock
+            .expect_authorize_request_token()
+            .once()
+            .returning(move |_exec, _token| {
                 let mut security_context = SecurityContextTestingBuilder::default()
                     .authentication_context(AuthenticationContext::Token(
                         openstack_keystone_core_types::token::FernetToken::ProjectScope(
@@ -1243,8 +1243,7 @@ mod tests {
                 // Fully resolve the context by setting authorization
                 security_context.set_authorization_scope(ScopeInfo::Unscoped)?;
                 Ok(ValidatedSecurityContext::test_new(security_context))
-            },
-        );
+            });
 
         let provider = Provider::mocked_builder()
             .mock_mapping(MockMappingProvider::new())
@@ -1369,14 +1368,14 @@ mod tests {
             // `ApplicationCredential` arm).
             security_context
                 .set_authorization_scope(ScopeInfo::Project {
-                    project: openstack_keystone_core_types::resource::Project {
+                    project: openstack_keystone_core_types::resource::ProjectRef {
                         id: "p1".to_string(),
                         domain_id: "d1".to_string(),
                         enabled: true,
                         name: "p1".to_string(),
                         ..Default::default()
                     },
-                    project_domain: openstack_keystone_core_types::resource::Domain {
+                    project_domain: openstack_keystone_core_types::resource::DomainRef {
                         id: "d1".to_string(),
                         enabled: true,
                         name: "d1".to_string(),

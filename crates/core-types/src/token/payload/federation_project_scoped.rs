@@ -20,7 +20,7 @@ use validator::Validate;
 use super::common;
 use crate::auth::{IdentityInfo, OidcContext, SecurityContext};
 use crate::error::BuilderError;
-use crate::resource::Project;
+use crate::resource::ProjectRef;
 use crate::token::FernetToken;
 use crate::token::error::TokenProviderError;
 
@@ -111,7 +111,7 @@ impl FederationProjectScopePayload {
     /// principal is not a traditional user.
     pub fn from_security_context(
         ctx: &SecurityContext,
-        project: &Project,
+        project: &ProjectRef,
         oidc: &OidcContext,
         expires_at: DateTime<Utc>,
     ) -> Result<Self, TokenProviderError> {
@@ -170,9 +170,13 @@ mod tests {
             .build()
             .unwrap();
 
-        let payload =
-            FederationProjectScopePayload::from_security_context(&ctx, &project, &oidc, now)
-                .unwrap();
+        let payload = FederationProjectScopePayload::from_security_context(
+            &ctx,
+            &ProjectRef::from(&project),
+            &oidc,
+            now,
+        )
+        .unwrap();
         assert_eq!(now, payload.expires_at);
         assert_eq!("uid", payload.user_id);
         assert_eq!(vec!["password"], payload.methods);

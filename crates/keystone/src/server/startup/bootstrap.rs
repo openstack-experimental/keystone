@@ -141,15 +141,20 @@ async fn check_fernet_repositories(cfg: &Config) -> Result<(), Report> {
 /// Open the Sea-ORM database connection, syncing the schema first when the
 /// target is an ephemeral in-memory SQLite database.
 async fn connect_database(cfg: &Config) -> Result<DatabaseConnection, Report> {
-    let opt: ConnectOptions = ConnectOptions::new(cfg.database.get_connection().expose_secret())
-        .sqlx_logging(cfg.database.sqlx_logging_enabled())
-        .sqlx_logging_level(cfg.database.sqlx_logging_level())
-        .to_owned();
+    let mut opt: ConnectOptions =
+        ConnectOptions::new(cfg.database.get_connection().expose_secret())
+            .sqlx_logging(cfg.database.sqlx_logging_enabled())
+            .sqlx_logging_level(cfg.database.sqlx_logging_level())
+            .to_owned();
+    if let Some(max) = cfg.database.max_pool_size {
+        opt.max_connections(max);
+    }
 
     debug!("Establishing the database connection...");
-    let conn = Database::connect(opt.clone())
+    let mut conn = Database::connect(opt.clone())
         .await
         .wrap_err("Database connection failed")?;
+    crate::server::db_timing::install(&mut conn);
     if opt.get_url() == "sqlite::memory:" {
         warn!("The database connection represent in-memory SQLite Database.");
         openstack_keystone_core::db::sync_schema(&conn)

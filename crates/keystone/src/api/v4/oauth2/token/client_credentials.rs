@@ -226,6 +226,7 @@ pub(super) async fn handle_client_credentials_grant(
     );
 
     let response = TokenResponse {
+        issued_token_type: None,
         access_token,
         token_type,
         expires_in: lifetime_seconds,
@@ -445,14 +446,11 @@ mod tests {
             .returning(|_, _| Ok(successful_auth_result()));
 
         let mut resource_mock = MockResourceProvider::default();
-        resource_mock.expect_get_domain().returning(|_, _| {
-            Ok(Some(openstack_keystone_core_types::resource::Domain {
+        resource_mock.expect_get_domain_ref().returning(|_, _| {
+            Ok(Some(openstack_keystone_core_types::resource::DomainRef {
                 id: "domain-1".to_string(),
                 name: "domain-1".to_string(),
-                description: None,
                 enabled: true,
-                extra: Default::default(),
-                options: Default::default(),
             }))
         });
 
@@ -484,6 +482,7 @@ mod tests {
         assert_eq!(response.headers()["pragma"], "no-cache");
         let body = json_body(response).await;
         assert_eq!(body["token_type"], "Bearer");
+        assert!(body.get("issued_token_type").is_none());
         let access_token = body["access_token"].as_str().unwrap();
         // Three dot-separated JWT segments, no signature validation here
         // (that belongs to the downstream middleware's own test suite).
@@ -521,14 +520,11 @@ mod tests {
             .expect_authenticate_by_mapping()
             .returning(|_, _| Ok(successful_auth_result()));
         let mut resource_mock = MockResourceProvider::default();
-        resource_mock.expect_get_domain().returning(|_, _| {
-            Ok(Some(openstack_keystone_core_types::resource::Domain {
+        resource_mock.expect_get_domain_ref().returning(|_, _| {
+            Ok(Some(openstack_keystone_core_types::resource::DomainRef {
                 id: "domain-1".to_string(),
                 name: "domain-1".to_string(),
-                description: None,
                 enabled: true,
-                extra: Default::default(),
-                options: Default::default(),
             }))
         });
         let provider = Provider::mocked_builder()

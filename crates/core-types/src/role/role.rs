@@ -119,6 +119,12 @@ pub struct RoleListParameters {
     #[validate(length(min = 1, max = 64))]
     pub domain_id: Option<Option<String>>,
 
+    /// Return only the roles with one of these IDs.
+    ///
+    /// `Some` with an empty list matches nothing.
+    #[builder(default)]
+    pub ids: Option<Vec<String>>,
+
     /// Filter roles by the name attribute.
     #[builder(default)]
     #[validate(length(min = 1, max = 255))]
@@ -127,6 +133,14 @@ pub struct RoleListParameters {
     /// Pagination controls (limit/marker/page_reverse).
     #[builder(default)]
     pub pagination: crate::ListPagination,
+
+    /// Do not load the role options; `Role::options` stays empty.
+    ///
+    /// Only the role listing API returns the options. Every caller that needs
+    /// just the ID, name or domain of a role (name resolution, lookups by
+    /// name) can set this and save a query.
+    #[builder(default)]
+    pub skip_options: bool,
 }
 
 /// Role creation data.

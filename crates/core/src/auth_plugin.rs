@@ -741,6 +741,7 @@ impl CoreHostFunctions {
                 &ctx,
                 &RoleListParameters {
                     name: Some(request.role.clone()),
+                    skip_options: true,
                     ..Default::default()
                 },
             )

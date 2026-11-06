@@ -41,14 +41,10 @@ impl TryFrom<AuthenticatorAssertionResponseRaw>
     type Error = WebauthnError;
     fn try_from(val: AuthenticatorAssertionResponseRaw) -> Result<Self, Self::Error> {
         Ok(Self {
-            authenticator_data: URL_SAFE.decode(val.authenticator_data)?.into(),
-            client_data_json: URL_SAFE.decode(val.client_data_json)?.into(),
-            signature: URL_SAFE.decode(val.signature)?.into(),
-            user_handle: val
-                .user_handle
-                .map(|uh| URL_SAFE.decode(uh))
-                .transpose()?
-                .map(Into::into),
+            authenticator_data: URL_SAFE.decode(val.authenticator_data)?,
+            client_data_json: URL_SAFE.decode(val.client_data_json)?,
+            signature: URL_SAFE.decode(val.signature)?,
+            user_handle: val.user_handle.map(|uh| URL_SAFE.decode(uh)).transpose()?,
         })
     }
 }

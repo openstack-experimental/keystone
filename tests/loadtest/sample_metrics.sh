@@ -13,7 +13,7 @@
 #   ./sample_metrics.sh /tmp/metrics.log 3 &
 #   SAMPLER=$!
 #   OS_CLOUD=ciab-rs ./target/release/load_test --host http://keystone-rs.local \
-#     --users 50 --hatch-rate 10 --run-time 90s --report-file reports/run.md
+#     --users 50 --increase-rate 10 --run-time 90s --report-file reports/run.md
 #   kill "$SAMPLER"
 #
 # Args: $1 output file (required), $2 sample interval in seconds (default 3).

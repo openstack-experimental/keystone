@@ -364,7 +364,7 @@ mod tests {
 
     fn vsc_for_mock() -> openstack_keystone_core::auth::ValidatedSecurityContext {
         use openstack_keystone_core_types::auth::*;
-        use openstack_keystone_core_types::resource::ProjectBuilder;
+        use openstack_keystone_core_types::resource::ProjectRefBuilder;
         use openstack_keystone_core_types::role::RoleRefBuilder;
         use openstack_keystone_core_types::token::{FernetToken, ProjectScopePayload};
 
@@ -390,19 +390,20 @@ mod tests {
                     .unwrap(),
             ])
             .scope(ScopeInfo::Project {
-                project: ProjectBuilder::default()
+                project: ProjectRefBuilder::default()
                     .id("pid")
                     .domain_id("pdid")
                     .enabled(true)
                     .name("pname")
                     .build()
                     .unwrap(),
-                project_domain: openstack_keystone_core_types::resource::DomainBuilder::default()
-                    .id("pdid")
-                    .name("pdname")
-                    .enabled(true)
-                    .build()
-                    .unwrap(),
+                project_domain: openstack_keystone_core_types::resource::DomainRefBuilder::default(
+                )
+                .id("pdid")
+                .name("pdname")
+                .enabled(true)
+                .build()
+                .unwrap(),
             })
             .build()
             .unwrap();
@@ -414,7 +415,7 @@ mod tests {
                         .user_id("uid")
                         .user(user_resp)
                         .user_domain(
-                            openstack_keystone_core_types::resource::DomainBuilder::default()
+                            openstack_keystone_core_types::resource::DomainRefBuilder::default()
                                 .id("user_domain_id")
                                 .name("user_domain_name")
                                 .enabled(true)

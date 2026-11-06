@@ -369,7 +369,14 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
             .state()
             .provider
             .get_role_provider()
-            .list_roles(ctx, &RoleListParameters::default())
+            .list_roles(
+                ctx,
+                &RoleListParameters {
+                    ids: Some(rec.roles.iter().map(|role| role.id.clone()).collect()),
+                    skip_options: true,
+                    ..Default::default()
+                },
+            )
             .await?
             .iter()
             .map(|role| role.id.clone())
@@ -665,7 +672,14 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
                 .state()
                 .provider
                 .get_role_provider()
-                .list_roles(ctx, &RoleListParameters::default())
+                .list_roles(
+                    ctx,
+                    &RoleListParameters {
+                        ids: Some(app_cred.roles.iter().map(|role| role.id.clone()).collect()),
+                        skip_options: true,
+                        ..Default::default()
+                    },
+                )
                 .await?
                 .into_iter()
                 .map(|x| (x.id.clone(), x))
@@ -728,7 +742,19 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
             .state()
             .provider
             .get_role_provider()
-            .list_roles(ctx, &RoleListParameters::default())
+            .list_roles(
+                ctx,
+                &RoleListParameters {
+                    ids: Some(
+                        creds
+                            .iter()
+                            .flat_map(|cred| cred.roles.iter().map(|role| role.id.clone()))
+                            .collect(),
+                    ),
+                    skip_options: true,
+                    ..Default::default()
+                },
+            )
             .await?
             .into_iter()
             .map(|x| (x.id.clone(), x))

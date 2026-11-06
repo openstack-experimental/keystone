@@ -90,7 +90,8 @@ impl AppliedRateLimitConfig {
 struct RateLimitSnapshot {
     applied_config: AppliedRateLimitConfig,
     global_ip_limiter: Option<Arc<IpRateLimiter>>,
-    // Only read by `check_ip`, which is `#[cfg(any(feature = "api", test))]`-gated.
+    // Only read by `check_ip`, which is `#[cfg(any(feature = "api",
+    // test))]`-gated.
     #[cfg_attr(not(any(feature = "api", test)), allow(dead_code))]
     trusted_proxies: Vec<IpNet>,
     user_auth_limiter: Option<Arc<UserRateLimiter>>,

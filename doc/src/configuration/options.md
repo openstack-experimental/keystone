@@ -10,7 +10,7 @@ the feature guide for constraints and safe production values.
 | Section | Options |
 | --- | --- |
 | `[DEFAULT]` | `debug`, `log_dir`, `public_endpoint`, `use_stderr`, `use_journal`, `log_rotation_type`, `log_rotate_interval`, `log_rotate_interval_type`, `max_logfile_count` |
-| `[database]` | `connection`, `connection_debug` |
+| `[database]` | `connection`, `connection_debug`, `max_pool_size` |
 | `[interface_public]` | `tcp_address`, listener `type`, and listener-specific TLS/SPIFFE fields |
 | `[interface_internal]` | `tcp_address`, listener `type`, `trust_domains`, optional `svid_path` (SVID the listener presents), and TLS content/file fields |
 | `[interface_admin]` | `socket_path`, `trust_domains`, `peer_uid`, `peer_gid`, `admin_svid`, optional `svid_path` |
@@ -81,7 +81,7 @@ See [Fernet tokens](../admin/tokens/fernet.md) and
 | `[identity]` | `driver`, `caching`, `default_domain_id`, `max_password_length`, `password_hashing_algorithm`, `password_hash_rounds`, `password_hashing_threads`, `password_hashing_queue_size`, `password_hashing_queue_full`, `user_options_id_name_mapping` |
 | `[assignment]` | `driver` |
 | `[catalog]` | `driver`, `list_limit`, `caching`, `cache_time` |
-| `[resource]` | `driver` |
+| `[resource]` | `driver`, `caching` |
 | `[role]` | `driver` |
 | `[limit]` | `driver`, `list_limit`, `enforcement_model` |
 | `[revoke]` | `driver`, `expiration_buffer` |

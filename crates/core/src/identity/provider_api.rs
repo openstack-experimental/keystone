@@ -180,6 +180,27 @@ pub trait IdentityApi: Send + Sync {
         user_id: &'a str,
     ) -> Result<Option<UserResponse>, IdentityProviderError>;
 
+    /// Get the minimal user data required to authorize a request.
+    ///
+    /// Unlike [`Self::get_user`] this skips everything but the identity, the
+    /// domain and the effective `enabled` flag and never populates the full
+    /// user cache with partial data.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `user_id`: The ID of the user to retrieve.
+    async fn get_user_core<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        user_id: &'a str,
+    ) -> Result<Option<UserCore>, IdentityProviderError> {
+        Ok(self
+            .get_user(ctx, user_id)
+            .await?
+            .as_ref()
+            .map(UserCore::from))
+    }
+
     /// Get single user by ID.
     ///
     /// # Parameters

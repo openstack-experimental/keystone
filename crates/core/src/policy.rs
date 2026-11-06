@@ -642,7 +642,7 @@ mod tests {
                 domain_id: None,
             }])
             .scope(ScopeInfo::Domain(
-                openstack_keystone_core_types::resource::Domain {
+                openstack_keystone_core_types::resource::DomainRef {
                     id: "domain_id".to_string(),
                     name: "domain_name".to_string(),
                     enabled: true,
@@ -785,14 +785,14 @@ mod tests {
                 domain_id: None,
             }])
             .scope(ScopeInfo::Project {
-                project: openstack_keystone_core_types::resource::Project {
+                project: openstack_keystone_core_types::resource::ProjectRef {
                     id: project_id.to_string(),
                     domain_id: "domain_id".to_string(),
                     enabled: true,
                     name: "proj".to_string(),
                     ..Default::default()
                 },
-                project_domain: openstack_keystone_core_types::resource::Domain {
+                project_domain: openstack_keystone_core_types::resource::DomainRef {
                     id: "domain_id".to_string(),
                     name: "domain_name".to_string(),
                     enabled: true,

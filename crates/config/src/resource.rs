@@ -26,6 +26,18 @@ pub struct ResourceProvider {
     /// `GET /v3/projects` and `/v3/domains` pagination limits.
     #[serde(default)]
     pub list_limit: ListLimitConfig,
+
+    /// Caching. When enabled, the facts that never change for a project are
+    /// kept in the memory of the process: the domain of the project and the
+    /// chain of its parents (`domain_id` and `parent_id` cannot be updated).
+    /// Each cache holds at most 100,000 entries and is emptied when it is
+    /// full. An entry is dropped when the project (or its domain) is deleted
+    /// through this process;
+    /// a project removed by another process (or directly in the database)
+    /// and re-created with the same ID in a different place keeps the old
+    /// entry until restart.
+    #[serde(default)]
+    pub caching: bool,
 }
 
 impl Default for ResourceProvider {
@@ -33,6 +45,7 @@ impl Default for ResourceProvider {
         Self {
             driver: default_sql_driver(),
             list_limit: ListLimitConfig::default(),
+            caching: false,
         }
     }
 }

@@ -69,6 +69,7 @@ pub(super) async fn create(
                     &ExecutionContext::internal(&state),
                     &RoleListParametersBuilder::default()
                         .name(name.clone())
+                        .skip_options(true)
                         .build()?,
                 )
                 .await?
