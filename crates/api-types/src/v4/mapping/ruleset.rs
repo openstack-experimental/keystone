@@ -80,6 +80,12 @@ pub enum IdentitySource {
         /// The OAuth2 client's `provider_id` this ruleset is bound to.
         provider_id: String,
     },
+    /// RFC 8693 token exchange identity source (ADR 0026 §12).
+    TokenExchange {
+        /// The `iss` of the external JWT, equal to the `bound_issuer` of the
+        /// identity provider that signs it.
+        issuer: String,
+    },
 }
 
 // ---------------------------------------------------------------------------

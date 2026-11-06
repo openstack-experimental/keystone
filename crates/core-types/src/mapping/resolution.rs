@@ -80,13 +80,27 @@ pub enum IdentitySource {
         /// The OAuth2 client's `provider_id` this ruleset is bound to.
         provider_id: String,
     },
+    /// RFC 8693 token exchange of an external identity provider JWT (ADR 0026
+    /// §12). The `subject_token` is verified against the identity provider
+    /// whose `bound_issuer` equals `issuer`, and its claims are fed to the
+    /// ruleset bound to this source.
+    TokenExchange {
+        /// The `iss` of the external JWT, equal to the `bound_issuer` of the
+        /// identity provider that signs it.
+        issuer: String,
+    },
 }
 
 impl IdentitySource {
     /// Returns a stable string representation for keyspace indexing.
     ///
     /// Format: `"<variant>:<id>"`, e.g. `"federation:okta-enterprise-idp"`,
-    /// `"k8s:eks-prod-cluster-01"`, `"spiffe:prod.keystone.internal"`.
+    /// `"k8s:eks-prod-cluster-01"`, `"spiffe:prod.keystone.internal"`,
+    /// `"token_exchange:https%3A%2F%2Fidp.example.com"`.
+    ///
+    /// The `:` is the prefix separator of the backend storage, so an id that
+    /// can contain it must be encoded. The `TokenExchange` issuer is a URL, so
+    /// its `:`, `/` and `%` are percent-encoded.
     pub fn to_string_key(&self) -> String {
         match self {
             Self::Federation { idp_id } => format!("federation:{idp_id}"),
@@ -95,8 +109,29 @@ impl IdentitySource {
             Self::ApiClient { provider_id } => format!("api_client:{provider_id}"),
             Self::WasmPlugin { plugin_name } => format!("wasm:{plugin_name}"),
             Self::OAuth2Client { provider_id } => format!("oauth2_client:{provider_id}"),
+            Self::TokenExchange { issuer } => {
+                format!("token_exchange:{}", encode_key_segment(issuer))
+            }
         }
     }
+}
+
+/// Percent-encode the characters that are unsafe inside a key segment.
+///
+/// `:` separates the key parts and is used for prefix searching, `/` is a path
+/// separator and `%` is the escape character itself. Encoding `%` keeps the
+/// mapping injective, so two different inputs never give the same segment.
+fn encode_key_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '%' => out.push_str("%25"),
+            ':' => out.push_str("%3A"),
+            '/' => out.push_str("%2F"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -109,5 +144,84 @@ mod tests {
             plugin_name: "acme_scim_bridge".to_string(),
         };
         assert_eq!(source.to_string_key(), "wasm:acme_scim_bridge");
+    }
+
+    #[test]
+    fn test_token_exchange_to_string_key() {
+        let source = IdentitySource::TokenExchange {
+            issuer: "https://idp.example.com".to_string(),
+        };
+        assert_eq!(
+            source.to_string_key(),
+            "token_exchange:https%3A%2F%2Fidp.example.com"
+        );
+    }
+
+    #[test]
+    fn test_token_exchange_key_has_no_extra_separator() {
+        let source = IdentitySource::TokenExchange {
+            issuer: "https://idp.example.com:8443/x".to_string(),
+        };
+        let key = source.to_string_key();
+        // Only the variant prefix may contain the `:` separator.
+        assert_eq!(key.matches(':').count(), 1);
+        assert!(!key.contains('/'));
+    }
+
+    #[test]
+    fn test_token_exchange_key_is_not_a_prefix_of_another() {
+        let key_a = IdentitySource::TokenExchange {
+            issuer: "https://idp.example.com".to_string(),
+        }
+        .to_string_key();
+        let key_b = IdentitySource::TokenExchange {
+            issuer: "https://idp.example.com:8443/x".to_string(),
+        }
+        .to_string_key();
+        // A prefix search for the first issuer must not match the second.
+        assert!(!key_b.starts_with(&format!("{key_a}:")));
+    }
+
+    #[test]
+    fn test_token_exchange_key_encoding_is_injective() {
+        let encoded = IdentitySource::TokenExchange {
+            issuer: "a%3Ab".to_string(),
+        }
+        .to_string_key();
+        let raw = IdentitySource::TokenExchange {
+            issuer: "a:b".to_string(),
+        }
+        .to_string_key();
+        assert_eq!(encoded, "token_exchange:a%253Ab");
+        assert_eq!(raw, "token_exchange:a%3Ab");
+        assert_ne!(encoded, raw);
+    }
+
+    #[test]
+    fn test_token_exchange_keys_differ_per_issuer() {
+        let a = IdentitySource::TokenExchange {
+            issuer: "https://a.example.com".to_string(),
+        };
+        let b = IdentitySource::TokenExchange {
+            issuer: "https://b.example.com".to_string(),
+        };
+        assert_ne!(a.to_string_key(), b.to_string_key());
+    }
+
+    #[test]
+    fn test_token_exchange_serde_shape() {
+        let source: IdentitySource =
+            serde_json::from_str(r#"{"type":"token_exchange","issuer":"https://idp.example.com"}"#)
+                .unwrap();
+        assert_eq!(
+            source,
+            IdentitySource::TokenExchange {
+                issuer: "https://idp.example.com".to_string(),
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(&source).unwrap(),
+            serde_json::json!({"type": "token_exchange", "issuer": "https://idp.example.com"})
+        );
     }
 }
