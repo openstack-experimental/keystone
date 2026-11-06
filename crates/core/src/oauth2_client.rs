@@ -46,7 +46,6 @@ pub use provider_api::Oauth2ClientApi;
 pub use service::Oauth2ClientService;
 pub use token::{build_access_token_claims, hydrate_client_credentials_context};
 pub use token_exchange::{TokenExchangeError, build_token_exchange_claims, validate_subject_token};
-pub use verify::verify_openstack_subject_token;
 pub use verify::{
     IntrospectedAccessToken, RevocableAccessToken, SubjectTokenValidationProfile,
     TokenPresentation, TokenVerificationError, enforce_token_binding, ensure_openid_scope,
@@ -54,4 +53,3 @@ pub use verify::{
     verify_oidc_access_token_unscoped, verify_openstack_access_token,
     verify_openstack_subject_token, verify_revocable_access_token, verify_subject_token_jwt,
 };
-pub use verify::{SubjectTokenValidationProfile, verify_subject_token_jwt};
