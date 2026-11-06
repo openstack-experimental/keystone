@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keystone-py
+spec:
+  template:
+    spec:
+      containers:
+        - name: keystone-py
+          # One single-threaded uwsgi process per CPU of the limit. Threads
+          # return HTTP 502 under load, see memory-comparison.md.
+          command: ["uwsgi", "--http-socket", ":5000", "-b", "65535", "--listen", "1024", "-w", "keystone.server.wsgi:initialize_public_application()", "--master", "--lazy-apps", "-p", "24"]
+          volumeMounts:
+            - name: py-overrides
+              mountPath: /etc/keystone/keystone.conf.d
+          resources:
+            requests:
+              cpu: "4"
+            limits:
+              cpu: "24"
+          env:
+            - name: OS_CACHE__ENABLED
+              value: "true"
+            - name: OS_CACHE__MEMCACHE_SERVERS
+              value: memcached:11211
+      volumes:
+        - name: py-overrides
+          configMap:
+            name: keystone-py-overrides

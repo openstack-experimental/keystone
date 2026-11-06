@@ -147,7 +147,13 @@ async fn send_json(
     if let Some(body) = body {
         req = req.json(&body);
     }
-    let resp = req.send().await.ok()?;
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("vu bootstrap: request failed: {e:?}");
+            return None;
+        }
+    };
     let status = resp.status().as_u16();
     let subject = resp
         .headers()
@@ -190,7 +196,12 @@ async fn put(client: &Client, host: &str, token: &str, path: &str) -> bool {
         None,
     )
     .await
-    .is_some_and(|(status, _, _)| (200..300).contains(&status))
+    .is_some_and(|(status, _, body)| {
+        if !(200..300).contains(&status) {
+            eprintln!("vu bootstrap: PUT {path} returned {status}: {body}");
+        }
+        (200..300).contains(&status)
+    })
 }
 
 async fn find_member_role(client: &Client, host: &str, token: &str) -> Option<String> {

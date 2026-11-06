@@ -402,6 +402,15 @@ profiles:
         path: /manifests/kustomize/paths/0
         value: tools/k8s/keystone/overlays/skaffold-soak-otel
 
+  # Tuned for the rs vs py load tests: one pod of each, CPU requests 4 and
+  # limits 24, jemalloc, 24 hashing threads and 24 uwsgi processes:
+  # `skaffold run -m keystone -p local,loadtest`.
+  - name: loadtest
+    patches:
+      - op: replace
+        path: /manifests/kustomize/paths/0
+        value: tools/k8s/keystone/overlays/skaffold-loadtest
+
   # JWS (ES256) tokens instead of the fernet default, to test both providers:
   # `skaffold run -m keystone -p local,jws`. Profiles replace the one kustomize
   # path, so with traces use `jws-otel` rather than `jws,otel`.

@@ -16,15 +16,17 @@ single-node k3s host with 32 cores, the same Postgres, and a closed-loop
 virtual-user (VU) load that is stepped up until the 95th percentile (p95)
 latency reaches 500 ms.
 
-|                                              |          Rust |     Python | Rust advantage |
-| -------------------------------------------- | ------------: | ---------: | -------------: |
-| VUs at p95 = 500 ms, default mix (3% logins) |          ~673 |       ~188 |           3.6x |
-| Throughput at that point, default mix        |  ~1,730 req/s | ~515 req/s |           3.4x |
-| VUs at p95 = 500 ms, no password logins      |        ~1,364 |       ~187 |           7.3x |
-| VUs per CPU core, no password logins         |          56.8 |        7.8 |           7.3x |
-| Memory, idle                                 |      ~155 MiB |   ~2.7 GiB |      ~17x less |
-| Memory, 600 VUs (average / max)              | 194 / 223 MiB |          - |                |
-| Memory, 2,100 VUs (average / max)            | 297 / 428 MiB |          - |                |
+|                                              |          Rust |         Python | Rust advantage |
+| -------------------------------------------- | ------------: | -------------: | -------------: |
+| VUs at p95 = 500 ms, default mix (3% logins) |          ~673 |           ~188 |           3.6x |
+| Throughput at that point, default mix        |  ~1,730 req/s |     ~515 req/s |           3.4x |
+| VUs at p95 = 500 ms, no password logins      |        ~1,364 |           ~187 |           7.3x |
+| Throughput at that point, no password logins |  ~2,700 req/s |     ~475 req/s |           5.7x |
+| VUs per CPU core, no password logins         |          56.8 |            7.8 |           7.3x |
+| Memory, idle                                 |      ~155 MiB |       ~2.7 GiB |      ~17x less |
+| Memory, 600 VUs (average / max)              | 194 / 223 MiB |              - |                |
+| Memory, 2,100 VUs (average / max)            | 297 / 428 MiB |              - |                |
+| Memory, 50 to 400 VUs (range of averages)    |             - | 2.6 to 2.8 GiB |                |
 
 What this shows:
 
@@ -41,6 +43,10 @@ What this shows:
   loads tested.
 - **Reliability.** Rust had no failed requests at any step of the sweeps. Python
   returned about 2% HTTP 500 and 502 responses under load.
+- **Equal load.** At the same 20 and 50 VUs, Rust answers token validation in 13
+  to 27 ms (p50) and 16 to 34 ms (p95); Python with its shared cache needs 16 to
+  55 ms and 90 to 159 ms, and 740 to 1,650 ms without the cache. See
+  [Equal-load comparison](#equal-load-comparison).
 - **Python ceiling.** Python's throughput is flat at about 500 req/s regardless
   of the VU count. It may not be CPU-bound.
 
@@ -182,11 +188,76 @@ queries per request reduce client and kernel CPU and would, by a few percent.
 ## Python results
 
 Python reached p95 = 500 ms at about 188 VUs (default mix) and about 187 VUs (no
-logins), at about 7.8 VUs per core and about 515 req/s. About 2% of the requests
-failed with HTTP 500 or 502 under load.
+logins), at about 7.8 VUs per core. Throughput at that point is about 515 req/s
+with the default mix and about 475 req/s without password logins; it is the same
+within noise because Python does not spend its limit on hashing. About 2% of the
+requests failed with HTTP 500 or 502 under load.
+
+No password logins, per step (one run each):
+
+| VUs | Throughput (req/s) | p95 (ms) | p99 (ms) | Failed |
+| --: | -----------------: | -------: | -------: | -----: |
+| 100 |                517 |      282 |      323 |   2.0% |
+| 200 |                471 |      532 |      581 |   1.8% |
+| 300 |                460 |      778 |      868 |   2.0% |
+| 400 |                434 |    1,064 |    1,343 |   2.0% |
+
+Throughput is flat to slowly falling while the latency grows with the VU count,
+as for Rust. Python's memory stays at about 2.7 GiB at every step.
 
 A shared cache is the only valid Python topology, see
 [Python cache topology](#python-cache-topology).
+
+## Equal-load comparison
+
+The sweeps above load each side up to its own latency limit, so the VU counts
+differ. This run puts the same number of VUs on both sides: 20 and 50 VUs, 2
+minutes each, no password logins, one pod per side with `requests = 4` and
+`limits = 24` CPU (the `loadtest` skaffold profile). All requests, including
+Python's, go through the traefik ingress. Values are p50 / p95 / p99 in ms.
+
+| 20 VUs                               |        Rust | Python (cache) | Python (no cache) |
+| ------------------------------------ | ----------: | -------------: | ----------------: |
+| Throughput (req/s)                   |       1,668 |            668 |                30 |
+| Failed requests                      |           0 |          1,853 |                13 |
+| All requests                         |    12/15/19 |      16/88/109 |       729/851/868 |
+| Token validate                       |    13/16/17 |      16/90/103 |       741/856/872 |
+| Role assignments, `effective`        | 5.7/8.1/9.4 |      36/71/117 |       362/469/483 |
+| Role assignments, `scope.project.id` | 5.0/7.3/8.6 |       18/51/60 |       342/453/457 |
+| Memory (MiB)                         |     150-225 |    2,414-2,668 |       2,306-2,744 |
+
+| 50 VUs                               |     Rust | Python (cache) | Python (no cache) |
+| ------------------------------------ | -------: | -------------: | ----------------: |
+| Throughput (req/s)                   |    1,960 |            634 |                33 |
+| Failed requests                      |        0 |          1,633 |                27 |
+| All requests                         | 25/33/37 |     56/157/196 | 1,605/1,769/1,818 |
+| Token validate                       | 27/34/38 |     55/159/189 | 1,647/1,794/1,843 |
+| Role assignments, `effective`        | 15/20/23 |     73/136/167 | 1,253/1,335/1,369 |
+| Role assignments, `scope.project.id` | 14/18/21 |     55/118/148 | 1,204/1,319/1,367 |
+| Memory (MiB)                         |  208-241 |    2,683-2,750 |       2,672-2,698 |
+
+- With the shared cache on, Python's median is close to Rust's (token validate
+  p50 16 vs 13 ms at 20 VUs). The difference is in the tail, about 5 to 6x at
+  p95 and p99 for token validation, and in throughput, 2.5 to 3x. Listing role
+  assignments is 4 to 6x slower at p50.
+- Python's throughput is about 650 req/s at both load levels, so it is already
+  at its ceiling at 20 VUs. Rust still grows from 20 to 50 VUs.
+- With the cache off, Python falls to about 30 req/s, 20x lower, and latency
+  grows with the VU count: the server is saturated. Memory does not change with
+  the cache, so the cache is not what costs Python its memory.
+- Almost all Python failures with the cache on are HTTP 502 (1,806 at 20 VUs,
+  1,544 at 50 VUs), about 2% of requests. uwsgi `--http-socket` closes the
+  connection after every response, and a client that reuses a pooled connection
+  fails with `IncompleteMessage` when it talks to uwsgi directly. This is the
+  likely source of the 502s behind traefik, but it was not confirmed.
+- Rust was also run over the ClusterIP, which skips the ingress: 1,732 req/s at
+  20 VUs (p50 / p95 / p99 11 / 14 / 18 ms) and 2,016 req/s at 50 VUs (24 / 32 /
+  36 ms). Python cannot be run that way, because of the connection handling
+  above.
+
+The Python no-cache column was measured with `OS_CACHE__ENABLED=false` on the
+same pod. It is a measurement of the cost of the cache, not a supported
+topology.
 
 ## Memory
 
@@ -195,6 +266,14 @@ A shared cache is the only valid Python topology, see
 | Idle                      | ~155 MiB      | ~2.7 GiB                     |
 | 600 VUs (average / max)   | 194 / 223 MiB | -                            |
 | 2,100 VUs (average / max) | 297 / 428 MiB | -                            |
+| 50 VUs (average / max)    | -             | 2,635 / 2,727 MiB            |
+| 200 VUs (average / max)   | -             | 2,762 / 2,768 MiB            |
+| 400 VUs (average / max)   | -             | 2,768 / 2,769 MiB            |
+
+The Python rows are from the default-mix sweep; the no-login sweep gives the
+same values (2.74 to 2.76 GiB at 200 to 400 VUs). The Python loads are lower
+because that is where Python reaches its latency limit, so the two sides are not
+measured at the same VU count.
 
 Rust memory grows with the number of connections and in-flight requests, not
 with the number of workers. Python memory is dominated by the per-process copy
@@ -214,7 +293,8 @@ relies on the revocation events being visible to every API instance. A memcached
 instance per pod gives every pod a private cache: a token revoked through one
 pod stays valid in the caches of the others until it expires. That breaks token
 revocation, is an anti-pattern, and must not be used in a real deployment. All
-Python figures on this page use the shared memcached.
+Python figures on this page use the shared memcached, except the explicit
+no-cache column of the [equal-load comparison](#equal-load-comparison).
 
 ## Limitations
 
@@ -226,8 +306,10 @@ Python figures on this page use the shared memcached.
   operations that both implement.
 - The Python failures (about 2% HTTP 500 and 502) and its flat ~500 req/s
   ceiling were not investigated.
-- Python has no no-login throughput figure in this page, only the VU count.
 - Rust runs with telemetry off; Python with no telemetry either.
+- The sweeps ran with `requests = limits = 24` CPU; the equal-load run used
+  `requests = 4`, `limits = 24` so both versions can be deployed at the same
+  time. The limit, which decides the throughput ceiling, is the same.
 
 ## Reproducing
 

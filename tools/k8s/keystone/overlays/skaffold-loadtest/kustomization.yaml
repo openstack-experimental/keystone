@@ -1,0 +1,26 @@
+# The skaffold overlay tuned for load tests that compare keystone-rs with
+# keystone-py (doc/src/contributor/memory-comparison.md). Selected by the
+# `loadtest` profile of the `keystone` skaffold module:
+#
+#   skaffold run -m keystone -p local,loadtest --default-repo localhost:5000
+#
+# One pod of each implementation, `requests = 4` and `limits = 24` CPU, so
+# both fit on a 32 core node at the same time and either can use most of it.
+# The default overlay runs two rs and two py pods and stays untuned.
+resources:
+  - ../skaffold
+
+configMapGenerator:
+  - name: keystone-py-overrides
+    files:
+      - conf/keystone-py.conf
+
+replicas:
+  - name: keystone-rs
+    count: 1
+  - name: keystone-py
+    count: 1
+
+patches:
+  - path: statefulset-patch.yaml
+  - path: deployment-py-patch.yaml
