@@ -272,7 +272,6 @@ fn resolve_decoding_key(
     jwks: &JwkSet,
     expected_algorithm: SigningAlgorithm,
 ) -> Result<(Algorithm, DecodingKey), TokenVerificationError> {
-    openstack_keystone_jwt_crypto::install();
     let header = decode_header(token)?;
     let expected_alg = jwt_algorithm(expected_algorithm);
     if header.alg != expected_alg {
@@ -802,6 +801,7 @@ mod tests {
     /// Sign `claims` with a fresh ES256 keypair and return `(token, jwks,
     /// kid)` -- the harness every test in this module builds on.
     fn sign(claims: &impl serde::Serialize) -> (String, JwkSet, String) {
+        openstack_keystone_jwt_crypto::install().unwrap();
         let material = generate_keypair(SigningAlgorithm::Es256).unwrap();
         let encoding_key: EncodingKey = to_encoding_key(&material).unwrap();
         let mut header = Header::new(Algorithm::ES256);

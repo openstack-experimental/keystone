@@ -46,6 +46,8 @@ pub async fn get_mocked_state_loaded(
     config: openstack_keystone_config::LoadedConfig,
     provider_builder: Option<ProviderBuilder>,
 ) -> ServiceState {
+    // The binaries install the provider at start-up; tests do it here.
+    openstack_keystone_jwt_crypto::install().unwrap();
     Arc::new(
         Service::new(
             ConfigManager::not_watched_loaded(config),

@@ -186,6 +186,7 @@ async fn mint_access_token_bound(
         .get_oauth2_key_provider()
         .active_signing_key(state, &client.domain_id)
         .await?;
+    openstack_keystone_jwt_crypto::install()?;
     let encoding_key = to_encoding_key(&signing_key)?;
     let mut header = jsonwebtoken::Header::new(jwt_algorithm(signing_key.algorithm));
     header.kid = Some(derive_kid(&signing_key.public_key_der));

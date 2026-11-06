@@ -437,6 +437,7 @@ mod tests {
     /// Sign an OIDC access token for `aud` and return `(token, key mock)`
     /// whose `jwks()` serves the matching public key.
     fn signed_access_token(aud: &str, sid: Option<&str>) -> (String, MockOauth2KeyProvider) {
+        openstack_keystone_jwt_crypto::install().unwrap();
         let now = chrono::Utc::now().timestamp();
         let material = generate_keypair(SigningAlgorithm::Es256).unwrap();
         let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);

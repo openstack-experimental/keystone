@@ -12,15 +12,19 @@ exclude.workspace = true
 
 [features]
 default = ["ring", "rsa-keygen"]
-# JWS primitives through `ring`. Unused, but still compiled, when `fips` is
+# JWS primitives through `ring`. Unused, but still compiled, when `aws-lc` is
 # also enabled.
 ring = ["dep:ring"]
 # RSA key generation through the `rsa` crate, since `ring` cannot generate RSA
-# keys. Not needed with `fips`, where AWS-LC generates them.
+# keys. Not needed with `aws-lc`, where AWS-LC generates them.
 rsa-keygen = ["dep:rsa"]
-# JWS primitives through the FIPS 140-3 validated AWS-LC module. Takes
-# precedence over `ring`.
-fips = ["dep:aws-lc-rs", "aws-lc-rs/fips"]
+# JWS primitives through `aws-lc-rs`. Takes precedence over `ring`. Building it
+# needs cmake and a C compiler.
+aws-lc = ["dep:aws-lc-rs", "aws-lc-rs/aws-lc-sys"]
+# `aws-lc` built against the FIPS 140-3 validated AWS-LC module, which
+# `aws-lc-rs` prefers over the non-FIPS one when both are enabled. Also needs
+# clang and Go to build.
+fips = ["aws-lc", "aws-lc-rs/fips"]
 
 [dependencies]
 aws-lc-rs = { workspace = true, optional = true }

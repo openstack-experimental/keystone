@@ -63,13 +63,23 @@ fn pkcs1(der: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     seq.is_empty().then(|| (unsigned(n), unsigned(e)))
 }
 
-/// The content of the BIT STRING of an SPKI, without the unused-bits byte.
-pub(crate) fn spki_key_bits(der: &[u8]) -> Option<&[u8]> {
+/// DER of the `rsaEncryption` OID (1.2.840.113549.1.1.1), the algorithm of an
+/// RSA `SubjectPublicKeyInfo`.
+const RSA_ENCRYPTION_OID: [u8; 11] = [
+    0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
+];
+
+/// The content of the BIT STRING of an RSA SPKI, without the unused-bits
+/// byte. `None` for any other key algorithm.
+pub(crate) fn rsa_spki_key_bits(der: &[u8]) -> Option<&[u8]> {
     let (spki, rest) = read(der, 0x30)?;
     if !rest.is_empty() {
         return None;
     }
-    let (_algorithm, spki) = read(spki, 0x30)?;
+    let (algorithm, spki) = read(spki, 0x30)?;
+    if !algorithm.starts_with(&RSA_ENCRYPTION_OID) {
+        return None;
+    }
     let (bits, spki) = read(spki, 0x03)?;
     if !spki.is_empty() {
         return None;
@@ -84,5 +94,5 @@ pub(crate) fn spki_key_bits(der: &[u8]) -> Option<&[u8]> {
 /// Split a PKCS#1 `RSAPublicKey` or an SPKI `SubjectPublicKeyInfo` carrying
 /// one into big-endian `(n, e)`.
 pub(crate) fn rsa_public_components(der: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    pkcs1(der).or_else(|| pkcs1(spki_key_bits(der)?))
+    pkcs1(der).or_else(|| pkcs1(rsa_spki_key_bits(der)?))
 }

@@ -147,18 +147,20 @@ sqlite = ["sea-orm/sqlx-sqlite"]
 # it pulls in extism/wasmtime (~75 crates).
 wasm_plugins = ["dep:openstack-keystone-auth-plugin-runtime", "openstack-keystone-auth-plugin-runtime/extism", "openstack-keystone-core/wasm_plugins"]
 # Use aws-lc-rs instead of ring as the TLS crypto provider (LDAP, gRPC, SPIFFE,
-# syslog). Building it needs cmake and a C compiler.
+# syslog) and for the JWS crypto. Building it needs cmake and a C compiler.
 rustls-aws-lc = [
   "openstack-keystone-tls-provider/aws-lc",
+  "openstack-keystone-jwt-crypto/aws-lc",
   "openstack-keystone-identity-driver-ldap/rustls-aws-lc",
 ]
-# FIPS 140-3 validated aws-lc-rs for TLS (rustls `fips`) and for the storage
-# cryptography. Implies `rustls-aws-lc`.
+# FIPS 140-3 validated aws-lc-rs for TLS (rustls `fips`), the storage
+# cryptography and the JWS signing and verification. Implies `rustls-aws-lc`.
 fips = [
   "rustls-aws-lc",
   "openstack-keystone-tls-provider/fips",
   "openstack-keystone-distributed-storage/fips",
   "cadf/fips",
+  "openstack-keystone-jwt-crypto/fips",
 ]
 # Embedded Swagger UI served at `/swagger-ui`. Off by default; the OpenAPI
 # document at `/api-docs/openapi.json` is always served.

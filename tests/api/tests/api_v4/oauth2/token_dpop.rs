@@ -62,7 +62,7 @@ fn proof(htu: &str, nonce: Option<&str>) -> Result<String> {
         URL_SAFE_NO_PAD.encode(header.to_string()),
         URL_SAFE_NO_PAD.encode(claims.to_string())
     );
-    openstack_keystone_jwt_crypto::install();
+    openstack_keystone_jwt_crypto::install().unwrap();
     let signature = jsonwebtoken::crypto::sign(
         message.as_bytes(),
         &jsonwebtoken::EncodingKey::from_ec_pem(KEY_PEM.as_bytes())?,

@@ -16,9 +16,9 @@
 //! `KeyUtils` of the provider: public-key components for JWK publication and
 //! thumbprint hashing.
 
-#[cfg(feature = "fips")]
+#[cfg(feature = "aws-lc")]
 use aws_lc_rs as provider;
-#[cfg(not(feature = "fips"))]
+#[cfg(not(feature = "aws-lc"))]
 use ring as provider;
 
 use jsonwebtoken::Algorithm;

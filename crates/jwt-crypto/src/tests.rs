@@ -58,7 +58,7 @@ fn b64(s: &str) -> Vec<u8> {
 }
 
 fn roundtrip(alg: Algorithm, enc: &EncodingKey, dec: &DecodingKey) {
-    install();
+    install().unwrap();
     let token = encode(&Header::new(alg), &claims(), enc).unwrap();
     let decoded = decode::<Claims>(&token, dec, &Validation::new(alg)).unwrap();
     assert_eq!(decoded.claims, claims());
@@ -93,7 +93,7 @@ fn es384_roundtrip() {
 
 #[test]
 fn es256_rejects_other_key() {
-    install();
+    install().unwrap();
     let (private, _) = ec_keys(&ECDSA_P256_SHA256_FIXED_SIGNING);
     let (_, other_public) = ec_keys(&ECDSA_P256_SHA256_FIXED_SIGNING);
     let token = encode(
@@ -156,7 +156,7 @@ fn rsa_roundtrip_all_algorithms() {
 
 #[test]
 fn rsa_verifies_with_jwk_components() {
-    install();
+    install().unwrap();
     let enc = EncodingKey::from_rsa_der(&b64(RSA_PKCS1));
     let jwk = Jwk::from_encoding_key(&enc, Algorithm::RS256).unwrap();
     let dec = DecodingKey::from_jwk(&jwk).unwrap();
@@ -166,7 +166,7 @@ fn rsa_verifies_with_jwk_components() {
 
 #[test]
 fn rsa_public_components_agree() {
-    install();
+    install().unwrap();
     let from_private = keys::rsa_components_from_private_key(&b64(RSA_PKCS8)).unwrap();
     let from_pkcs1 = keys::rsa_components_from_public_key(&b64(RSA_PKCS1_PUB)).unwrap();
     let from_spki = keys::rsa_components_from_public_key(&b64(RSA_SPKI)).unwrap();
@@ -178,7 +178,7 @@ fn rsa_public_components_agree() {
 
 #[test]
 fn ec_jwk_and_thumbprint() {
-    install();
+    install().unwrap();
     let (private, public) = ec_keys(&ECDSA_P256_SHA256_FIXED_SIGNING);
     let jwk =
         Jwk::from_encoding_key(&EncodingKey::from_ec_der(&private), Algorithm::ES256).unwrap();
@@ -204,7 +204,7 @@ fn ec_jwk_and_thumbprint() {
 
 #[test]
 fn key_family_mismatch_is_rejected() {
-    install();
+    install().unwrap();
     let (private, _) = ec_keys(&ECDSA_P256_SHA256_FIXED_SIGNING);
     assert!(
         encode(
@@ -240,4 +240,32 @@ fn generated_rsa_signs_and_verifies() {
         &DecodingKey::from_rsa_der(pkcs1),
     );
     assert!(rsa_pkcs1_from_spki(&[0x30, 0x00]).is_none());
+}
+
+#[test]
+fn rsa_pkcs1_from_spki_rejects_ec_spki() {
+    let key = generate(KeyKind::P256).unwrap();
+    assert!(rsa_pkcs1_from_spki(&key.public_spki).is_none());
+}
+
+#[test]
+fn install_is_idempotent() {
+    install().unwrap();
+    install().unwrap();
+}
+
+#[test]
+fn assert_fips_matches_build() {
+    assert_eq!(assert_fips().is_ok(), FIPS_BUILD);
+}
+
+#[test]
+fn provider_name_and_is_fips_match_build() {
+    let expected = if cfg!(feature = "aws-lc") {
+        "aws-lc-rs"
+    } else {
+        "ring"
+    };
+    assert_eq!(PROVIDER_NAME, expected);
+    assert_eq!(is_fips(), FIPS_BUILD);
 }

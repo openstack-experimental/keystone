@@ -27,6 +27,7 @@ uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 config.workspace = true
+openstack-keystone-jwt-crypto.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 

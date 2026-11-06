@@ -22,9 +22,9 @@
 //! PKCS#1 `RSAPublicKey` or modulus/exponent for RSA public keys, the raw key
 //! for Ed25519 and the secret for HMAC.
 
-#[cfg(feature = "fips")]
+#[cfg(feature = "aws-lc")]
 use aws_lc_rs as provider;
-#[cfg(not(feature = "fips"))]
+#[cfg(not(feature = "aws-lc"))]
 use ring as provider;
 
 use jsonwebtoken::crypto::{JwtSigner, JwtVerifier};
@@ -52,21 +52,32 @@ pub(crate) fn ec_pair(
     alg: &'static sig::EcdsaSigningAlgorithm,
     pkcs8: &[u8],
 ) -> Result<sig::EcdsaKeyPair> {
-    #[cfg(feature = "fips")]
+    #[cfg(feature = "aws-lc")]
     let pair = sig::EcdsaKeyPair::from_pkcs8(alg, pkcs8);
-    #[cfg(not(feature = "fips"))]
+    #[cfg(not(feature = "aws-lc"))]
     let pair = sig::EcdsaKeyPair::from_pkcs8(alg, pkcs8, &SystemRandom::new());
     pair.map_err(|_| ErrorKind::InvalidEcdsaKey.into())
+}
+
+#[cfg(feature = "fips")]
+pub(crate) fn fips_active() -> std::result::Result<(), crate::ProviderError> {
+    aws_lc_rs::try_fips_mode().map_err(|_| crate::ProviderError::FipsUnavailable)
+}
+
+#[cfg(not(feature = "fips"))]
+pub(crate) fn fips_active() -> std::result::Result<(), crate::ProviderError> {
+    Err(crate::ProviderError::FipsUnavailable)
 }
 
 pub(crate) fn ed_pair(pkcs8: &[u8]) -> Result<sig::Ed25519KeyPair> {
     sig::Ed25519KeyPair::from_pkcs8(pkcs8).map_err(|_| ErrorKind::InvalidEddsaKey.into())
 }
 
-/// Load an RSA private key stored as PKCS#1 or PKCS#8.
+/// Load an RSA private key stored as PKCS#8 (the repository format) or
+/// PKCS#1.
 pub(crate) fn rsa_pair(der: &[u8]) -> Result<sig::RsaKeyPair> {
-    sig::RsaKeyPair::from_der(der)
-        .or_else(|_| sig::RsaKeyPair::from_pkcs8(der))
+    sig::RsaKeyPair::from_pkcs8(der)
+        .or_else(|_| sig::RsaKeyPair::from_der(der))
         .map_err(|e| ErrorKind::InvalidRsaKey(e.to_string()).into())
 }
 
@@ -147,9 +158,9 @@ struct RsaSigner {
 
 impl Signer<Vec<u8>> for RsaSigner {
     fn try_sign(&self, msg: &[u8]) -> std::result::Result<Vec<u8>, signature::Error> {
-        #[cfg(feature = "fips")]
+        #[cfg(feature = "aws-lc")]
         let modulus_len = self.pair.public_modulus_len();
-        #[cfg(not(feature = "fips"))]
+        #[cfg(not(feature = "aws-lc"))]
         let modulus_len = self.pair.public().modulus_len();
         let mut signature = vec![0; modulus_len];
         self.pair

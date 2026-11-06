@@ -17,15 +17,15 @@
 //! Private keys are PKCS#8 DER and public keys SPKI DER, the formats the key
 //! repository stores.
 //!
-//! * EC P-256 keys come from `ring` or, with `fips`, from AWS-LC.
-//! * RSA keys come from AWS-LC with `fips`. `ring` cannot generate RSA
+//! * EC P-256 keys come from `ring` or, with `aws-lc`, from AWS-LC.
+//! * RSA keys come from AWS-LC with `aws-lc`. `ring` cannot generate RSA
 //!   keys, so otherwise the `rsa-keygen` feature (the `rsa` crate) provides
 //!   them, and without it generation fails with
 //!   [`KeygenError::Unsupported`].
 
-#[cfg(feature = "fips")]
+#[cfg(feature = "aws-lc")]
 use aws_lc_rs as provider;
-#[cfg(not(feature = "fips"))]
+#[cfg(not(feature = "aws-lc"))]
 use ring as provider;
 
 use provider::rand::SystemRandom;
@@ -66,7 +66,7 @@ pub enum KeygenError {
     /// The build cannot generate this kind of key.
     #[error(
         "{0:?} key generation is unavailable: `ring` cannot generate RSA keys, \
-         enable the `rsa-keygen` or `fips` feature"
+         enable the `rsa-keygen` or `aws-lc` feature"
     )]
     Unsupported(KeyKind),
 }
@@ -111,7 +111,7 @@ fn generate_p256() -> Result<GeneratedKey, KeygenError> {
     })
 }
 
-#[cfg(feature = "fips")]
+#[cfg(feature = "aws-lc")]
 fn generate_rsa2048() -> Result<GeneratedKey, KeygenError> {
     use aws_lc_rs::encoding::AsDer as _;
     use aws_lc_rs::rsa::{KeyPair as RsaKeyPair, KeySize};
@@ -136,7 +136,7 @@ fn generate_rsa2048() -> Result<GeneratedKey, KeygenError> {
     })
 }
 
-#[cfg(all(not(feature = "fips"), feature = "rsa-keygen"))]
+#[cfg(all(not(feature = "aws-lc"), feature = "rsa-keygen"))]
 fn generate_rsa2048() -> Result<GeneratedKey, KeygenError> {
     use rsa::pkcs8::{EncodePrivateKey as _, EncodePublicKey as _};
 
@@ -162,9 +162,23 @@ fn generate_rsa2048() -> Result<GeneratedKey, KeygenError> {
     })
 }
 
-#[cfg(all(not(feature = "fips"), not(feature = "rsa-keygen")))]
+#[cfg(all(not(feature = "aws-lc"), not(feature = "rsa-keygen")))]
 fn generate_rsa2048() -> Result<GeneratedKey, KeygenError> {
     Err(KeygenError::Unsupported(KeyKind::Rsa2048))
+}
+
+/// Check that `pkcs8` loads as a private key of `kind`, so a corrupt or
+/// wrong-algorithm key is reported when it is read, not at signing time.
+///
+/// # Errors
+///
+/// [`KeygenError::Backend`] when the key does not load.
+pub fn validate_private_key(kind: KeyKind, pkcs8: &[u8]) -> Result<(), KeygenError> {
+    match kind {
+        KeyKind::P256 => crate::backend::ec_pair(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8).map(drop),
+        KeyKind::Rsa2048 => crate::backend::rsa_pair(pkcs8).map(drop),
+    }
+    .map_err(|e| backend(kind, e))
 }
 
 /// The uncompressed point of a P-256 `SubjectPublicKeyInfo`, the content of
@@ -176,8 +190,8 @@ pub fn p256_point_from_spki(spki: &[u8]) -> Option<&[u8]> {
 }
 
 /// The PKCS#1 `RSAPublicKey` of an RSA `SubjectPublicKeyInfo`, the content of
-/// a `jsonwebtoken` RSA `DecodingKey`.
+/// a `jsonwebtoken` RSA `DecodingKey`. `None` for a non-RSA key.
 #[must_use]
 pub fn rsa_pkcs1_from_spki(spki: &[u8]) -> Option<&[u8]> {
-    der::spki_key_bits(spki)
+    der::rsa_spki_key_bits(spki)
 }
