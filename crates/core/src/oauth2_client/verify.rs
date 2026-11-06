@@ -26,6 +26,7 @@
 //! without any HTTP or storage mocking. [`crate::oauth2_client`]'s consumers
 //! (or `test_integration`) own the fetch-and-cache half of the ADR §6
 //! algorithm.
+use base64::Engine;
 use jsonwebtoken::jwk::JwkSet;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use serde::de::DeserializeOwned;
@@ -550,7 +551,14 @@ where
         }
     }
     validate_profile_time_claims(&claims, profile, chrono::Utc::now().timestamp())?;
-    serde_json::from_value(claims)
+    let payload = token
+        .split('.')
+        .nth(1)
+        .ok_or_else(|| TokenVerificationError::MalformedClaims("missing JWT payload".into()))?;
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .map_err(|e| TokenVerificationError::MalformedClaims(e.to_string()))?;
+    serde_json::from_slice(&payload)
         .map_err(|e| TokenVerificationError::MalformedClaims(e.to_string()))
 }
 
@@ -1601,6 +1609,26 @@ mod tests {
         );
         assert!(result.is_ok(), "{result:?}");
         assert_eq!(result.unwrap().sub, "shadow-user");
+    }
+
+    #[test]
+    fn test_u128_claim_preserved_by_shared_verifier() {
+        let now = chrono::Utc::now().timestamp();
+        let mut claims = valid_claims(now);
+        claims.keystone_ruleset_version = u128::MAX;
+        let (token, jwks, _kid) = sign(&claims);
+        let result = verify_openstack_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            None,
+            &HashSet::new(),
+        );
+        assert!(matches!(
+            result,
+            Ok(verified) if verified.keystone_ruleset_version == u128::MAX
+        ));
     }
 
     #[test]
