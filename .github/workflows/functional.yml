@@ -282,18 +282,24 @@ jobs:
       - name: Run loadtest against keystone-rs
         env:
           HOME: /tmp/loadtest-home
-          OS_AUTH_URL: http://localhost:8080/v3
+          OS_AUTH_URL: http://keystone-rs.local/v3
           OS_USERNAME: admin
           OS_PASSWORD: password
           OS_USER_DOMAIN_ID: default
           OS_PROJECT_NAME: admin
           OS_PROJECT_DOMAIN_ID: default
         run: |
-          # Port-forward to keystone-rs and wait for readiness
-          kubectl port-forward svc/keystone-rs 8080:8080 > /dev/null 2>&1 &
+          # Reach keystone-rs the way a user outside the cluster does: under
+          # its public name `keystone-rs.local`, which is the pinned
+          # `[DEFAULT] public_endpoint` (port 80). The version discovery
+          # document advertises that address and the SDK follows its port, so
+          # forward the service's port 80 (privileged, hence sudo) and map the
+          # name to the loopback address.
+          echo "127.0.0.1 keystone-rs.local" | sudo tee -a /etc/hosts
+          sudo -E kubectl port-forward svc/keystone-rs 80:80 > /dev/null 2>&1 &
           PORT_FORWARD_PID=$!
           for i in $(seq 1 60); do
-            if curl -s http://localhost:8080/health/ > /dev/null 2>&1; then
+            if curl -s http://keystone-rs.local/health/ > /dev/null 2>&1; then
               break
             fi
             sleep 2
@@ -301,13 +307,13 @@ jobs:
 
           mkdir -p tests/loadtest/reports
           (cd tests/loadtest && ./target/release/load_test \
-              --host http://localhost:8080 \
+              --host http://keystone-rs.local \
               --increase-rate 2 \
               --run-time 30s \
               --report-file reports/loadtest-report-rust.html \
               --report-file reports/loadtest-report-rust.md)
 
-          kill $PORT_FORWARD_PID 2>/dev/null || true
+          sudo kill $PORT_FORWARD_PID 2>/dev/null || true
 
       - name: Upload loadtest report
         if: always()
