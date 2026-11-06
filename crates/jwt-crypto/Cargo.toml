@@ -1,0 +1,42 @@
+[package]
+name = "openstack-keystone-jwt-crypto"
+description = "Crypto provider for the jsonwebtoken crate backed by ring or the FIPS aws-lc-rs module."
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+exclude.workspace = true
+
+[features]
+default = ["ring", "rsa-keygen"]
+# JWS primitives through `ring`. Unused, but still compiled, when `aws-lc` is
+# also enabled.
+ring = ["dep:ring"]
+# RSA key generation through the `rsa` crate, since `ring` cannot generate RSA
+# keys. Not needed with `aws-lc`, where AWS-LC generates them.
+rsa-keygen = ["dep:rsa"]
+# JWS primitives through `aws-lc-rs`. Takes precedence over `ring`. Building it
+# needs cmake and a C compiler.
+aws-lc = ["dep:aws-lc-rs", "aws-lc-rs/aws-lc-sys"]
+# `aws-lc` built against the FIPS 140-3 validated AWS-LC module, which
+# `aws-lc-rs` prefers over the non-FIPS one when both are enabled. Also needs
+# clang and Go to build.
+fips = ["aws-lc", "aws-lc-rs/fips"]
+
+[dependencies]
+aws-lc-rs = { workspace = true, optional = true }
+jsonwebtoken.workspace = true
+ring = { workspace = true, optional = true }
+rsa = { workspace = true, optional = true }
+thiserror.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+ring.workspace = true
+serde = { workspace = true, features = ["derive"] }
+
+[lints]
+workspace = true

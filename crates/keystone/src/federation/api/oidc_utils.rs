@@ -476,6 +476,7 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
     pub(crate) const TEST_KID: &str = "test-kid";
 
     pub(crate) fn rsa_encoding_key() -> EncodingKey {
+        openstack_keystone_jwt_crypto::install().unwrap();
         EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE_KEY.as_bytes())
             .expect("hard-coded test RSA private key must parse")
     }
@@ -901,6 +902,7 @@ mod tests {
 
     #[test]
     fn verify_jwt_rejects_symmetric_hs256() {
+        openstack_keystone_jwt_crypto::install().unwrap();
         let key = EncodingKey::from_secret(b"symmetric-secret");
         let exp = (Utc::now() + TimeDelta::hours(1)).timestamp();
         let claims = json!({"sub": "user", "exp": exp});
@@ -1932,6 +1934,7 @@ mod tests {
         let base_url = server.base_url();
         mock_idp(&server, &base_url, &jwks_body());
 
+        openstack_keystone_jwt_crypto::install().unwrap();
         let key = EncodingKey::from_secret(TEST_JWK_N.as_bytes());
         let claims = valid_claims(&base_url, "my-client", None);
         let token = encode(&JwtHeader::default(), &claims, &key).unwrap();

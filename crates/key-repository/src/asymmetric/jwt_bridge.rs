@@ -17,17 +17,18 @@
 //! [`KeyMaterial`] stores keys in a uniform, algorithm-agnostic shape:
 //! PKCS#8 DER for the private key, SubjectPublicKeyInfo (SPKI) DER for the
 //! public key (the same shape [`super::derive_kid`] hashes, ADR 0026 §3).
-//! `jsonwebtoken`'s `rust_crypto` backend expects different per-algorithm
-//! shapes internally (PKCS#8 DER for EC private keys, but raw SEC1 point
-//! bytes for EC public keys; PKCS#1 DER for both halves of an RSA key) —
-//! this module bridges the two. Shared by every JWT-signing consumer of
+//! The `jwt-crypto` provider (`ring` or FIPS `aws-lc-rs`) behind
+//! `jsonwebtoken` expects different per-algorithm shapes (PKCS#8 DER for EC
+//! private keys, but the raw SEC1 point for EC public keys; PKCS#8 or
+//! PKCS#1 DER for an RSA private key and PKCS#1 `RSAPublicKey` DER for the
+//! public half) — this module bridges the two. Shared by every JWT-signing consumer of
 //! this repository (the Phase 0 JWS token driver, the Phase 3 OAuth2
 //! `/token` signer), so the conversion lives here rather than in any one
 //! driver crate.
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey};
-use pkcs8::DecodePublicKey as _;
-use rsa::pkcs1::{EncodeRsaPrivateKey, EncodeRsaPublicKey};
-use rsa::pkcs8::{DecodePrivateKey as _, DecodePublicKey as RsaDecodePublicKey};
+use openstack_keystone_jwt_crypto::{
+    KeyKind, p256_point_from_spki, rsa_pkcs1_from_spki, validate_private_key,
+};
 use secrecy::ExposeSecret;
 
 use crate::error::KeyRepositoryError;
@@ -44,51 +45,41 @@ pub fn jwt_algorithm(algorithm: SigningAlgorithm) -> Algorithm {
 }
 
 /// Build a `jsonwebtoken` [`EncodingKey`] from stored [`KeyMaterial`].
+///
+/// The key is loaded once to check it, so corrupt material fails here and
+/// not at signing time.
+///
+/// # Errors
+///
+/// [`KeyRepositoryError::Crypto`] when the stored private key does not load
+/// as a key of the material's algorithm.
 pub fn to_encoding_key(material: &KeyMaterial) -> Result<EncodingKey, KeyRepositoryError> {
-    match material.algorithm {
-        // jsonwebtoken's rust_crypto ECDSA signer loads its EncodingKey
-        // content directly via `SigningKey::from_pkcs8_der`, the same
-        // format we already store — no conversion needed.
-        SigningAlgorithm::Es256 => Ok(EncodingKey::from_ec_der(
-            material.private_key_der.expose_secret(),
-        )),
-        // jsonwebtoken's rust_crypto RSA signer loads via
-        // `RsaPrivateKey::from_pkcs1_der`, but we store PKCS#8 — convert.
-        SigningAlgorithm::Rs256 => {
-            let private_key =
-                rsa::RsaPrivateKey::from_pkcs8_der(material.private_key_der.expose_secret())
-                    .map_err(|e| KeyRepositoryError::Crypto(format!("RSA private key: {e}")))?;
-            let pkcs1_der = private_key
-                .to_pkcs1_der()
-                .map_err(|e| KeyRepositoryError::Crypto(format!("RSA private key: {e}")))?;
-            Ok(EncodingKey::from_rsa_der(pkcs1_der.as_bytes()))
-        }
-    }
+    // The provider loads the stored PKCS#8 as is.
+    let der = material.private_key_der.expose_secret();
+    let (kind, key) = match material.algorithm {
+        SigningAlgorithm::Es256 => (KeyKind::P256, EncodingKey::from_ec_der(der)),
+        SigningAlgorithm::Rs256 => (KeyKind::Rsa2048, EncodingKey::from_rsa_der(der)),
+    };
+    validate_private_key(kind, der).map_err(|e| KeyRepositoryError::Crypto(e.to_string()))?;
+    Ok(key)
 }
 
 /// Build a `jsonwebtoken` [`DecodingKey`] from stored [`KeyMaterial`].
+///
+/// # Errors
+///
+/// [`KeyRepositoryError::Crypto`] when the stored public key is not an SPKI
+/// of the material's algorithm.
 pub fn to_decoding_key(material: &KeyMaterial) -> Result<DecodingKey, KeyRepositoryError> {
+    // The provider verifies against the raw EC point and the PKCS#1 RSA key,
+    // while we store SPKI DER.
     match material.algorithm {
-        // jsonwebtoken's rust_crypto ECDSA verifier loads via
-        // `VerifyingKey::from_sec1_bytes` (the raw EC point), but we store
-        // SPKI DER — parse then re-encode as a raw SEC1 point.
-        SigningAlgorithm::Es256 => {
-            let verifying_key =
-                p256::ecdsa::VerifyingKey::from_public_key_der(&material.public_key_der)
-                    .map_err(|e| KeyRepositoryError::Crypto(format!("EC public key: {e}")))?;
-            let sec1_point = verifying_key.to_sec1_point(false);
-            Ok(DecodingKey::from_ec_der(sec1_point.as_bytes()))
-        }
-        // jsonwebtoken's rust_crypto RSA verifier loads via
-        // `RsaPublicKey::from_pkcs1_der`, but we store SPKI DER — convert.
-        SigningAlgorithm::Rs256 => {
-            let public_key = rsa::RsaPublicKey::from_public_key_der(&material.public_key_der)
-                .map_err(|e| KeyRepositoryError::Crypto(format!("RSA public key: {e}")))?;
-            let pkcs1_der = public_key
-                .to_pkcs1_der()
-                .map_err(|e| KeyRepositoryError::Crypto(format!("RSA public key: {e}")))?;
-            Ok(DecodingKey::from_rsa_der(pkcs1_der.as_bytes()))
-        }
+        SigningAlgorithm::Es256 => p256_point_from_spki(&material.public_key_der)
+            .map(DecodingKey::from_ec_der)
+            .ok_or_else(|| KeyRepositoryError::Crypto("EC public key: not a P-256 SPKI".into())),
+        SigningAlgorithm::Rs256 => rsa_pkcs1_from_spki(&material.public_key_der)
+            .map(DecodingKey::from_rsa_der)
+            .ok_or_else(|| KeyRepositoryError::Crypto("RSA public key: not an RSA SPKI".into())),
     }
 }
 
@@ -108,6 +99,7 @@ mod tests {
 
     #[test]
     fn test_es256_sign_and_verify_roundtrip() {
+        openstack_keystone_jwt_crypto::install().unwrap();
         let material = generate_keypair(SigningAlgorithm::Es256).unwrap();
         let encoding_key = to_encoding_key(&material).unwrap();
         let decoding_key = to_decoding_key(&material).unwrap();
@@ -131,6 +123,7 @@ mod tests {
 
     #[test]
     fn test_rs256_sign_and_verify_roundtrip() {
+        openstack_keystone_jwt_crypto::install().unwrap();
         let material = generate_keypair(SigningAlgorithm::Rs256).unwrap();
         let encoding_key = to_encoding_key(&material).unwrap();
         let decoding_key = to_decoding_key(&material).unwrap();
@@ -154,6 +147,7 @@ mod tests {
 
     #[test]
     fn test_es256_verify_fails_for_wrong_key() {
+        openstack_keystone_jwt_crypto::install().unwrap();
         let material = generate_keypair(SigningAlgorithm::Es256).unwrap();
         let other = generate_keypair(SigningAlgorithm::Es256).unwrap();
         let encoding_key = to_encoding_key(&material).unwrap();
@@ -172,5 +166,15 @@ mod tests {
 
         let validation = Validation::new(jwt_algorithm(SigningAlgorithm::Es256));
         assert!(decode::<Claims>(&token, &wrong_decoding_key, &validation).is_err());
+    }
+
+    #[test]
+    fn test_encoding_key_rejects_corrupt_private_key() {
+        let mut material = generate_keypair(SigningAlgorithm::Es256).unwrap();
+        material.private_key_der = secrecy::SecretBox::new(Box::new(vec![0u8; 32]));
+        assert!(matches!(
+            to_encoding_key(&material),
+            Err(KeyRepositoryError::Crypto(_))
+        ));
     }
 }

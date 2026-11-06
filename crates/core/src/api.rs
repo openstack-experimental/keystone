@@ -248,6 +248,8 @@ pub mod tests {
         config: Config,
         audit_dispatcher: Arc<AuditDispatcher>,
     ) -> ServiceState {
+        // The binaries install the provider at start-up; tests do it here.
+        openstack_keystone_jwt_crypto::install().unwrap();
         let provider = provider_builder.build().unwrap();
 
         let mut policy_enforcer_mock = MockPolicy::default();

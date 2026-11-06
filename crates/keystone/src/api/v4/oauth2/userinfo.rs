@@ -537,6 +537,7 @@ mod tests {
     /// Returns `(token, key mock)`; `revoked` is what `revoked_jtis()`
     /// serves.
     fn signed_token(spec: TokenSpec, revoked: HashSet<String>) -> (String, MockOauth2KeyProvider) {
+        openstack_keystone_jwt_crypto::install().unwrap();
         let now = chrono::Utc::now().timestamp();
         let material = generate_keypair(SigningAlgorithm::Es256).unwrap();
         let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);

@@ -542,6 +542,7 @@ mod tests {
     /// Sign `claims` and return `(token, key mock)` serving the matching
     /// JWKS and the given revoked `jti`s.
     fn signed(claims: Value, revoked: &[&str]) -> (String, MockOauth2KeyProvider) {
+        openstack_keystone_jwt_crypto::install().unwrap();
         let material = generate_keypair(SigningAlgorithm::Es256).unwrap();
         let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
         header.kid = Some(material.kid.clone());

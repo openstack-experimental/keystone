@@ -22,6 +22,7 @@ members = [
   "crates/idmapping-driver-sql",
   "crates/k8s-auth-driver-raft",
   "crates/k8s-auth-driver-sql",
+  "crates/jwt-crypto",
   "crates/key-repository",
   "crates/keystone",
   "crates/limit-driver-sql",
@@ -123,7 +124,7 @@ hmac = { version = "0.13" }
 inventory = { version = "0.3" }
 ipnet = { version = "2" }
 itertools = { version = "0.15" }
-jsonwebtoken = { version = "11.1", features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.1", default-features = false, features = ["use_pem"] }
 log = { version = "0.4" }
 ldap3 = { version = "0.12", default-features = false }
 minijinja = { version = "3", features = ["serde"] }
@@ -164,6 +165,7 @@ openstack-keystone-federation-driver-sql = { version = "0.1", path = "crates/fed
 openstack-keystone-k8s-auth-driver-sql = { version = "0.1", path = "crates/k8s-auth-driver-sql/" }
 openstack-keystone-limit-driver-sql = { version = "0.1", path = "crates/limit-driver-sql/" }
 openstack-keystone-k8s-auth-driver-raft = { version = "0.1", path = "crates/k8s-auth-driver-raft/" }
+openstack-keystone-jwt-crypto = { version = "0.1.0", path = "crates/jwt-crypto" }
 openstack-keystone-key-repository = { version = "0.1.0", path = "crates/key-repository" }
 openstack-keystone-local-emergency-store = { version = "0.1.0", path = "crates/local-emergency-store" }
 openstack-keystone-mapping-driver-raft = { version = "0.1", path = "crates/mapping-driver-raft/" }

@@ -238,6 +238,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
             exp,
             sub: "system:serviceaccount:ns:sa".into(),
         };
+        openstack_keystone_jwt_crypto::install().unwrap();
         jsonwebtoken::encode(
             &jsonwebtoken::Header::default(),
             &claims,

@@ -608,6 +608,7 @@ pub(crate) async fn sign_claims(
         .get_oauth2_key_provider()
         .active_signing_key(state, domain_id)
         .await?;
+    openstack_keystone_jwt_crypto::install()?;
     let mut header = jsonwebtoken::Header::new(jwt_algorithm(key.algorithm));
     header.kid = Some(derive_kid(&key.public_key_der));
     Ok(jsonwebtoken::encode(

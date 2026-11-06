@@ -174,6 +174,7 @@ mod tests {
     }
 
     async fn provider_with_keys(dir: &std::path::Path) -> JwsTokenProvider {
+        openstack_keystone_jwt_crypto::install().unwrap();
         let mut provider = JwsTokenProvider::new(setup_config(dir));
         provider
             .repo

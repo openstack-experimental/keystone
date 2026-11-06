@@ -592,8 +592,14 @@ iInRUT3PWlw/HKU=
         .clone()
     }
 
+    /// Whether `pem` is the 1024-bit test key, which `ring` cannot load.
+    fn short_rsa_key(pem: &str) -> bool {
+        pem == RSA1024_PEM
+    }
+
     /// Sign arbitrary header and claims; the tests control every field.
     fn sign(alg: Algorithm, pem: &str, header: Value, claims: Value) -> String {
+        openstack_keystone_jwt_crypto::install().unwrap();
         let key = match alg {
             Algorithm::ES256 => EncodingKey::from_ec_pem(pem.as_bytes()).unwrap(),
             _ => EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap(),
@@ -603,7 +609,15 @@ iInRUT3PWlw/HKU=
             b64(header.to_string().as_bytes()),
             b64(claims.to_string().as_bytes())
         );
-        let signature = crypto::sign(message.as_bytes(), &key, alg).unwrap();
+        // `ring` refuses to load RSA keys below 2048 bits, which the short-key
+        // tests rely on. Only for such a key, a garbage signature exercises
+        // the same rejection paths, as the key is checked before the
+        // signature. Any other signing error is a real failure.
+        let signature = match crypto::sign(message.as_bytes(), &key, alg) {
+            Ok(signature) => signature,
+            Err(_) if alg != Algorithm::ES256 && short_rsa_key(pem) => b64(&[0x5a; 128]),
+            Err(e) => panic!("signing the test proof failed: {e}"),
+        };
         format!("{message}.{signature}")
     }
 
