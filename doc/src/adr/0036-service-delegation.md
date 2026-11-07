@@ -1232,6 +1232,7 @@ Where the phase 1 implementation refines or departs from the decision above:
 - **List filter.** `domain_id` on `GET /v4/service-grants` filters on the
   grant's domain, which is the target project's domain. Domain managers
   are authorized on that same domain.
+
 ### Phase 2 design: on-behalf-of exchange
 
 How phase 2 implements §6, and where it refines the text above.

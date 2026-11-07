@@ -45,9 +45,13 @@ use openstack_keystone_key_repository::asymmetric::{SigningAlgorithm, jwt_algori
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum TokenVerificationError {
-    /// The validation profile has no issuer or audience constraints.
+    /// The validation profile is missing required issuer or audience constraints.
     #[error("subject-token validation profile must specify issuers and audiences")]
     InvalidProfile,
+
+    /// The token's `aud` does not satisfy the profile's audience constraint.
+    #[error("token audience is not accepted by this profile")]
+    InvalidAudience,
 
     /// The token's `alg` header does not match the operator-configured
     /// `[oauth2] signing_algorithm`. Rejected before key lookup to prevent
@@ -74,8 +78,8 @@ pub enum TokenVerificationError {
     },
 
     /// Cryptographic or structural decode failure: bad signature, expired,
-    /// not-yet-valid, wrong `aud`, missing required claim, or a claim shape
-    /// that does not match [`OpenStackAccessTokenClaims`] (which -- since
+    /// not-yet-valid, missing required claim, or a claim shape that does not
+    /// match [`OpenStackAccessTokenClaims`] (which -- since
     /// `id_token`/`OidcAccessTokenClaims` carry none of `openstack_context`'s
     /// fields -- is how a non-access-token is structurally rejected without
     /// a separate presence check, mirroring the ADR §6 middleware's Finding
@@ -232,11 +236,6 @@ pub fn enforce_token_binding(
     }
 }
 
-/// Subject-token verification constraints shared by token-exchange profiles.
-///
-/// Callers select a profile by token kind and supply the JWKS belonging to the
-/// expected issuer. The profile controls issuer and audience constraints,
-/// required claims, time skew, and optional age/lifetime limits.
 #[derive(Clone, Debug)]
 enum AudienceConstraint {
     AnyOf(Vec<String>),
@@ -244,6 +243,11 @@ enum AudienceConstraint {
     AnyOpenStack,
 }
 
+/// Subject-token verification constraints shared by token-exchange profiles.
+///
+/// Callers select a profile by token kind and supply the JWKS belonging to the
+/// expected issuer. The profile controls issuer and audience constraints,
+/// required claims, time skew, and optional age/lifetime limits.
 #[derive(Clone, Debug)]
 pub struct SubjectTokenValidationProfile {
     expected_issuers: Vec<String>,
@@ -255,7 +259,35 @@ pub struct SubjectTokenValidationProfile {
     clock_skew: Duration,
 }
 
+const NATIVE_REQUIRED_CLAIMS: &[&str] = &["exp", "iat", "nbf", "iss", "aud", "sub", "jti"];
+const EXTERNAL_REQUIRED_CLAIMS: &[&str] = &["exp", "iss", "aud", "sub"];
+const ASSERTION_REQUIRED_CLAIMS: &[&str] = &["exp", "iat", "iss", "aud", "sub", "jti"];
+const PROFILE_STRING_CLAIMS: &[&str] = &["iss", "sub", "jti"];
+const PROFILE_CLOCK_SKEW: Duration = Duration::from_secs(60);
+const EXTERNAL_MAX_AGE: Duration = Duration::from_secs(300);
+
+fn owned_claims(claims: &[&str]) -> Vec<String> {
+    claims.iter().map(|claim| (*claim).to_string()).collect()
+}
+
 impl SubjectTokenValidationProfile {
+    fn new(
+        expected_issuers: &[String],
+        audience_constraint: AudienceConstraint,
+        required_claims: &[&str],
+        limits: Option<Duration>,
+    ) -> Self {
+        Self {
+            expected_issuers: expected_issuers.to_vec(),
+            audience_constraint,
+            required_claims: owned_claims(required_claims),
+            string_claims: owned_claims(PROFILE_STRING_CLAIMS),
+            max_token_age: limits,
+            max_token_lifetime: limits,
+            clock_skew: PROFILE_CLOCK_SKEW,
+        }
+    }
+
     /// The existing Keystone-native OpenStack access-token profile.
     ///
     /// It preserves acceptance of the control-plane audience and, when
@@ -267,18 +299,12 @@ impl SubjectTokenValidationProfile {
             accepted_audiences.push(openstack_service_audience(service_type));
         }
 
-        Self {
-            expected_issuers: expected_issuers.to_vec(),
-            audience_constraint: AudienceConstraint::AnyOf(accepted_audiences),
-            required_claims: ["exp", "iat", "nbf", "iss", "aud", "sub", "jti"]
-                .into_iter()
-                .map(str::to_string)
-                .collect(),
-            string_claims: ["iss", "sub", "jti"].map(str::to_string).to_vec(),
-            max_token_age: None,
-            max_token_lifetime: None,
-            clock_skew: Duration::from_secs(60),
-        }
+        Self::new(
+            expected_issuers,
+            AudienceConstraint::AnyOf(accepted_audiences),
+            NATIVE_REQUIRED_CLAIMS,
+            None,
+        )
     }
 
     /// A native OpenStack subject-token profile that accepts any OpenStack
@@ -287,18 +313,12 @@ impl SubjectTokenValidationProfile {
     /// verification should use [`Self::keystone_native`] to enforce its
     /// service audience.
     pub fn keystone_native_subject_token(expected_issuers: &[String]) -> Self {
-        Self {
-            expected_issuers: expected_issuers.to_vec(),
-            audience_constraint: AudienceConstraint::AnyOpenStack,
-            required_claims: ["exp", "iat", "nbf", "iss", "aud", "sub", "jti"]
-                .into_iter()
-                .map(str::to_string)
-                .collect(),
-            string_claims: ["iss", "sub", "jti"].map(str::to_string).to_vec(),
-            max_token_age: None,
-            max_token_lifetime: None,
-            clock_skew: Duration::from_secs(60),
-        }
+        Self::new(
+            expected_issuers,
+            AudienceConstraint::AnyOpenStack,
+            NATIVE_REQUIRED_CLAIMS,
+            None,
+        )
     }
 
     /// A profile for short-lived external subject tokens, including JWT-SVIDs.
@@ -311,18 +331,12 @@ impl SubjectTokenValidationProfile {
     /// time claims and rejecting future `iat`. Replay detection for `jti`,
     /// when present, remains the caller's responsibility.
     pub fn external_assertion(expected_issuers: &[String], token_endpoint_audience: &str) -> Self {
-        Self {
-            expected_issuers: expected_issuers.to_vec(),
-            audience_constraint: AudienceConstraint::Exact(token_endpoint_audience.to_string()),
-            required_claims: ["exp", "iss", "aud", "sub"]
-                .into_iter()
-                .map(str::to_string)
-                .collect(),
-            string_claims: ["iss", "sub", "jti"].map(str::to_string).to_vec(),
-            max_token_age: Some(Duration::from_secs(300)),
-            max_token_lifetime: Some(Duration::from_secs(300)),
-            clock_skew: Duration::from_secs(60),
-        }
+        Self::new(
+            expected_issuers,
+            AudienceConstraint::Exact(token_endpoint_audience.to_string()),
+            EXTERNAL_REQUIRED_CLAIMS,
+            Some(EXTERNAL_MAX_AGE),
+        )
     }
 
     /// A JWT-SVID client-assertion profile. Unlike external subject tokens,
@@ -332,18 +346,12 @@ impl SubjectTokenValidationProfile {
         expected_issuers: &[String],
         token_endpoint_audience: &str,
     ) -> Self {
-        Self {
-            expected_issuers: expected_issuers.to_vec(),
-            audience_constraint: AudienceConstraint::Exact(token_endpoint_audience.to_string()),
-            required_claims: ["exp", "iat", "iss", "aud", "sub", "jti"]
-                .into_iter()
-                .map(str::to_string)
-                .collect(),
-            string_claims: ["iss", "sub", "jti"].map(str::to_string).to_vec(),
-            max_token_age: Some(Duration::from_secs(300)),
-            max_token_lifetime: Some(Duration::from_secs(300)),
-            clock_skew: Duration::from_secs(60),
-        }
+        Self::new(
+            expected_issuers,
+            AudienceConstraint::Exact(token_endpoint_audience.to_string()),
+            ASSERTION_REQUIRED_CLAIMS,
+            Some(EXTERNAL_MAX_AGE),
+        )
     }
 }
 
@@ -472,8 +480,16 @@ pub fn verify_subject_token_jwt<T>(
 where
     T: DeserializeOwned,
 {
+    const MANDATORY_CLAIMS: [&str; 3] = ["exp", "iss", "aud"];
+    let missing_mandatory_claim = MANDATORY_CLAIMS.iter().any(|claim| {
+        !profile
+            .required_claims
+            .iter()
+            .any(|required| required == claim)
+    });
     if profile.expected_issuers.is_empty()
         || profile.expected_issuers.iter().any(String::is_empty)
+        || missing_mandatory_claim
         || match &profile.audience_constraint {
             AudienceConstraint::AnyOf(audiences) => {
                 audiences.is_empty() || audiences.iter().any(String::is_empty)
@@ -498,7 +514,15 @@ where
     validation.validate_nbf = true;
     validation.leeway = profile.clock_skew.as_secs();
 
-    let data = decode::<serde_json::Value>(token, &decoding_key, &validation)?;
+    let data =
+        decode::<serde_json::Value>(token, &decoding_key, &validation).map_err(
+            |error| match error.kind() {
+                jsonwebtoken::errors::ErrorKind::InvalidAudience => {
+                    TokenVerificationError::InvalidAudience
+                }
+                _ => error.into(),
+            },
+        )?;
     let claims = data.claims;
     for claim in &profile.required_claims {
         if claims.get(claim).is_none_or(serde_json::Value::is_null) {
@@ -530,9 +554,7 @@ where
                 _ => false,
             };
             if !exact_audience {
-                return Err(TokenVerificationError::MalformedClaims(
-                    "audience must exactly match the configured token endpoint".into(),
-                ));
+                return Err(TokenVerificationError::InvalidAudience);
             }
         }
         AudienceConstraint::AnyOpenStack => {
@@ -544,9 +566,7 @@ where
                 _ => false,
             };
             if !is_openstack {
-                return Err(TokenVerificationError::MalformedClaims(
-                    "audience is not an OpenStack access-token audience".into(),
-                ));
+                return Err(TokenVerificationError::InvalidAudience);
             }
         }
     }
@@ -1147,7 +1167,7 @@ mod tests {
         mixed_audience["aud"] = serde_json::json!(["openstack-apis:compute", "unrelated-client"]);
         assert!(matches!(
             verify_assertion(&mixed_audience, &profile),
-            Err(TokenVerificationError::MalformedClaims(_))
+            Err(TokenVerificationError::InvalidAudience)
         ));
     }
 
@@ -1182,7 +1202,7 @@ mod tests {
                 &[ISSUER.to_string()],
                 &HashSet::new(),
             ),
-            Err(TokenVerificationError::MalformedClaims(_))
+            Err(TokenVerificationError::InvalidAudience)
         ));
     }
 
@@ -1292,7 +1312,7 @@ mod tests {
         wrong_audience["aud"] = "https://other.example/token".into();
         assert!(matches!(
             verify_assertion(&wrong_audience, &profile),
-            Err(TokenVerificationError::Malformed(_))
+            Err(TokenVerificationError::InvalidAudience)
         ));
 
         let mut extra_audience = assertion_claims(now);
@@ -1302,7 +1322,7 @@ mod tests {
         ]);
         assert!(matches!(
             verify_assertion(&extra_audience, &profile),
-            Err(TokenVerificationError::MalformedClaims(_))
+            Err(TokenVerificationError::InvalidAudience)
         ));
     }
 
@@ -1407,6 +1427,32 @@ mod tests {
             verify_assertion(&claims, &profile),
             Err(TokenVerificationError::InvalidProfile)
         ));
+    }
+
+    #[test]
+    fn subject_token_profile_requires_exp_issuer_and_audience() {
+        let profile = SubjectTokenValidationProfile::external_assertion(
+            &["https://issuer.example".to_string()],
+            "https://keystone.example/v4/oauth2/token",
+        );
+        let claims = assertion_claims(chrono::Utc::now().timestamp());
+        let (token, jwks, _) = sign(&claims);
+
+        for missing_claim in ["exp", "iss", "aud"] {
+            let mut invalid_profile = profile.clone();
+            invalid_profile
+                .required_claims
+                .retain(|claim| claim != missing_claim);
+            assert!(matches!(
+                verify_subject_token_jwt::<serde_json::Value>(
+                    &token,
+                    &jwks,
+                    SigningAlgorithm::Es256,
+                    &invalid_profile,
+                ),
+                Err(TokenVerificationError::InvalidProfile)
+            ));
+        }
     }
 
     fn verify_oidc(
@@ -1666,7 +1712,7 @@ mod tests {
             &HashSet::new(),
         )
         .unwrap_err();
-        assert!(matches!(err, TokenVerificationError::Malformed(_)));
+        assert!(matches!(err, TokenVerificationError::InvalidAudience));
     }
 
     #[test]
@@ -1687,12 +1733,8 @@ mod tests {
     }
 
     #[test]
-    fn test_id_token_structurally_rejected() {
-        // An `IdTokenClaims` carries none of `OpenStackAccessTokenClaims`'s
-        // required fields (no `openstack_context`/`scope_type`/`jti`/etc.),
-        // so it fails to deserialize into the access-token type entirely --
-        // the structural rejection the ADR §6 middleware's Finding 1.4 check
-        // performs by hand, done here by the type system.
+    fn test_id_token_audience_rejected() {
+        // ID tokens target the OAuth2 client, not OpenStack resource servers.
         let now = chrono::Utc::now().timestamp();
         let id_claims = IdTokenClaims {
             iss: ISSUER.to_string(),
@@ -1719,7 +1761,7 @@ mod tests {
             &HashSet::new(),
         )
         .unwrap_err();
-        assert!(matches!(err, TokenVerificationError::Malformed(_)));
+        assert!(matches!(err, TokenVerificationError::InvalidAudience));
     }
 
     #[test]
@@ -2003,12 +2045,12 @@ mod tests {
         claims.aud = Audience::One(format!("openstack-apis:{DOMAIN_ID}"));
         assert!(matches!(
             verify_for(&claims, None),
-            Err(TokenVerificationError::Malformed(_))
+            Err(TokenVerificationError::InvalidAudience)
         ));
         // Not even a service whose type happens to equal the domain id.
         assert!(matches!(
             verify_for(&claims, Some("compute")),
-            Err(TokenVerificationError::Malformed(_))
+            Err(TokenVerificationError::InvalidAudience)
         ));
     }
 
@@ -2028,13 +2070,13 @@ mod tests {
         assert!(verify_for(&claims, Some("image")).is_ok());
         assert!(matches!(
             verify_for(&claims, Some("network")),
-            Err(TokenVerificationError::Malformed(_))
+            Err(TokenVerificationError::InvalidAudience)
         ));
         // A service that does not know its type accepts only the
         // un-narrowed form.
         assert!(matches!(
             verify_for(&claims, None),
-            Err(TokenVerificationError::Malformed(_))
+            Err(TokenVerificationError::InvalidAudience)
         ));
     }
 
