@@ -309,9 +309,9 @@ So `spiffe://td/service/heat-engine/host/*` matches
 
 #### 3.2 Cross-domain client resolution
 
-`OAuth2Client` is a domain-bound resource (ADR 0026 §5), but a service grant is
-redeemed at the **grantor's** domain token endpoint (§5.1), and a control-plane
-client lives in the operator's infrastructure domain. Therefore:
+`OAuth2Client` is a domain-bound resource (ADR 0026 §5), while a service grant
+is redeemed at the **target project's** domain token endpoint (§5.1), and a
+control-plane client lives in the operator's infrastructure domain. Therefore:
 
 - `client_id` is unique **cluster-wide**, not per domain. This is the Client ID
   Uniqueness Invariant of ADR 0026 §5. The Raft driver already enforces it at
@@ -325,11 +325,11 @@ client lives in the operator's infrastructure domain. Therefore:
   is permitted **only** when `client.delegation.cross_domain == true`. Every
   other client authentication path at `/v4/oauth2/{domain_id}/token` keeps
   today's same-domain-only rule.
-- The minted token is signed by the key of the **target project's** domain and
-  carries `aud = openstack-apis` with `iss` naming that domain (ADR 0026 §5
-  domain key isolation: isolation rests on `iss` + the issuer's own JWKS, so a
-  domain's key only vouches for that domain's projects). The grantor may belong
-  to another domain, exactly as a user may hold roles on projects of other
+- The minted token is signed by the **target project's** domain key and carries
+  `aud = openstack-apis` with `iss` naming that domain (ADR 0026 §5 domain key
+  isolation: isolation rests on `iss` + the issuer's own JWKS, so a domain's
+  key only vouches for that domain's projects). The grantor may belong to
+  another domain, exactly as a user may hold roles on projects of other
   domains; the token's user claims name the grantor's own domain. The grantee's
   own domain never appears in the token; it is a registry fact only.
 
@@ -726,9 +726,18 @@ not grow two answers to any of them:
   parameter of `verify_openstack_access_token`). #1018 still breaks on a fixed
   audience because an external token's `aud` is never `openstack-apis`; this ADR
   needs §7.1 narrowing (`openstack-apis:<service type>`) accepted when §6.3
-  re-exchanges such a token as `subject_token`. One refactor to a
-  per-subject-kind validation profile (expected issuers, accepted audiences,
-  required claims) serves both; doing it twice guarantees divergence.
+  re-exchanges such a token as `subject_token`. A per-subject-kind profile
+  captures expected issuers, accepted audiences, required claims, and
+  time-limits so both paths can use one verifier. The shared profile API in
+  `crates/core/src/oauth2_client/verify.rs` provides a Keystone-native
+  resource-server profile, an any-OpenStack-audience profile for native
+  subject-token re-exchange, and an exact-audience external assertion profile.
+  The external profile accepts JWT-SVID subject tokens with optional `iat` and
+  `jti`; the separate JWT-SVID client-assertion profile requires both, and its
+  caller must still enforce replay protection. The native on-behalf-of path
+  in §6.3 must retain its broader OpenStack-audience and delegation checks
+  when it adopts the shared verifier. External subject-token dispatch, issuer
+  key discovery, replay-state integration, and mapping remain separate work.
 - **Confused-deputy replay gets one rule.** #1018's concern (an external token
   minted for someone else replayed at Keystone) is the same one §5.1 answers for
   JWT-SVID client assertions: pin `aud` to the fixed Keystone token-endpoint
