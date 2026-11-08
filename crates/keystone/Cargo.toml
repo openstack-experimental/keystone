@@ -43,6 +43,7 @@ openstack-keystone-api-types = { workspace = true, features = ["openapi", "valid
 cadf = { workspace = true, features = ["runtime"] }
 openstack-keystone-appcred-driver-sql.workspace = true
 openstack-keystone-assignment-driver-openfga = { workspace = true, optional = true }
+openstack-keystone-policy-regorus = { workspace = true, optional = true }
 openstack-keystone-assignment-driver-sql.workspace = true
 openstack-keystone-auth-plugin-runtime = { workspace = true, optional = true }
 openstack-keystone-catalog-driver-sql.workspace = true
@@ -175,6 +176,9 @@ compression = [
   "tower-http/compression-gzip",
 ]
 openfga = ["dep:openstack-keystone-assignment-driver-openfga"]
+# In-process Rego policy evaluation (`[api_policy] engine = "regorus"`) next to
+# the OPA enforcer. Experimental: see `crates/policy-regorus`.
+regorus = ["dep:openstack-keystone-policy-regorus"]
 # RFC 5424 syslog audit sink (`[audit] sink = { type = "syslog", .. }`).
 audit-syslog = ["cadf/syslog"]
 # OTLP trace and metric export (`[otel]`, ADR 0040), over OTLP/HTTP.

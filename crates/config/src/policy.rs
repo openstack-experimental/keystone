@@ -16,9 +16,30 @@ use std::path::PathBuf;
 use url::Url;
 use url_macro::url;
 
+/// The policy engine used to evaluate the API policies.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PolicyEngine {
+    /// Open Policy Agent reached over HTTP or a unix socket (the default).
+    #[default]
+    Opa,
+    /// Rego evaluated in-process by `regorus`. Requires the `regorus` cargo
+    /// feature of the `keystone` binary and `regorus_policies_path`.
+    Regorus,
+}
+
 /// The configuration options for the API policy enforcement.
 #[derive(Clone, Debug, Deserialize)]
 pub struct PolicyProvider {
+    /// The policy engine evaluating the Rego policies.
+    #[serde(default)]
+    pub engine: PolicyEngine,
+
+    /// Directory with the Rego policies evaluated in-process when
+    /// `engine = "regorus"`. The directory is the same `policy/` tree OPA
+    /// consumes (`*_test.rego` files are ignored).
+    pub regorus_policies_path: Option<PathBuf>,
+
     /// OpenPolicyAgent instance url to use for evaluating the policy.
     #[serde(default = "default_opa_base_url")]
     pub opa_base_url: Url,
@@ -32,6 +53,8 @@ pub struct PolicyProvider {
 impl Default for PolicyProvider {
     fn default() -> Self {
         Self {
+            engine: PolicyEngine::default(),
+            regorus_policies_path: None,
             opa_base_url: default_opa_base_url(),
             opa_policies_path: None,
         }

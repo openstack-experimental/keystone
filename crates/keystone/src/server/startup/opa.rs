@@ -42,6 +42,10 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 /// policy checks) before the embedded OPA is actually serving.
 pub async fn spawn(startup: &Startup, handles: &mut JoinSet<()>) -> Result<(), Report> {
     let cfg = &startup.cfg;
+    if cfg.api_policy.engine == crate::config::PolicyEngine::Regorus {
+        // Policies are evaluated in-process, there is no OPA to supervise.
+        return Ok(());
+    }
     let Some(policies_path) = &cfg.api_policy.opa_policies_path else {
         return Ok(());
     };

@@ -27,12 +27,12 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use super::{Startup, audit, debug_elapsed};
-use crate::config::{Config, ConfigManager, ListenerConfig, LoadedConfig};
+use crate::config::{Config, ConfigManager, ListenerConfig, LoadedConfig, PolicyEngine};
 use crate::db_spiffe;
 use crate::k8s_auth_client::KeystoneK8sHttpClient;
 use crate::keystone::Service as KeystoneServiceState;
 use crate::nova_client_impl::KeystoneNovaHttpClient;
-use crate::policy::HttpPolicyEnforcer;
+use crate::policy::{HttpPolicyEnforcer, PolicyEnforcer};
 use crate::provider::Provider;
 use openstack_keystone_core::error::KeystoneError;
 use openstack_keystone_core::keystone::{ServiceState, SpiffeHealthStatus};
@@ -68,7 +68,7 @@ pub async fn run(
 
     let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client, nova_http_client)?;
     debug!("Central provider manager initialized.");
-    let policy = HttpPolicyEnforcer::new(cfg.api_policy.opa_base_url.clone()).await?;
+    let policy = init_policy_enforcer(&cfg).await?;
     debug!("Policy enforcer started.");
     debug_elapsed(startup_timer, "policy_enforcer");
 
@@ -95,7 +95,7 @@ pub async fn run(
             cfg_mgr,
             conn,
             provider,
-            Arc::new(policy),
+            policy,
             audit_dispatcher,
             storage_for_service,
         )
@@ -122,6 +122,42 @@ pub async fn run(
 /// or token) contains the well-known Null Key, unless the operator has
 /// explicitly opted in. This is an eager check on top of the lazy one each
 /// repository already performs on first access.
+/// Build the policy enforcer selected by `[api_policy] engine`.
+///
+/// The OPA (HTTP) enforcer is the default. The in-process `regorus` enforcer
+/// is experimental and only available with the `regorus` cargo feature.
+async fn init_policy_enforcer(cfg: &Config) -> Result<Arc<dyn PolicyEnforcer>, Report> {
+    match cfg.api_policy.engine {
+        PolicyEngine::Opa => Ok(Arc::new(
+            HttpPolicyEnforcer::new(cfg.api_policy.opa_base_url.clone()).await?,
+        )),
+        #[cfg(feature = "regorus")]
+        PolicyEngine::Regorus => {
+            let path = cfg
+                .api_policy
+                .regorus_policies_path
+                .clone()
+                .ok_or_else(|| {
+                    eyre::eyre!(
+                        "`[api_policy] regorus_policies_path` is required for engine = \"regorus\""
+                    )
+                })?;
+            // Compiling the policies is CPU bound.
+            let enforcer = tokio::task::spawn_blocking(move || {
+                openstack_keystone_policy_regorus::RegorusPolicyEnforcer::new(&path)
+            })
+            .await
+            .wrap_err("compiling the regorus policies")?
+            .wrap_err("loading the regorus policies")?;
+            Ok(Arc::new(enforcer))
+        }
+        #[cfg(not(feature = "regorus"))]
+        PolicyEngine::Regorus => Err(eyre::eyre!(
+            "`[api_policy] engine = \"regorus\"` requires keystone built with the `regorus` feature"
+        )),
+    }
+}
+
 async fn check_fernet_repositories(cfg: &Config) -> Result<(), Report> {
     FernetKeyRepository::new(cfg.credential.key_repository.clone())
         .check_startup_null_key(cfg.credential.insecure_allow_null_key)
