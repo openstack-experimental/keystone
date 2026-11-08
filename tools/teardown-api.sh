@@ -13,13 +13,8 @@ fi
 if [ -f "$SPIRE_PID_DIR/agent.pid" ]; then kill -9 "$(cat "$SPIRE_PID_DIR/agent.pid")" 2>/dev/null || true; fi
 if [ -f "$SPIRE_PID_DIR/server.pid" ]; then kill -9 "$(cat "$SPIRE_PID_DIR/server.pid")" 2>/dev/null || true; fi
 
-# `keystone`'s embedded OPA subprocess (crates/keystone/src/bin/keystone.rs
-# `spawn_opa_subprocess`) is never signaled to stop on shutdown -- its
-# owning task only awaits the child's own exit and never observes the
-# server's shutdown cancellation token, so `kill -9` above orphans it every
-# time. Kill it directly by its socket path for this STATE_DIR instead of
-# relying on the parent's death to take it down.
-pkill -9 -f "opa run -s .* --addr unix://${STATE_DIR}/opa.sock" 2>/dev/null || true
+# Policies are evaluated in-process (regorus): there is no OPA subprocess to
+# clean up.
 
 rm -rf /tmp/nextest/keystone/raft
 

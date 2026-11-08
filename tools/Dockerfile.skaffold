@@ -26,7 +26,7 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo chef cook \
     -p openstack-keystone -p openstack-keystone-cli-manage -p test_api -p test_federation \
-    --features openstack-keystone/otel,openstack-keystone/wasm_plugins \
+    --features openstack-keystone/otel,openstack-keystone/wasm_plugins,openstack-keystone/regorus \
     --recipe-path recipe.json --profile skaffold
 
 COPY crates crates
@@ -42,12 +42,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp /app/target/wasm32-unknown-unknown/release/reference_plugin.wasm /app/reference_plugin.wasm
 
 # Compile keystone + keystone-manage binaries. The `otel` feature only compiles
-# the OTLP exporters in; they stay off until `[otel] enabled` (ADR 0040).
+# the OTLP exporters in; they stay off until `[otel] enabled` (ADR 0040). The
+# `regorus` feature adds the in-process policy engine (`[api_policy] engine =
+# regorus`); it is not a default feature of the crate, only of this image.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --profile skaffold \
     -p openstack-keystone \
     -p openstack-keystone-cli-manage \
-    --features openstack-keystone/otel,openstack-keystone/wasm_plugins && \
+    --features openstack-keystone/otel,openstack-keystone/wasm_plugins,openstack-keystone/regorus && \
     cp target/skaffold/keystone /app/keystone && \
     cp target/skaffold/keystone-manage /app/keystone-manage
 
@@ -87,7 +89,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp $(find target/skaffold/deps -name "dex-*" -type f -executable) /app/test-dex && \
     cp $(find target/skaffold/deps -name "github-*" -type f -executable) /app/test-github
 
-# Single runtime: keystone + keystone-manage + OPA + policies + all test binaries
+# Single runtime: keystone + keystone-manage + OPA + policies + all test binaries.
+# The policies are baked in at /policy: the regorus engine loads them from
+# there, so they are versioned together with the binary. OPA stays available
+# for the opa-bundle component and for `engine = opa` deployments.
 FROM debian:trixie-slim
 
 LABEL maintainer="Artem Goncharov"
