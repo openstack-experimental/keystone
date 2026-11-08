@@ -45,6 +45,23 @@ poll for asynchronous key provisioning.
 Password authentication returns `IdentityInfo::User`. Mocks for the real
 password-auth path must use the same identity variant.
 
+## Policy Engine Differential Tests
+
+The `policy/` tree is evaluated by OPA (the default) and, experimentally,
+in-process by `regorus` (`crates/policy-regorus`). `tools/policy-diff.py`
+sends every `with input as {...}` document used by the `*_test.rego` suites to
+both engines and compares `allow`, `violation` and
+`can_see_other_domain_resources`. It needs `opa` and runs the regorus side
+through `cargo test -p openstack-keystone-policy-regorus dump_decisions`:
+
+```console
+$ tools/policy-diff.py --report /tmp/policy-diff.json
+```
+
+A divergence means a policy relies on behaviour the two engines do not share;
+the conventions that avoid them are listed in the `openstack-keystone-policy-regorus`
+crate documentation.
+
 ## Documentation Tests
 
 Regenerate the API specification and build the book:

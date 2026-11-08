@@ -37,24 +37,30 @@
 //!   the old set.
 
 //!
-//! ## Known divergences from OPA (regorus 0.14.1)
+//! ## Policy conventions required by regorus
 //!
-//! Running the repository's `*_test.rego` suites (`opa test policy`) with
-//! regorus passes 496 of 567 tests. The failures are not exotic builtins but
-//! core semantics, which is why this enforcer is experimental and **not**
-//! the default:
+//! regorus 0.14.1 evaluates the OPA test suites of this repository (567 of
+//! 567) and matches OPA on every `with input as` document they contain
+//! (`tools/policy-diff.py`) only because the policies follow three rules.
+//! Each was found by the differential test, which still guards them:
 //!
-//! * An entrypoint package nested below a helper package (`identity.x.show`
-//!   below `identity`) can evaluate a multi-body helper rule to the wrong
-//!   value (`allow` is `false` where OPA says `true`).
-//! * Several `:=` complete rules producing the *same* value in one
-//!   evaluation are reported as a conflict (`identity.any_domain_id`); OPA
-//!   accepts identical values.
-//! * Importing many entrypoints into one engine fails with "recursion
-//!   detected" (worked around for production with an engine per entrypoint;
-//!   it only affects the test harness for suites importing many packages).
+//! * **Helper packages are not a prefix of an entrypoint package.** Helpers
+//!   live in `common.*` (`common.identity`, `common.api_key`, ...). With the
+//!   helper in `identity.api_key` and the entrypoint in
+//!   `identity.api_key.create`, regorus silently evaluates a later `allow`
+//!   body that uses the helper to the wrong value (`violation` came back
+//!   empty where OPA reports messages).
+//! * **No complete rule (`:=`) with several bodies that may fire at once.**
+//!   OPA only evaluates the bodies a decision needs, regorus reorders and
+//!   evaluates more, so equal or `null`/value pairs raise "rule conflicts".
+//!   `identity.any_domain_id` is therefore a set of candidates
+//!   (`_domain_ids`) and the predicates quantify over it.
+//! * **Builtins are guarded by their types.** `count(null)` is undefined in
+//!   OPA but an error in regorus, so `is_array(x)` precedes `count(x)`.
 //!
-//! Do not enable it in production before the differential suite is green.
+//! The first two also hold for OPA; the changes are behaviour preserving
+//! there (`opa test policy` stays green) and only turn a would-be conflict
+//! error into a fail-closed decision.
 
 mod enforcer;
 mod loader;

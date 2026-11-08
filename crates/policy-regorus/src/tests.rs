@@ -24,6 +24,9 @@ use crate::RegorusPolicyEnforcer;
 use crate::loader::{SourceFile, engine_for, scan};
 
 fn policy_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("POLICY_DIR") {
+        return PathBuf::from(dir);
+    }
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../policy")
 }
 
@@ -119,9 +122,6 @@ async fn test_health_check() {
     enforcer().health_check().await.unwrap();
 }
 
-/// Rego tests (out of 567) that regorus 0.14.1 evaluates differently than OPA.
-const KNOWN_FAILING_REGO_TESTS: usize = 71;
-
 /// Run every `test_*` rule of the `*_test.rego` files (the suite `opa test
 /// policy` runs in CI) with regorus. This is the parity check against OPA:
 /// the suite is the specification of the policies.
@@ -182,13 +182,41 @@ fn test_rego_test_suites_pass() {
         eprintln!("FAILED {f}");
     }
     assert!(passed > 0);
-    // Known regorus 0.14.1 divergences from OPA (see the crate docs). This
-    // is a ratchet: it may only go down. Lower the constant when a regorus
-    // upgrade or a policy change fixes failures.
-    assert!(
-        failed.len() <= KNOWN_FAILING_REGO_TESTS,
-        "{} rego tests failed, at most {KNOWN_FAILING_REGO_TESTS} are known",
-        failed.len()
-    );
-    assert!(passed >= 496, "only {passed} rego tests passed");
+    assert!(failed.is_empty(), "{} rego tests failed", failed.len());
+    assert!(passed >= 567, "only {passed} rego tests passed");
+}
+
+/// Helper of `tools/policy-diff.py`: evaluate the cases of `POLICY_DIFF_CASES`
+/// and write the decisions (`null` on an evaluation error) to
+/// `POLICY_DIFF_OUT`.
+#[test]
+#[ignore = "driven by tools/policy-diff.py"]
+fn dump_decisions() {
+    let (Ok(cases), Ok(out)) = (
+        std::env::var("POLICY_DIFF_CASES"),
+        std::env::var("POLICY_DIFF_OUT"),
+    ) else {
+        return;
+    };
+    let cases: Vec<serde_json::Value> =
+        serde_json::from_str(&std::fs::read_to_string(cases).unwrap()).unwrap();
+    let e = enforcer();
+    let res: Vec<serde_json::Value> = cases
+        .iter()
+        .map(|c| {
+            let name = c["package"].as_str().unwrap().replace('.', "/");
+            match e.evaluate(&name, c["input"].clone()) {
+                Ok(r) => json!({
+                    "allow": r.allow,
+                    "violation": r.violations,
+                    "can_see_other_domain_resources": r.can_see_other_domain_resources,
+                }),
+                Err(err) => {
+                    eprintln!("ERROR {name}: {err:?}");
+                    serde_json::Value::Null
+                }
+            }
+        })
+        .collect();
+    std::fs::write(out, serde_json::to_string(&res).unwrap()).unwrap();
 }
