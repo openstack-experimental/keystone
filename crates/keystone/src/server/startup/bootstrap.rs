@@ -127,21 +127,13 @@ pub async fn run(
 /// The OPA (HTTP) enforcer is the default. The in-process `regorus` enforcer
 /// is experimental and only available with the `regorus` cargo feature.
 async fn init_policy_enforcer(cfg: &Config) -> Result<Arc<dyn PolicyEnforcer>, Report> {
-    match cfg.api_policy.engine {
-        PolicyEngine::Opa => Ok(Arc::new(
-            HttpPolicyEnforcer::new(cfg.api_policy.opa_base_url.clone()).await?,
+    match &cfg.api_policy.engine {
+        PolicyEngine::Opa(opa) => Ok(Arc::new(
+            HttpPolicyEnforcer::new(opa.base_url.clone()).await?,
         )),
         #[cfg(feature = "regorus")]
-        PolicyEngine::Regorus => {
-            let path = cfg
-                .api_policy
-                .regorus_policies_path
-                .clone()
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "`[api_policy] regorus_policies_path` is required for engine = \"regorus\""
-                    )
-                })?;
+        PolicyEngine::Regorus(regorus) => {
+            let path = regorus.policies_path.clone();
             // Compiling the policies is CPU bound.
             let enforcer = tokio::task::spawn_blocking(move || {
                 openstack_keystone_policy_regorus::RegorusPolicyEnforcer::new(&path)
@@ -152,7 +144,7 @@ async fn init_policy_enforcer(cfg: &Config) -> Result<Arc<dyn PolicyEnforcer>, R
             Ok(Arc::new(enforcer))
         }
         #[cfg(not(feature = "regorus"))]
-        PolicyEngine::Regorus => Err(eyre::eyre!(
+        PolicyEngine::Regorus(_) => Err(eyre::eyre!(
             "`[api_policy] engine = \"regorus\"` requires keystone built with the `regorus` feature"
         )),
     }
