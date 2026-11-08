@@ -2,7 +2,7 @@
 # description: Policy for revoking roles from users on system
 package identity.system.user.role.revoke
 
-import data.identity
+import data.common.identity
 
 # Revoke user a role on the system scope.
 

@@ -1,8 +1,8 @@
 # METADATA
 # description: Common policies for federation management
-package identity.federation
+package common.federation
 
-import data.identity
+import data.common.identity
 
 any_domain_id := input.target.identity_provider.domain_id if {
 	input.target.identity_provider.domain_id

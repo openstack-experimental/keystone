@@ -3,7 +3,7 @@
 #   toggle (ADR 0024 §2.B, the Realm Activation Gate)
 package identity.scim_realm.disable
 
-import data.identity
+import data.common.identity
 
 # Update (including enable/disable) a SCIM realm.
 #

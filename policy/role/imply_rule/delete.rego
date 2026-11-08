@@ -3,7 +3,7 @@
 # description: Policy for deleting a role imply rule
 package identity.role.imply_rule.delete
 
-import data.identity
+import data.common.identity
 
 # Delete role imply rule.
 #

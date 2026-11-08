@@ -6,7 +6,7 @@
 #   boundary helper mirrors identity.credential's (OSSA-2026-015) for the case
 #   where a delegated caller (trust, application credential) itself attempts
 #   to create a new trust (see `doc/src/contributor/security-model.md` I2/I3).
-package identity.trust
+package common.trust
 
 # METADATA
 # description: "True when the caller is the trust's trustor."

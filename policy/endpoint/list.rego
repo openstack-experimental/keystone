@@ -3,7 +3,7 @@
 # description: Policy for listing catalog endpoints
 package identity.endpoint.list
 
-import data.identity
+import data.common.identity
 
 # List endpoints.
 #

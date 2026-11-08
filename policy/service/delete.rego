@@ -3,7 +3,7 @@
 # description: Policy for deleting a catalog service
 package identity.service.delete
 
-import data.identity
+import data.common.identity
 
 # Delete service.
 #

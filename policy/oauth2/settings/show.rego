@@ -2,7 +2,7 @@
 # description: Policy for viewing the OAuth2 settings of a domain (ADR 0043 §1)
 package identity.oauth2.settings.show
 
-import data.identity.oauth2.settings as settings_common
+import data.common.settings as settings_common
 
 # Show the OAuth2 settings of a domain (GET .../settings).
 #

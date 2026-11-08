@@ -3,7 +3,7 @@
 # description: Policy for fetching a single catalog endpoint
 package identity.endpoint.show
 
-import data.identity
+import data.common.identity
 
 # Show endpoint.
 #

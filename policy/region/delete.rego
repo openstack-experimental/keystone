@@ -3,7 +3,7 @@
 # description: Policy for deleting a catalog region
 package identity.region.delete
 
-import data.identity
+import data.common.identity
 
 # Delete region.
 #

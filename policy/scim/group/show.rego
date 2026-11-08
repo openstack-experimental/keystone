@@ -2,7 +2,7 @@
 # description: Policy for showing a SCIM-provisioned group (ADR 0024 §3, §8)
 package identity.scim.group.show
 
-import data.identity
+import data.common.identity
 
 # Show a single SCIM-provisioned group.
 #

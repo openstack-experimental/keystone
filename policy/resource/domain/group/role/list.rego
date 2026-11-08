@@ -2,7 +2,7 @@
 # description: Policy for listing roles of a group on a domain
 package identity.domain.group.role.list
 
-import data.identity.assignment
+import data.common.assignment
 
 default allow := false
 

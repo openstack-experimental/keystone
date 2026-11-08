@@ -2,7 +2,7 @@
 # description: Policy for checking group roles on a project
 package identity.project.group.role.check
 
-import data.identity.assignment
+import data.common.assignment
 
 default allow := false
 

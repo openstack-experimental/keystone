@@ -2,7 +2,7 @@
 # description: Policy for creating identity providers
 package identity.federation.identity_provider.create
 
-import data.identity.federation as common_federation
+import data.common.federation as common_federation
 
 # Create identity provider.
 #

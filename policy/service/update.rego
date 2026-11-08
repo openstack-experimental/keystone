@@ -3,7 +3,7 @@
 # description: Policy for updating a catalog service
 package identity.service.update
 
-import data.identity
+import data.common.identity
 
 # Update service.
 #

@@ -3,7 +3,7 @@
 # description: Policy for fetching a single role
 package identity.role.show
 
-import data.identity
+import data.common.identity
 
 # Show role.
 #

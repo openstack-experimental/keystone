@@ -2,7 +2,7 @@
 # description: Policy for updating token restrictions
 package identity.token.token_restriction.update
 
-import data.identity.token
+import data.common.token
 
 # Update token restriction.
 #

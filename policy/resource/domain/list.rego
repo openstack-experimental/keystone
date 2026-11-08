@@ -2,7 +2,7 @@
 # description: Policy for listing domains
 package identity.resource.domain.list
 
-import data.identity
+import data.common.identity
 
 # List domains.
 #

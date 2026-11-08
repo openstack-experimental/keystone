@@ -2,7 +2,7 @@
 # description: Policy for deleting projects
 package identity.resource.project.delete
 
-import data.identity
+import data.common.identity
 
 # Delete a project.
 #

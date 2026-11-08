@@ -1,8 +1,8 @@
 # METADATA
 # description: Common policies for token operations
-package identity.token
+package common.token
 
-import data.identity
+import data.common.identity
 
 foreign_token_restriction if {
 	token_restriction_domain_id != null

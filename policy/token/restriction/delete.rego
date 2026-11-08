@@ -2,7 +2,7 @@
 # description: Policy for deleting token restrictions
 package identity.token.token_restriction.delete
 
-import data.identity.token
+import data.common.token
 
 # Delete token restriction.
 #

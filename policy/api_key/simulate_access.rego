@@ -2,7 +2,7 @@
 # description: Policy for the API Key dry-run auditing endpoint (ADR 0021 §5.E)
 package identity.api_key.simulate_access
 
-import data.identity.api_key as api_key_common
+import data.common.api_key as api_key_common
 
 # Simulate access for an ApiClientResource (POST /v4/api-keys/simulate-access).
 #

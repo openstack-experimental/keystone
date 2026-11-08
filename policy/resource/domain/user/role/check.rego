@@ -2,7 +2,7 @@
 # description: Policy for checking user roles on a domain
 package identity.domain.user.role.check
 
-import data.identity.assignment
+import data.common.assignment
 
 default allow := false
 

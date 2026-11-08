@@ -2,7 +2,7 @@
 # description: Policy for listing identity providers
 package identity.federation.identity_provider.list
 
-import data.identity.federation as common_federation
+import data.common.federation as common_federation
 
 # List identity providers
 #

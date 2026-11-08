@@ -2,7 +2,7 @@
 # description: Policy for listing SCIM-provisioned groups (ADR 0024 §3, §8)
 package identity.scim.group.list
 
-import data.identity
+import data.common.identity
 
 # List SCIM-provisioned groups owned by the realm.
 #

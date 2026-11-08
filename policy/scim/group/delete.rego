@@ -2,7 +2,7 @@
 # description: Policy for neutralizing/tombstoning a SCIM-provisioned group (ADR 0024 §3, §6.B, §8)
 package identity.scim.group.delete
 
-import data.identity
+import data.common.identity
 
 # `DELETE` (neutralize + tombstone) a SCIM-provisioned group.
 #

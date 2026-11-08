@@ -2,7 +2,7 @@
 # description: Policy for showing a SCIM-provisioned user (ADR 0024 §3, §8)
 package identity.scim.user.show
 
-import data.identity
+import data.common.identity
 
 # Show a single SCIM-provisioned user.
 #

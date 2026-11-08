@@ -2,7 +2,7 @@
 # description: Policy for updating identity groups
 package identity.group.update
 
-import data.identity
+import data.common.identity
 
 # Update an existing user group
 #

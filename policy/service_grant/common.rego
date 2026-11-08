@@ -5,7 +5,7 @@
 #   Delegation facts come from the authentication chain
 #   (`input.credentials.delegated_project_id`, `actor`, `service_grant_id`),
 #   never from the token scope alone (security model I2/I3).
-package identity.service_grant
+package common.service_grant
 
 # METADATA
 # description: "True when the caller holds `admin`."

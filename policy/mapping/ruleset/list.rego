@@ -2,7 +2,7 @@
 # description: Policy for listing mapping rulesets
 package identity.mapping.ruleset.list
 
-import data.identity.mapping as mapping_common
+import data.common.mapping as mapping_common
 
 # List MappingRuleSets.
 #

@@ -2,7 +2,7 @@
 # description: Policy for updating OAuth2 clients (relying parties, ADR 0026 §5)
 package identity.oauth2.client.update
 
-import data.identity.oauth2.client as client_common
+import data.common.client as client_common
 
 # Update OAuth2ClientResource (PUT .../clients/{provider_id}, OAuth2ClientUpdate).
 #

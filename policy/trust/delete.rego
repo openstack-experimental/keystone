@@ -3,7 +3,7 @@
 # description: Policy for deleting a trust
 package identity.trust.delete
 
-import data.identity.trust as trust_common
+import data.common.trust as trust_common
 
 # Delete trust.
 #

@@ -2,7 +2,7 @@
 # description: Policy for listing projects of a user
 package identity.user.project.list
 
-import data.identity
+import data.common.identity
 
 # List projects a user has a role assignment on.
 #

@@ -2,8 +2,8 @@
 # description: Policy for checking user roles in a project
 package identity.project.user.role.check
 
-import data.identity
-import data.identity.assignment
+import data.common.assignment
+import data.common.identity
 
 # Check whether the user has a role assigned on the project.
 

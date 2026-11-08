@@ -2,7 +2,7 @@
 # description: Policy for registering a new SCIM realm (ADR 0024 §2.A)
 package identity.scim_realm.create
 
-import data.identity
+import data.common.identity
 
 # Register a SCIM realm.
 #

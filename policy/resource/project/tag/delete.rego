@@ -2,7 +2,7 @@
 # description: Policy for deleting project tags
 package identity.resource.project.tag.delete
 
-import data.identity
+import data.common.identity
 
 # Deleting the tags of a project.
 #

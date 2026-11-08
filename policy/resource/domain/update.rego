@@ -2,7 +2,7 @@
 # description: Policy for updating domains
 package identity.resource.domain.update
 
-import data.identity
+import data.common.identity
 
 # Update a domain.
 #

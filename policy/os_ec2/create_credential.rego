@@ -3,7 +3,7 @@
 # description: Policy for creating an EC2 credential for a user (OS-EC2 legacy API)
 package identity.os_ec2.create_credential
 
-import data.identity.credential as credential_common
+import data.common.credential as credential_common
 
 # Create an OS-EC2 credential.
 #

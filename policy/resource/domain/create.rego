@@ -2,7 +2,7 @@
 # description: Policy for creating domains
 package identity.resource.domain.create
 
-import data.identity
+import data.common.identity
 
 # Create a new domain
 #

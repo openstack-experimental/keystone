@@ -3,7 +3,7 @@
 # description: Policy for fetching a single trust
 package identity.trust.show
 
-import data.identity.trust as trust_common
+import data.common.trust as trust_common
 
 # Show trust.
 #

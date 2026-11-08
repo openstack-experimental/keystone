@@ -2,8 +2,8 @@
 # description: Policy for revoking roles from users in a project
 package identity.project.user.role.revoke
 
-import data.identity
-import data.identity.assignment
+import data.common.assignment
+import data.common.identity
 
 # Revoke user a role on a project
 

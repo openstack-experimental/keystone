@@ -6,7 +6,7 @@
 #   identity.os_ec2.*). Defined once here so a new delegation-sensitive
 #   endpoint imports the check instead of hand-copying it (see
 #   `doc/src/contributor/security-model.md` I2/I3 and its reviewer checklist).
-package identity.credential
+package common.credential
 
 # METADATA
 # description: >

@@ -3,7 +3,7 @@
 # description: Policy for creating a credential
 package identity.credential.create
 
-import data.identity.credential as credential_common
+import data.common.credential as credential_common
 
 # Create credential.
 #

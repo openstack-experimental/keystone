@@ -3,7 +3,7 @@
 # description: Policy for creating a role imply rule
 package identity.role.imply_rule.create
 
-import data.identity
+import data.common.identity
 
 # Create role imply rule.
 #

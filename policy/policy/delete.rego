@@ -3,7 +3,7 @@
 # description: Policy for deleting a legacy policy document
 package identity.policy.delete
 
-import data.identity
+import data.common.identity
 
 # Delete policy (legacy `DELETE /v3/policies/{policy_id}`).
 #

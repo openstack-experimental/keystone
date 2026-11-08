@@ -2,7 +2,7 @@
 # description: Policy for deleting users
 package identity.user.delete
 
-import data.identity
+import data.common.identity
 
 # Delete user.
 #

@@ -2,7 +2,7 @@
 # description: Policy for creating mapping rulesets
 package identity.mapping.ruleset.create
 
-import data.identity.mapping as mapping_common
+import data.common.mapping as mapping_common
 
 # Create MappingRuleSet (MappingRuleSetCreate).
 #

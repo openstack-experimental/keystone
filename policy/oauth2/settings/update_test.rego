@@ -22,6 +22,7 @@ test_manager_raise_allowed if {
 
 test_manager_unchanged_allowed if {
 	update.allow with input as object.union({"credentials": manager("foo")}, settings("foo", "optional", "optional", "optional"))
+
 	# A no-op below the global floor changes nothing.
 	update.allow with input as object.union({"credentials": manager("foo")}, settings("foo", "disabled", "disabled", "required"))
 }

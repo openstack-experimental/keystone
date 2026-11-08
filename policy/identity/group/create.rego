@@ -2,7 +2,7 @@
 # description: Policy for creating identity groups
 package identity.group.create
 
-import data.identity
+import data.common.identity
 
 # Create a new user group
 #

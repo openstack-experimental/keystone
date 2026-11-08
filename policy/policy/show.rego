@@ -3,7 +3,7 @@
 # description: Policy for fetching a single legacy policy document
 package identity.policy.show
 
-import data.identity
+import data.common.identity
 
 # Show policy (legacy `GET /v3/policies/{policy_id}`).
 #

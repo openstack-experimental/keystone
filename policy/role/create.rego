@@ -3,7 +3,7 @@
 # description: Policy for creating role
 package identity.role.create
 
-import data.identity
+import data.common.identity
 
 # Create role.
 #

@@ -2,7 +2,7 @@
 # description: Policy for revoking authentication tokens
 package identity.auth.token.revoke
 
-import data.identity
+import data.common.identity
 
 # Revoke authentication tokens.
 #

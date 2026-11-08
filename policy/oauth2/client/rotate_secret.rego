@@ -2,7 +2,7 @@
 # description: Policy for rotating an OAuth2 client's secret (ADR 0026 §5)
 package identity.oauth2.client.rotate_secret
 
-import data.identity.oauth2.client as client_common
+import data.common.client as client_common
 
 # Rotate an OAuth2Client's secret (POST .../clients/{provider_id}/rotate-secret).
 #

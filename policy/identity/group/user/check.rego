@@ -2,7 +2,7 @@
 # description: Policy for checking user membership in a group
 package identity.group.user.check
 
-import data.identity
+import data.common.identity
 
 # Checking user membership in a group.
 #

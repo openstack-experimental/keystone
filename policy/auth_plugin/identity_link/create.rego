@@ -2,7 +2,7 @@
 # description: Policy for creating a dynamic auth plugin identity link
 package identity.auth_plugin.identity_link.create
 
-import data.identity as common
+import data.common.identity as common
 
 # Create an admin-authorized (plugin_name, external_id) -> user_id link
 # (ADR 0025 §4 "Admin-Authorized External Identity Linking").

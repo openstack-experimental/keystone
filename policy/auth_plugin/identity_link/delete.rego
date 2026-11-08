@@ -2,7 +2,7 @@
 # description: Policy for deleting a dynamic auth plugin identity link
 package identity.auth_plugin.identity_link.delete
 
-import data.identity as common
+import data.common.identity as common
 
 # Delete an admin-authorized identity link (ADR 0025 §4). Same RBAC tiering
 # as create: system-scope `admin` may unlink any user, including a system
