@@ -3,7 +3,7 @@
 # description: Policy for listing legacy policy documents
 package identity.policy.list
 
-import data.identity
+import data.common.identity
 
 # List policies (legacy `GET /v3/policies`).
 #

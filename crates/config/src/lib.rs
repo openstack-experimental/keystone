@@ -164,8 +164,8 @@ pub struct Config {
     pub auth_plugin_identity: AuthPluginIdentityProvider,
 
     /// API policy enforcement.
-    #[serde(default)]
-    pub api_policy: PolicyProvider,
+    #[serde(default, deserialize_with = "policy::deserialize_or_default_opa")]
+    pub api_policy: PolicyEngine,
 
     /// Assignments (roles) provider configuration.
     #[serde(default)]
@@ -636,22 +636,32 @@ mod tests {
     #[test]
     #[serial]
     fn test_env() {
-        temp_env::with_var("OS_API_POLICY__OPA_BASE_URL", Some("http://test/"), || {
-            let mut cfg_file = NamedTempFile::new().unwrap();
-            write!(
-                cfg_file,
-                r#"
+        temp_env::with_vars(
+            [("OS_API_POLICY__OPA_BASE_URL", Some("http://test/"))],
+            || {
+                let mut cfg_file = NamedTempFile::new().unwrap();
+                write!(
+                    cfg_file,
+                    r#"
     [auth]
     methods = []
     [database]
     connection = "foo"
                 "#
-            )
-            .unwrap();
+                )
+                .unwrap();
 
-            let cfg = block_on_config_new(cfg_file.path().to_path_buf()).unwrap();
-            assert_eq!("http://test/", cfg.api_policy.opa_base_url.to_string());
-        });
+                let cfg = block_on_config_new(cfg_file.path().to_path_buf()).unwrap();
+                assert_eq!("http://test/", opa_base_url(&cfg.api_policy));
+            },
+        );
+    }
+
+    fn opa_base_url(p: &PolicyEngine) -> String {
+        match p {
+            PolicyEngine::Opa(opa) => opa.base_url.to_string(),
+            other => panic!("expected the opa engine, got {other:?}"),
+        }
     }
 
     #[test]
@@ -683,10 +693,7 @@ mod tests {
                 .unwrap();
 
                 let cfg = block_on_config_new(cfg_file.path().to_path_buf()).unwrap();
-                assert_eq!(
-                    "http://site-vars:8181/",
-                    cfg.api_policy.opa_base_url.to_string()
-                );
+                assert_eq!("http://site-vars:8181/", opa_base_url(&cfg.api_policy));
             },
         );
     }
@@ -850,7 +857,7 @@ mod tests {
             || {
                 let cfg = block_on_config_new(cfg_file.path().to_path_buf()).unwrap();
                 // env > site-vars > file
-                assert_eq!("http://env/", cfg.api_policy.opa_base_url.to_string());
+                assert_eq!("http://env/", opa_base_url(&cfg.api_policy));
                 // site-vars > file
                 assert_eq!(cfg.database.connection.expose_secret(), "from-site-vars");
                 // untouched file value survives the overlays

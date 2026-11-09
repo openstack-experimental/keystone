@@ -2,7 +2,7 @@
 # description: Policy for updating mapping rulesets and mutating rules
 package identity.mapping.ruleset.update
 
-import data.identity.mapping as mapping_common
+import data.common.mapping as mapping_common
 
 # Update MappingRuleSet (PUT) via MappingRuleSetUpdate, or mutate rules
 # (POST /v4/mappings/{mapping_id}/rules/mutate) via RuleMutations.

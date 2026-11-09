@@ -3,7 +3,7 @@
 # description: Policy for listing role imply rules
 package identity.role.imply_rule.list
 
-import data.identity
+import data.common.identity
 
 # List role imply rules.
 #

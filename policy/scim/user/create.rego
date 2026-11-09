@@ -2,7 +2,7 @@
 # description: Policy for provisioning a SCIM user (ADR 0024 §3, §8)
 package identity.scim.user.create
 
-import data.identity
+import data.common.identity
 
 # Create a new SCIM-provisioned user.
 #

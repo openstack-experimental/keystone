@@ -2,7 +2,7 @@
 # description: Policy for listing OAuth2 clients (relying parties, ADR 0026 §5)
 package identity.oauth2.client.list
 
-import data.identity.oauth2.client as client_common
+import data.common.client as client_common
 
 # List OAuth2ClientResources.
 #

@@ -2,7 +2,7 @@
 # description: Policy for updating (replacing or adding) project tags
 package identity.resource.project.tag.update
 
-import data.identity
+import data.common.identity
 
 # Updating the tags of a project.
 #

@@ -33,6 +33,7 @@ members = [
   "crates/oauth2-session-driver-raft",
   "crates/oslo-config",
   "crates/password-hashing",
+  "crates/policy-regorus",
   "crates/policy-store-driver-sql",
   "crates/resource-driver-sql",
   "crates/role-driver-sql",
@@ -177,6 +178,7 @@ openstack-keystone-identity-driver-ldap = { version = "0.1", path = "crates/iden
 openstack-keystone-identity-driver-sql = { version = "0.1", path = "crates/identity-driver-sql" }
 openstack-keystone-idmapping-driver-sql = { version = "0.1", path = "crates/idmapping-driver-sql/" }
 openstack-keystone-policy-store-driver-sql = { version = "0.1", path = "crates/policy-store-driver-sql/" }
+openstack-keystone-policy-regorus = { version = "0.1", path = "crates/policy-regorus/" }
 openstack-keystone-resource-driver-sql = { version = "0.1", path = "crates/resource-driver-sql/" }
 openstack-keystone-revoke-driver-sql = { version = "0.1", path = "crates/revoke-driver-sql/" }
 openstack-keystone-role-driver-sql = { version = "0.1", path = "crates/role-driver-sql/" }
@@ -194,6 +196,7 @@ prost = { version = "0.14" }
 proptest = { version = "1" }
 rand = { version = "0.10" }
 regex = { version = "1.13" }
+regorus = { version = "=0.14.1", default-features = false, features = ["arc", "std", "rvm"] }
 regex-syntax = "0.8"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "charset", "http2", "system-proxy"] }
 reserve-port = "2.5"

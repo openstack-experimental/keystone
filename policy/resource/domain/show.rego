@@ -2,7 +2,7 @@
 # description: Policy for showing domain details
 package identity.resource.domain.show
 
-import data.identity
+import data.common.identity
 
 # Show a domain.
 #

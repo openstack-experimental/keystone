@@ -1,8 +1,8 @@
 # METADATA
 # description: Common policies for identity assignments
-package identity.assignment
+package common.assignment
 
-import data.identity
+import data.common.identity
 
 # description: current domain scope matches the domain_id of the project, or the user and of
 # the role (or it is a global role)

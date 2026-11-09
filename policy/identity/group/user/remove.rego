@@ -2,7 +2,7 @@
 # description: Policy for removing a user from a group
 package identity.group.user.remove
 
-import data.identity
+import data.common.identity
 
 # Removing a user from a group.
 #

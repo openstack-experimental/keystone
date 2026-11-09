@@ -2,8 +2,8 @@
 # description: Policy for checking a project tag
 package identity.resource.project.tag.show
 
-import data.identity
-import data.identity.resource.project.tag as tag
+import data.common.identity
+import data.common.tag as tag
 
 # Checking a tag of a project.
 #

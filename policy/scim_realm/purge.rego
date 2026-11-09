@@ -4,7 +4,7 @@
 #   retention window (ADR 0024 §6.C, last paragraph).
 package identity.scim_realm.purge
 
-import data.identity
+import data.common.identity
 
 # Purge a single already-deprovisioned SCIM resource owned by a realm.
 #

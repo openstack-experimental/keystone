@@ -2,7 +2,7 @@
 # description: Policy for listing projects the authentication have access to
 package identity.auth.project.list
 
-import data.identity
+import data.common.identity
 
 # List projects the authentication have access to.
 #

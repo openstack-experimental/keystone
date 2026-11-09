@@ -2,7 +2,7 @@
 # description: Policy for listing users
 package identity.user.list
 
-import data.identity
+import data.common.identity
 
 # List users.
 #

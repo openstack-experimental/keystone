@@ -2,7 +2,7 @@
 # description: Policy for revoking (soft-deleting) OAuth2 clients (ADR 0026 §5)
 package identity.oauth2.client.delete
 
-import data.identity.oauth2.client as client_common
+import data.common.client as client_common
 
 # Soft-delete an OAuth2ClientResource (DELETE .../clients/{provider_id}).
 #

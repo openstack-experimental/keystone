@@ -3,7 +3,7 @@
 # description: Policy for deleting a catalog endpoint
 package identity.endpoint.delete
 
-import data.identity
+import data.common.identity
 
 # Delete endpoint.
 #

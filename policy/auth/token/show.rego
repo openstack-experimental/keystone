@@ -2,7 +2,7 @@
 # description: Policy for viewing authentication token details
 package identity.auth.token.show
 
-import data.identity
+import data.common.identity
 
 # View authentication token details.
 #

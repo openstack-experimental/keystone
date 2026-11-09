@@ -2,7 +2,7 @@
 # description: Policy for updating projects
 package identity.resource.project.update
 
-import data.identity
+import data.common.identity
 
 # Update a project.
 #

@@ -2,7 +2,7 @@
 # description: Policy for granting roles to users on system
 package identity.system.user.role.grant
 
-import data.identity
+import data.common.identity
 
 # Grant user a role on the system scope.
 

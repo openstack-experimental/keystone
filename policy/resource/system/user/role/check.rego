@@ -2,7 +2,7 @@
 # description: Policy for checking user roles on system
 package identity.system.user.role.check
 
-import data.identity
+import data.common.identity
 
 # Check whether the user has a role assigned on the system.
 

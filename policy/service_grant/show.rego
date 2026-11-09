@@ -3,7 +3,7 @@
 # description: Policy for reading one service grant (ADR 0036 §4.2)
 package identity.service_grant.show
 
-import data.identity.service_grant as sg
+import data.common.service_grant as sg
 
 # The `input.existing.service_grant` is the stored grant, or `{"id": ...}`
 # only when it does not exist (the handler answers 404 after an allow).

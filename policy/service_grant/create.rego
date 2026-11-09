@@ -3,7 +3,7 @@
 # description: Policy for creating a service grant (ADR 0036 §4.1)
 package identity.service_grant.create
 
-import data.identity.service_grant as sg
+import data.common.service_grant as sg
 
 # The `input.target.service_grant` is the ServiceGrantCreate payload:
 #   grantee_client_id: string

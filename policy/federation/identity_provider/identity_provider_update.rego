@@ -2,7 +2,7 @@
 # description: Policy for updating identity providers
 package identity.federation.identity_provider.update
 
-import data.identity.federation as common_federation
+import data.common.federation as common_federation
 
 # Update identity provider.
 #

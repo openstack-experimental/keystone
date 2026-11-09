@@ -2,7 +2,7 @@
 # description: Policy for listing token restrictions
 package identity.token.token_restriction.list
 
-import data.identity.token
+import data.common.token
 
 # List token restrictions.
 #

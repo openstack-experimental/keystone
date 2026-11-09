@@ -23,7 +23,7 @@ use crate::pagination::ListLimitConfig;
 ///
 /// Bound to the `[policy]` section, matching python keystone's `[policy]
 /// driver`. Not to be confused with `[api_policy]`
-/// ([`crate::policy::PolicyProvider`]), which configures this service's
+/// ([`crate::policy::PolicyEngine`]), which configures this service's
 /// OPA-based authorization.
 #[derive(Debug, Deserialize, Clone)]
 pub struct PolicyStoreProvider {

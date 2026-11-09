@@ -1,6 +1,6 @@
 # METADATA
 # description: Core identity predicates and helper rules for Keystone4 policies
-package identity
+package common.identity
 
 token_subject if {
 	input.credentials.user_id == input.target.token.user.id
@@ -48,101 +48,103 @@ own_role_or_global_role if {
 }
 
 own_target if {
-	any_domain_id != null
-	any_domain_id == input.credentials.domain_id
+	count(_domain_ids) > 0
+	every id in _domain_ids {
+		id == input.credentials.domain_id
+	}
 }
 
 foreign_target if {
-	any_domain_id != null
-	any_domain_id != input.credentials.domain_id
+	some id in _domain_ids
+	id != input.credentials.domain_id
 }
 
 # Collect domain_id from any known wrapped resource key.
 # Used by own_target / foreign_target / domain_matches_domain_scope.
 # For create/list/update: resource is in input.target.
 # For show/delete: resource is in input.existing.
-any_domain_id := input.target.instance.domain_id if {
-	input.target.instance.domain_id
+_domain_ids contains input.target.instance.domain_id if {
+	input.target.instance.domain_id != null
 }
 
-any_domain_id := input.target.user.domain_id if {
-	input.target.user.domain_id
+_domain_ids contains input.target.user.domain_id if {
+	input.target.user.domain_id != null
 }
 
-any_domain_id := input.target.group.domain_id if {
-	input.target.group.domain_id
+_domain_ids contains input.target.group.domain_id if {
+	input.target.group.domain_id != null
 }
 
-any_domain_id := input.target.restriction.domain_id if {
-	input.target.restriction.domain_id
+_domain_ids contains input.target.restriction.domain_id if {
+	input.target.restriction.domain_id != null
 }
 
-any_domain_id := input.target.project.domain_id if {
-	input.target.project.domain_id
+_domain_ids contains input.target.project.domain_id if {
+	input.target.project.domain_id != null
 }
 
-any_domain_id := input.target.role.domain_id if {
-	input.target.role.domain_id
+_domain_ids contains input.target.role.domain_id if {
+	input.target.role.domain_id != null
 }
 
-any_domain_id := input.target.token.domain_id if {
-	input.target.token.domain_id
+_domain_ids contains input.target.token.domain_id if {
+	input.target.token.domain_id != null
 }
 
-any_domain_id := input.target.domain.id if {
-	input.target.domain.id
+_domain_ids contains input.target.domain.id if {
+	input.target.domain.id != null
 }
 
-any_domain_id := input.target.scim_realm.domain_id if {
-	input.target.scim_realm.domain_id
+_domain_ids contains input.target.scim_realm.domain_id if {
+	input.target.scim_realm.domain_id != null
 }
 
-any_domain_id := input.existing.instance.domain_id if {
-	input.existing.instance.domain_id
+_domain_ids contains input.existing.instance.domain_id if {
+	input.existing.instance.domain_id != null
 }
 
-any_domain_id := input.existing.user.domain_id if {
-	input.existing.user.domain_id
+_domain_ids contains input.existing.user.domain_id if {
+	input.existing.user.domain_id != null
 }
 
-any_domain_id := input.existing.group.domain_id if {
-	input.existing.group.domain_id
+_domain_ids contains input.existing.group.domain_id if {
+	input.existing.group.domain_id != null
 }
 
-any_domain_id := input.existing.restriction.domain_id if {
-	input.existing.restriction.domain_id
+_domain_ids contains input.existing.restriction.domain_id if {
+	input.existing.restriction.domain_id != null
 }
 
-any_domain_id := input.existing.project.domain_id if {
-	input.existing.project.domain_id
+_domain_ids contains input.existing.project.domain_id if {
+	input.existing.project.domain_id != null
 }
 
-any_domain_id := input.existing.role.domain_id if {
-	input.existing.role.domain_id
+_domain_ids contains input.existing.role.domain_id if {
+	input.existing.role.domain_id != null
 }
 
-any_domain_id := input.existing.token.domain_id if {
-	input.existing.token.domain_id
+_domain_ids contains input.existing.token.domain_id if {
+	input.existing.token.domain_id != null
 }
 
-any_domain_id := input.existing.domain.id if {
-	input.existing.domain.id
+_domain_ids contains input.existing.domain.id if {
+	input.existing.domain.id != null
 }
 
-any_domain_id := input.existing.scim_realm.domain_id if {
-	input.existing.scim_realm.domain_id
+_domain_ids contains input.existing.scim_realm.domain_id if {
+	input.existing.scim_realm.domain_id != null
 }
 
-any_domain_id := input.target.scim_realm.domain_id if {
-	input.target.scim_realm.domain_id
+_domain_ids contains input.target.scim_realm.domain_id if {
+	input.target.scim_realm.domain_id != null
 }
 
-any_domain_id := input.existing.user.domain_id if {
-	input.existing.user.domain_id
+_domain_ids contains input.existing.user.domain_id if {
+	input.existing.user.domain_id != null
 }
 
-any_domain_id := input.target.user.domain_id if {
-	input.target.user.domain_id
+_domain_ids contains input.target.user.domain_id if {
+	input.target.user.domain_id != null
 }
 
 project_domain_matches_domain_scope if {
@@ -156,8 +158,10 @@ project_domain_matches_domain_scope if {
 }
 
 domain_matches_domain_scope if {
-	any_domain_id != null
-	any_domain_id = input.credentials.domain_id
+	count(_domain_ids) > 0
+	every id in _domain_ids {
+		id == input.credentials.domain_id
+	}
 }
 
 # Both the group and the user of a group membership belong to the domain of the

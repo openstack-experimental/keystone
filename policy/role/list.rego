@@ -3,7 +3,7 @@
 # description: Policy for listing roles
 package identity.role.list
 
-import data.identity
+import data.common.identity
 
 # List roles.
 #

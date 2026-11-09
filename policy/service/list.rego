@@ -3,7 +3,7 @@
 # description: Policy for listing catalog services
 package identity.service.list
 
-import data.identity
+import data.common.identity
 
 # List services.
 #

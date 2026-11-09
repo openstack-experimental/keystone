@@ -2,7 +2,7 @@
 # description: Policy for deleting identity groups
 package identity.group.delete
 
-import data.identity
+import data.common.identity
 
 # Delete identity group.
 #

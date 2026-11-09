@@ -3,7 +3,7 @@
 # description: Policy for updating a catalog region
 package identity.region.update
 
-import data.identity
+import data.common.identity
 
 # Update region.
 #

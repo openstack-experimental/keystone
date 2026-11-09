@@ -2,7 +2,7 @@
 # description: Policy for updating identity user
 package identity.user.update
 
-import data.identity
+import data.common.identity
 
 # Update an existing user
 #

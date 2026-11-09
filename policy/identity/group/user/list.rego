@@ -2,7 +2,7 @@
 # description: Policy for listing users of a group
 package identity.group.user.list
 
-import data.identity
+import data.common.identity
 
 # Listing users of a group.
 #

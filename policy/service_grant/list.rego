@@ -3,7 +3,7 @@
 # description: Policy for listing service grants (ADR 0036 §4.2)
 package identity.service_grant.list
 
-import data.identity.service_grant as sg
+import data.common.service_grant as sg
 
 # The `input.target.service_grant` is the list filter set
 # (ServiceGrantListParameters): user_id, project_id, domain_id,

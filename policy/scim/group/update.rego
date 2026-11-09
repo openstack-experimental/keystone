@@ -2,7 +2,7 @@
 # description: Policy for updating a SCIM-provisioned group (ADR 0024 §3, §8)
 package identity.scim.group.update
 
-import data.identity
+import data.common.identity
 
 # Full-replace update (`PUT`) of a SCIM-provisioned group.
 #

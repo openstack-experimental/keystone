@@ -2,7 +2,7 @@
 # description: Policy for viewing a single API Key's metadata (ADR 0021)
 package identity.api_key.show
 
-import data.identity.api_key as api_key_common
+import data.common.api_key as api_key_common
 
 # Show a single ApiClientResource (GET /v4/api-keys/{client_id}).
 #

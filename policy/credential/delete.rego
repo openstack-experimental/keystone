@@ -3,7 +3,7 @@
 # description: Policy for deleting a credential
 package identity.credential.delete
 
-import data.identity.credential as credential_common
+import data.common.credential as credential_common
 
 # Delete credential.
 #

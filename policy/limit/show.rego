@@ -3,7 +3,7 @@
 # description: Policy for fetching a single limit
 package identity.limit.show
 
-import data.identity.credential
+import data.common.credential
 
 # Show limit.
 #

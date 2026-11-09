@@ -2,7 +2,7 @@
 # description: Policy for deleting identity providers
 package identity.federation.identity_provider.delete
 
-import data.identity.federation as common_federation
+import data.common.federation as common_federation
 
 # Delete identity provider.
 #

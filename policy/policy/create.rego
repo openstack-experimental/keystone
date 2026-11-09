@@ -3,7 +3,7 @@
 # description: Policy for creating a legacy policy document
 package identity.policy.create
 
-import data.identity
+import data.common.identity
 
 # Create policy (legacy `POST /v3/policies`).
 #

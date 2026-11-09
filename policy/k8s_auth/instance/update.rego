@@ -2,7 +2,7 @@
 # description: Policy for updating k8s auth instances
 package identity.k8s_auth.instance.update
 
-import data.identity
+import data.common.identity
 
 # Update k8s auth instance.
 #

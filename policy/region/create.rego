@@ -3,7 +3,7 @@
 # description: Policy for creating a catalog region
 package identity.region.create
 
-import data.identity
+import data.common.identity
 
 # Create region.
 #

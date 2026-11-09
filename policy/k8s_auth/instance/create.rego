@@ -2,7 +2,7 @@
 # description: Policy for creating k8s auth instances
 package identity.k8s_auth.instance.create
 
-import data.identity
+import data.common.identity
 
 # Create k8s auth instance.
 #

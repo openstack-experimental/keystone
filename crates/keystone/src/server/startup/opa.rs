@@ -34,7 +34,7 @@ use super::Startup;
 /// OPA readiness poll budget.
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Launch the local OPA subprocess when `api_policy.opa_policies_path` is
+/// Launch the local OPA subprocess when `[api_policy] opa_policies_path` is
 /// configured, capture its log output, and wait for it to become ready
 /// before returning.
 ///
@@ -42,10 +42,14 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 /// policy checks) before the embedded OPA is actually serving.
 pub async fn spawn(startup: &Startup, handles: &mut JoinSet<()>) -> Result<(), Report> {
     let cfg = &startup.cfg;
-    let Some(policies_path) = &cfg.api_policy.opa_policies_path else {
+    let crate::config::PolicyEngine::Opa(opa) = &cfg.api_policy else {
+        // Policies are evaluated in-process, there is no OPA to supervise.
         return Ok(());
     };
-    let opa_url = cfg.api_policy.opa_base_url.clone();
+    let Some(policies_path) = &opa.policies_path else {
+        return Ok(());
+    };
+    let opa_url = opa.base_url.clone();
     let (addr, socket_path) = resolve_listen_addr(&opa_url);
     let health_url = resolve_health_url(&opa_url, socket_path.as_deref());
     let health_client = build_health_client(socket_path.as_deref())?;

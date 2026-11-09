@@ -2,8 +2,8 @@
 # description: Policy for granting roles to users on a domain
 package identity.domain.user.role.grant
 
-import data.identity
-import data.identity.assignment
+import data.common.assignment
+import data.common.identity
 
 default allow := false
 

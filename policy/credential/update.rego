@@ -3,7 +3,7 @@
 # description: Policy for updating a credential
 package identity.credential.update
 
-import data.identity.credential as credential_common
+import data.common.credential as credential_common
 
 # Update credential.
 #

@@ -2,7 +2,7 @@
 # description: Policy for listing identity groups
 package identity.group.list
 
-import data.identity
+import data.common.identity
 
 # List identity groups.
 #

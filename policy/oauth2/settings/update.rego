@@ -2,7 +2,7 @@
 # description: Policy for updating the OAuth2 settings of a domain (ADR 0043 §1)
 package identity.oauth2.settings.update
 
-import data.identity.oauth2.settings as settings_common
+import data.common.settings as settings_common
 
 # Update the OAuth2 settings of a domain (PUT .../settings).
 #

@@ -3,7 +3,7 @@
 # description: Policy for creating a catalog service
 package identity.service.create
 
-import data.identity
+import data.common.identity
 
 # Create service.
 #

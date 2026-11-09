@@ -2,7 +2,7 @@
 # description: Policy for viewing token restriction details
 package identity.token.token_restriction.show
 
-import data.identity.token
+import data.common.token
 
 # Show single token restriction.
 #

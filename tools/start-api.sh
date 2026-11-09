@@ -93,9 +93,11 @@ esac
 
 cat << EOF > "$CONFIG_FILE"
 
+# Policies are evaluated in-process by regorus (cargo feature "regorus"), so
+# the API tests do not depend on an "opa" binary.
 [api_policy]
-opa_base_url = unix:///tmp/nextest/keystone/opa.sock
-opa_policies_path = policy
+engine = regorus
+regorus_policies_path = policy
 
 # Every request comes from 127.0.0.1; the default limiters would throttle
 # the parallel API tests.
@@ -243,10 +245,10 @@ tools/start-spire.sh
 # Opt-in OpenTelemetry export (ADR 0040): with KEYSTONE_TEST_OTLP_ENDPOINT set
 # (CI points it at a Jaeger service container) the server is built with the
 # `otel` feature and exports traces to it. Metrics stay on the /metrics scrape.
-OTEL_FEATURES=(--features openstack-keystone/wasm_plugins,openstack-keystone/sqlite)
+OTEL_FEATURES=(--features openstack-keystone/wasm_plugins,openstack-keystone/sqlite,openstack-keystone/regorus)
 OTEL_ENV=()
 if [ -n "${KEYSTONE_TEST_OTLP_ENDPOINT:-}" ]; then
-    OTEL_FEATURES=(--features openstack-keystone/otel,openstack-keystone/wasm_plugins,openstack-keystone/sqlite)
+    OTEL_FEATURES=(--features openstack-keystone/otel,openstack-keystone/wasm_plugins,openstack-keystone/sqlite,openstack-keystone/regorus)
     OTEL_ENV=(
         OS_OTEL__ENABLED=true
         OS_OTEL__METRICS_ENABLED=false

@@ -2,7 +2,7 @@
 # description: Policy for updating API Keys (SCIM ingress machine identities, ADR 0021)
 package identity.api_key.update
 
-import data.identity.api_key as api_key_common
+import data.common.api_key as api_key_common
 
 # Update ApiClientResource (PUT /v4/api-keys/{client_id}, ApiClientResourceUpdate).
 #

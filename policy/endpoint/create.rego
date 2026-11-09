@@ -3,7 +3,7 @@
 # description: Policy for creating a catalog endpoint
 package identity.endpoint.create
 
-import data.identity
+import data.common.identity
 
 # Create endpoint.
 #

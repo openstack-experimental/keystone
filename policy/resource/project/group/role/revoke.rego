@@ -2,8 +2,8 @@
 # description: Policy for revoking roles from groups on a project
 package identity.project.group.role.revoke
 
-import data.identity
-import data.identity.assignment
+import data.common.assignment
+import data.common.identity
 
 default allow := false
 

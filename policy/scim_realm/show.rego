@@ -2,7 +2,7 @@
 # description: Policy for viewing a SCIM realm (ADR 0024 §2.A)
 package identity.scim_realm.show
 
-import data.identity
+import data.common.identity
 
 # Show a SCIM realm.
 #

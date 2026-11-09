@@ -2,7 +2,7 @@
 # description: Policy for listing projects
 package identity.resource.project.list
 
-import data.identity
+import data.common.identity
 
 # List projects.
 #

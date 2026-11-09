@@ -2,8 +2,8 @@
 # description: Policy for listing roles of a user in a project
 package identity.project.user.role.list
 
-import data.identity
-import data.identity.assignment
+import data.common.assignment
+import data.common.identity
 
 # List direct (non-effective) user roles on the project.
 #

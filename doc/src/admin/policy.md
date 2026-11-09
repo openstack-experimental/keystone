@@ -6,6 +6,11 @@ tool and allows implementing policies much more complex than what the
 `oslo.policy` would ever allow. The `policy` folder contain default policies.
 They can be overloaded by the deployment.
 
+Policies can also be evaluated in-process with `regorus` (experimental): set
+`[api_policy] engine = regorus` and `regorus_policies_path`, and build keystone
+with the `regorus` feature. There is no OPA process then. Send `SIGHUP` to
+reload the policies; a failed reload keeps the previous ones.
+
 OPA can be integrated into Keystone in 2 ways:
 
 - HTTP. This is a default and recommended way of integrating applications with

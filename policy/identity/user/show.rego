@@ -2,7 +2,7 @@
 # description: Policy for viewing identity user details
 package identity.user.show
 
-import data.identity
+import data.common.identity
 
 # Show user.
 #

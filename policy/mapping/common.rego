@@ -1,8 +1,8 @@
 # METADATA
 # description: Shared predicates for mapping ruleset policies
-package identity.mapping
+package common.mapping
 
-import data.identity
+import data.common.identity
 
 # Resolve domain_id from target or existing depending on operation.
 # Create/List: domain_id is in input.target.mapping.

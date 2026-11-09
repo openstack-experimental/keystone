@@ -78,7 +78,18 @@ spec:
             - name: KEYSTONE_ALLOW_ENV_KEK
               value: "1"
           command: ["keystone", "-v"]
+          volumeMounts:
+            - mountPath: /var/opa
+              $patch: delete
+        # Policies are evaluated in-process by regorus from the /policy
+        # directory baked into the image: drop the OPA sidecar and its
+        # socket (`engine = regorus` in conf/keystone.conf). Layer the
+        # `opa-bundle-component` on top only together with `engine = opa`.
+        - name: opa
+          $patch: delete
       volumes:
+        - name: opa-socket
+          $patch: delete
         # Replaced by the volumeClaimTemplate below.
         - name: raft-storage
           $patch: delete

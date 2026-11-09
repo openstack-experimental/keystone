@@ -2,8 +2,8 @@
 # description: Policy for granting roles to users in a project
 package identity.project.user.role.grant
 
-import data.identity
-import data.identity.assignment
+import data.common.assignment
+import data.common.identity
 
 # Grant user a role on a project
 

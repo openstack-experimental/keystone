@@ -3,7 +3,7 @@
 # description: Policy for fetching a single catalog service
 package identity.service.show
 
-import data.identity
+import data.common.identity
 
 # Show service.
 #

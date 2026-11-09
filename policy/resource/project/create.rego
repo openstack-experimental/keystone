@@ -2,7 +2,7 @@
 # description: Policy for creating projects
 package identity.resource.project.create
 
-import data.identity
+import data.common.identity
 
 # Create a new project
 #

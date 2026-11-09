@@ -123,7 +123,7 @@ from the scope. **Why:** keying on scope is the scope-bind escape
 project), not to `input.credentials.project_id`. **Why:** same as I1, enforced
 at the policy layer. **Where:** `bound_to_own_delegation_project(project_id)` /
 `not_delegated_or_bound_to_own_project(project_id)`, defined once in
-`policy/credential/common.rego` (`package identity.credential`) and imported as
+`policy/credential/common.rego` (`package common.credential`) and imported as
 `credential_common` by `policy/credential/{create,show,update,delete}.rego` and
 `policy/os_ec2/create_credential.rego` — a new delegation-sensitive endpoint
 imports the check instead of hand-copying it. Callers **must** pass an argument

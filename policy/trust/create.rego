@@ -3,7 +3,7 @@
 # description: Policy for creating a trust
 package identity.trust.create
 
-import data.identity.trust as trust_common
+import data.common.trust as trust_common
 
 # Create trust.
 #

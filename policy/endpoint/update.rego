@@ -3,7 +3,7 @@
 # description: Policy for updating a catalog endpoint
 package identity.endpoint.update
 
-import data.identity
+import data.common.identity
 
 # Update endpoint.
 #

@@ -1,8 +1,8 @@
 # METADATA
 # description: Shared predicates for OAuth2 client (relying party) policies (ADR 0026 §5)
-package identity.oauth2.client
+package common.client
 
-import data.identity
+import data.common.identity
 
 # Resolve domain_id from target or existing depending on operation.
 # Create/List: domain_id is a top-level input.target field (from the URL
@@ -35,6 +35,7 @@ delegation_fields(obj) if {
 }
 
 delegation_fields(obj) if {
+	is_array(obj.spiffe_ids)
 	count(obj.spiffe_ids) > 0
 }
 

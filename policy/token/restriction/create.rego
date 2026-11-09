@@ -2,7 +2,7 @@
 # description: Policy for creating token restrictions
 package identity.token.token_restriction.create
 
-import data.identity.token
+import data.common.token
 
 # Create token restriction.
 #

@@ -3,7 +3,7 @@
 # description: >
 #   Shared predicates for the project tag read policies
 #   (identity.resource.project.tag.list and .show).
-package identity.resource.project.tag
+package common.tag
 
 # METADATA
 # description: >

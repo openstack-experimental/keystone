@@ -2,7 +2,7 @@
 # description: Policy for adding a user to a group
 package identity.group.user.add
 
-import data.identity
+import data.common.identity
 
 # Adding a user to a group.
 #

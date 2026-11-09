@@ -3,7 +3,7 @@
 # description: Policy for deleting a role
 package identity.role.delete
 
-import data.identity
+import data.common.identity
 
 # Show role.
 #

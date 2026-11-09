@@ -3,7 +3,7 @@
 # description: Policy for fetching a single credential
 package identity.credential.show
 
-import data.identity.credential as credential_common
+import data.common.credential as credential_common
 
 # Show credential.
 #

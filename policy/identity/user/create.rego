@@ -2,7 +2,7 @@
 # description: Policy for creating identity user
 package identity.user.create
 
-import data.identity
+import data.common.identity
 
 # Create a new user
 #

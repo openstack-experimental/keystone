@@ -2,7 +2,7 @@
 # description: Policy for viewing a single OAuth2 client's metadata (ADR 0026 §5)
 package identity.oauth2.client.show
 
-import data.identity.oauth2.client as client_common
+import data.common.client as client_common
 
 # Show a single OAuth2ClientResource (GET .../clients/{provider_id}).
 #

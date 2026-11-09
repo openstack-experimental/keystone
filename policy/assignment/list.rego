@@ -3,8 +3,8 @@
 # description: Policy for listing identity assignments
 package identity.assignment.list
 
-import data.identity
-import data.identity.assignment
+import data.common.assignment
+import data.common.identity
 
 # List role assignments.
 #

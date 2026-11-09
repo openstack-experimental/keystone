@@ -3,7 +3,7 @@
 # description: Policy for updating a role
 package identity.role.update
 
-import data.identity
+import data.common.identity
 
 # Update role.
 #

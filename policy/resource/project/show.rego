@@ -2,7 +2,7 @@
 # description: Policy for showing project details
 package identity.resource.project.show
 
-import data.identity
+import data.common.identity
 
 # Show a project.
 #

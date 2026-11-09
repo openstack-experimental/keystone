@@ -2,7 +2,7 @@
 # description: Policy for finishing passkey registration
 package identity.user.passkey.register.finish
 
-import data.identity
+import data.common.identity
 
 # Finish registering a passkey for the user
 #

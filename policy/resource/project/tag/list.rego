@@ -2,8 +2,8 @@
 # description: Policy for listing project tags
 package identity.resource.project.tag.list
 
-import data.identity
-import data.identity.resource.project.tag as tag
+import data.common.identity
+import data.common.tag as tag
 
 # Listing the tags of a project.
 #

@@ -2,7 +2,7 @@
 # description: Policy for creating API Keys (SCIM ingress machine identities, ADR 0021)
 package identity.api_key.create
 
-import data.identity.api_key as api_key_common
+import data.common.api_key as api_key_common
 
 # Create ApiClientResource (ApiClientResourceCreate).
 #

@@ -2,7 +2,7 @@
 # description: Policy for soft-disabling a SCIM-provisioned user (ADR 0024 §3, §6.A, §8)
 package identity.scim.user.delete
 
-import data.identity
+import data.common.identity
 
 # `DELETE` (soft-disable) a SCIM-provisioned user.
 #

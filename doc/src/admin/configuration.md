@@ -28,7 +28,13 @@ readiness, and Prometheus metrics and must not be placed on an untrusted network
 ## Core Services
 
 - `[database]` selects the SQL connection.
-- `[api_policy]` selects OPA and an optional local policy directory.
+- `[api_policy]` selects the policy engine (`engine = opa`, the default when
+  unset, or `regorus`). `opa` talks to
+  OPA over `opa_base_url`, optionally starting it from `opa_policies_path`.
+  `engine = regorus` (experimental) evaluates the Rego policies in-process from
+  `regorus_policies_path`; it needs keystone built with the `regorus` cargo
+  feature and ignores the `opa_*` options. Send `SIGHUP` to reload the
+  policies; a failed reload is logged and the previous policies stay active.
 - `[auth]` enables built-in and registered authentication methods.
 - `[token]` selects the token provider and lifetime.
 - `[fernet_tokens]` configures the Fernet key repository.

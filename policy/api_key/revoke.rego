@@ -2,7 +2,7 @@
 # description: Policy for the API Key emergency revocation path (ADR 0021 §5.C)
 package identity.api_key.revoke
 
-import data.identity.api_key as api_key_common
+import data.common.api_key as api_key_common
 
 # Revoke ApiClientResource (POST /v4/api-keys/{client_id}/revoke).
 #

@@ -1,6 +1,6 @@
 # METADATA
 # description: Shared predicates for OAuth2 per-domain settings policies (ADR 0043 §1)
-package identity.oauth2.settings
+package common.settings
 
 mode_rank := {"disabled": 0, "optional": 1, "required": 2}
 

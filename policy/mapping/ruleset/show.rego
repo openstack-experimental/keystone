@@ -2,7 +2,7 @@
 # description: Policy for viewing mapping ruleset details
 package identity.mapping.ruleset.show
 
-import data.identity.mapping as mapping_common
+import data.common.mapping as mapping_common
 
 # Show MappingRuleSet.
 #

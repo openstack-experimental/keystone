@@ -2,7 +2,7 @@
 # description: Policy for viewing identity provider details
 package identity.federation.identity_provider.show
 
-import data.identity.federation as common_federation
+import data.common.federation as common_federation
 
 # Show identity provider.
 #

@@ -2,7 +2,7 @@
 # description: Policy for listing SCIM-provisioned users (ADR 0024 §3, §8)
 package identity.scim.user.list
 
-import data.identity
+import data.common.identity
 
 # List SCIM-provisioned users owned by the realm.
 #

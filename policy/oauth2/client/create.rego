@@ -2,7 +2,7 @@
 # description: Policy for registering OAuth2 clients (relying parties, ADR 0026 §5)
 package identity.oauth2.client.create
 
-import data.identity.oauth2.client as client_common
+import data.common.client as client_common
 
 # Create OAuth2Client (OAuth2ClientResourceCreate).
 #

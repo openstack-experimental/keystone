@@ -2,7 +2,7 @@
 # description: Policy for listing SCIM realms (ADR 0024 §2.A)
 package identity.scim_realm.list
 
-import data.identity
+import data.common.identity
 
 # List SCIM realms.
 #
