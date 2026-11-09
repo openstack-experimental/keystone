@@ -23,6 +23,7 @@ use crate::credential::CredentialProviderError;
 use crate::error::BuilderError;
 use crate::idmapping::IdMappingProviderError;
 use crate::resource::ResourceProviderError;
+use crate::revoke::RevokeProviderError;
 use crate::trust::TrustProviderError;
 
 /// Identity provider error.
@@ -83,6 +84,14 @@ pub enum IdentityProviderError {
         /// Boxed: the trust error embeds the assignment error, which embeds
         /// this one.
         source: Box<TrustProviderError>,
+    },
+
+    /// Revoke provider error, surfaced when a group deletion cascades into
+    /// the revocation of its members' tokens.
+    #[error(transparent)]
+    RevokeProvider {
+        /// The source error.
+        source: Box<RevokeProviderError>,
     },
 
     #[error("Date calculation error")]
@@ -243,6 +252,14 @@ impl IdentityProviderError {
 impl From<AssignmentProviderError> for IdentityProviderError {
     fn from(source: AssignmentProviderError) -> Self {
         Self::AssignmentProvider {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<RevokeProviderError> for IdentityProviderError {
+    fn from(source: RevokeProviderError) -> Self {
+        Self::RevokeProvider {
             source: Box::new(source),
         }
     }

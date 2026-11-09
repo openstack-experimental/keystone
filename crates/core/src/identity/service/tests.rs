@@ -1441,6 +1441,9 @@ async fn test_update_group_refreshes_cache_instead_of_refetching() {
 async fn test_delete_group_invalidates_cache() {
     let mut assignment_mock = MockAssignmentProvider::default();
     assignment_mock
+        .expect_list_role_assignments()
+        .returning(|_, _| Ok(Vec::new()));
+    assignment_mock
         .expect_delete_assignments_for_group()
         .times(1)
         .withf(|_, gid: &'_ str| gid == "gid")
@@ -1456,6 +1459,10 @@ async fn test_delete_group_invalidates_cache() {
         .times(2)
         .withf(|_, gid: &'_ str| gid == "gid")
         .returning(|_, _| Ok(Some(make_group("gid"))));
+    backend
+        .expect_list_users_of_group()
+        .returning(|_, _| Ok(Vec::new()));
+    backend.expect_is_read_only().return_const(false);
     backend
         .expect_delete_group()
         .withf(|_, gid: &'_ str| gid == "gid")
@@ -1475,6 +1482,9 @@ async fn test_delete_group_invalidates_cache() {
 async fn test_delete_group_already_gone_still_runs_cascade() {
     let mut assignment_mock = MockAssignmentProvider::default();
     assignment_mock
+        .expect_list_role_assignments()
+        .returning(|_, _| Ok(Vec::new()));
+    assignment_mock
         .expect_delete_assignments_for_group()
         .times(1)
         .returning(|_, _| Ok(()));
@@ -1485,6 +1495,10 @@ async fn test_delete_group_already_gone_still_runs_cascade() {
     .await;
     let mut backend = MockIdentityBackend::default();
     backend
+        .expect_list_users_of_group()
+        .returning(|_, _| Ok(Vec::new()));
+    backend.expect_is_read_only().return_const(false);
+    backend
         .expect_delete_group()
         .returning(|_, gid: &'_ str| Err(IdentityProviderError::GroupNotFound(gid.to_string())));
     let provider = IdentityService::from_driver(backend);
@@ -1493,6 +1507,171 @@ async fn test_delete_group_already_gone_still_runs_cascade() {
         .delete_group(&ExecutionContext::internal(&state), "gid")
         .await;
     assert!(matches!(res, Err(IdentityProviderError::GroupNotFound(_))));
+}
+
+/// Deleting a group revokes the tokens of every former member.
+#[tokio::test]
+async fn test_delete_group_revokes_members_tokens() {
+    let mut assignment_mock = MockAssignmentProvider::default();
+    assignment_mock
+        .expect_list_role_assignments()
+        .returning(|_, _| {
+            Ok(vec![
+                openstack_keystone_core_types::assignment::AssignmentBuilder::default()
+                    .actor_id("gid")
+                    .role_id("rid")
+                    .target_id("did")
+                    .r#type(openstack_keystone_core_types::assignment::AssignmentType::GroupDomain)
+                    .build()
+                    .unwrap(),
+            ])
+        });
+    assignment_mock
+        .expect_delete_assignments_for_group()
+        .times(1)
+        .returning(|_, _| Ok(()));
+    let mut revoke_mock = crate::revoke::MockRevokeProvider::default();
+    revoke_mock
+        .expect_create_revocation_event()
+        .times(2)
+        .withf(|_, ev| matches!(ev.user_id.as_deref(), Some("u1") | Some("u2")))
+        .returning(|_, ev| {
+            Ok(openstack_keystone_core_types::revoke::RevocationEvent {
+                user_id: ev.user_id,
+                issued_before: ev.issued_before,
+                revoked_at: ev.revoked_at,
+                ..Default::default()
+            })
+        });
+    let state = get_mocked_state(
+        None,
+        Some(
+            Provider::mocked_builder()
+                .mock_assignment(assignment_mock)
+                .mock_revoke(revoke_mock),
+        ),
+    )
+    .await;
+    let mut backend = MockIdentityBackend::default();
+    backend
+        .expect_list_users_of_group()
+        .returning(|_, _| Ok(vec!["u1".into(), "u2".into()]));
+    backend.expect_is_read_only().return_const(false);
+    backend.expect_delete_group().returning(|_, _| Ok(()));
+    let provider = IdentityService::from_driver(backend);
+
+    provider
+        .delete_group(&ExecutionContext::internal(&state), "gid")
+        .await
+        .unwrap();
+}
+
+/// A group without role assignments leaves tokens of its members alone.
+#[tokio::test]
+async fn test_delete_group_without_assignments_keeps_tokens() {
+    let mut assignment_mock = MockAssignmentProvider::default();
+    assignment_mock
+        .expect_list_role_assignments()
+        .returning(|_, _| Ok(Vec::new()));
+    assignment_mock
+        .expect_delete_assignments_for_group()
+        .times(1)
+        .returning(|_, _| Ok(()));
+    // No `create_revocation_event` expectation: any call panics.
+    let state = get_mocked_state(
+        None,
+        Some(
+            Provider::mocked_builder()
+                .mock_assignment(assignment_mock)
+                .mock_revoke(crate::revoke::MockRevokeProvider::default()),
+        ),
+    )
+    .await;
+    let mut backend = MockIdentityBackend::default();
+    backend
+        .expect_list_users_of_group()
+        .returning(|_, _| Ok(vec!["u1".into()]));
+    backend.expect_is_read_only().return_const(false);
+    backend.expect_delete_group().returning(|_, _| Ok(()));
+    let provider = IdentityService::from_driver(backend);
+
+    provider
+        .delete_group(&ExecutionContext::internal(&state), "gid")
+        .await
+        .unwrap();
+}
+
+/// A single group role assignment for the delete-cascade tests.
+fn group_assignment() -> openstack_keystone_core_types::assignment::Assignment {
+    openstack_keystone_core_types::assignment::AssignmentBuilder::default()
+        .actor_id("gid")
+        .role_id("rid")
+        .target_id("did")
+        .r#type(openstack_keystone_core_types::assignment::AssignmentType::GroupDomain)
+        .build()
+        .unwrap()
+}
+
+/// Members' tokens are revoked before the group goes away: when the
+/// revocation fails the group is left alone, so a retry still knows its
+/// members.
+#[tokio::test]
+async fn test_delete_group_revoke_failure_keeps_the_group() {
+    let mut assignment_mock = MockAssignmentProvider::default();
+    assignment_mock
+        .expect_list_role_assignments()
+        .returning(|_, _| Ok(vec![group_assignment()]));
+    let mut revoke_mock = crate::revoke::MockRevokeProvider::default();
+    revoke_mock
+        .expect_create_revocation_event()
+        .returning(|_, _| Err(crate::revoke::RevokeProviderError::Conflict("x".into())));
+    let state = get_mocked_state(
+        None,
+        Some(
+            Provider::mocked_builder()
+                .mock_assignment(assignment_mock)
+                .mock_revoke(revoke_mock),
+        ),
+    )
+    .await;
+    let mut backend = MockIdentityBackend::default();
+    backend.expect_is_read_only().return_const(false);
+    backend
+        .expect_list_users_of_group()
+        .returning(|_, _| Ok(vec!["u1".into()]));
+    // No `delete_group` expectation: reaching it panics.
+    let provider = IdentityService::from_driver(backend);
+
+    let res = provider
+        .delete_group(&ExecutionContext::internal(&state), "gid")
+        .await;
+    assert!(
+        matches!(res, Err(IdentityProviderError::RevokeProvider { .. })),
+        "unexpected: {res:?}"
+    );
+}
+
+/// A read-only backend fails before anything is listed or revoked.
+#[tokio::test]
+async fn test_delete_group_read_only_backend_does_nothing() {
+    // Mocks without expectations: any call panics.
+    let state = get_mocked_state(
+        None,
+        Some(
+            Provider::mocked_builder()
+                .mock_assignment(MockAssignmentProvider::default())
+                .mock_revoke(crate::revoke::MockRevokeProvider::default()),
+        ),
+    )
+    .await;
+    let mut backend = MockIdentityBackend::default();
+    backend.expect_is_read_only().return_const(true);
+    let provider = IdentityService::from_driver(backend);
+
+    let res = provider
+        .delete_group(&ExecutionContext::internal(&state), "gid")
+        .await;
+    assert!(matches!(res, Err(IdentityProviderError::Readonly(_))));
 }
 
 #[path = "tests/per_domain_dispatch.rs"]

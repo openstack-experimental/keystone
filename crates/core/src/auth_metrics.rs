@@ -249,6 +249,7 @@ pub fn identity_failure_reason(e: &IdentityProviderError) -> &'static str {
         IdentityProviderError::ApplicationCredentialProvider { .. }
         | IdentityProviderError::AssignmentProvider { .. }
         | IdentityProviderError::TrustProvider { .. }
+        | IdentityProviderError::RevokeProvider { .. }
         | IdentityProviderError::CredentialProvider { .. } => "ProviderError",
         IdentityProviderError::DateError => "DateError",
         IdentityProviderError::Driver(_) => "Driver",

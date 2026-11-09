@@ -38,6 +38,13 @@ pub trait IdentityBackend: Send + Sync {
         true
     }
 
+    /// Whether this backend rejects every mutation (LDAP). Lets a cascading
+    /// operation fail before it touches anything that depends on the mutation
+    /// succeeding.
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
     /// Add the user to the group.
     ///
     /// # Parameters
