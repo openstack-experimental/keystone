@@ -4,7 +4,8 @@
 #
 #   skaffold run -m keystone -p local,loadtest --default-repo localhost:5000
 #
-# One pod of each implementation, `requests = 4` and `limits = 24` CPU, so
+# The WASM auth plugins are off (their invocation limits throttle the
+# application credential logins). One pod of each implementation, `requests = 4` and `limits = 24` CPU, so
 # both fit on a 32 core node at the same time and either can use most of it.
 # The default overlay runs two rs and two py pods and stays untuned.
 resources:

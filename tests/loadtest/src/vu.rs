@@ -500,16 +500,52 @@ async fn delete_listed(
             let permits = permits.clone();
             set.spawn(async move {
                 let _permit = permits.acquire_owned().await.ok();
-                send_json(&client, reqwest::Method::DELETE, url, &token, None).await;
+                matches!(
+                    send_json(&client, reqwest::Method::DELETE, url, &token, None).await,
+                    Some((status, _, _)) if status < 300 || status == 404
+                )
             });
         }
-        while set.join_next().await.is_some() {}
+        let mut deleted = 0usize;
+        while let Some(res) = set.join_next().await {
+            if matches!(res, Ok(true)) {
+                deleted += 1;
+            }
+        }
+        // Nothing could be deleted in this pass: stop instead of retrying.
+        if deleted == 0 {
+            return;
+        }
     }
 }
 
 /// Delete everything the bootstrap and the run created (best effort).
 pub async fn cleanup(host: &str, token: &str, bootstrap: &VuBootstrap) {
     let client = Client::new();
+    // Deleting a user or a group that still has memberships fails with 409,
+    // so remove the memberships the bootstrap created first.
+    {
+        let permits = std::sync::Arc::new(Semaphore::new(SETUP_CONCURRENCY * 2));
+        let mut set = tokio::task::JoinSet::new();
+        for seed in &bootstrap.seeds {
+            for (group, user) in [
+                (&seed.group_id, &seed.user_id),
+                (&seed.scratch_group_id, &seed.scratch_user_id),
+            ] {
+                let (client, url, token) = (
+                    client.clone(),
+                    format!("{host}/v3/groups/{group}/users/{user}"),
+                    token.to_string(),
+                );
+                let permits = permits.clone();
+                set.spawn(async move {
+                    let _permit = permits.acquire_owned().await.ok();
+                    send_json(&client, reqwest::Method::DELETE, url, &token, None).await;
+                });
+            }
+        }
+        while set.join_next().await.is_some() {}
+    }
     for domain in &bootstrap.domain_ids {
         for (list, key, item) in [
             ("projects", "projects", "projects"),
