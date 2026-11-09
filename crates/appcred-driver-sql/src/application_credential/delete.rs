@@ -15,12 +15,14 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
+use sea_orm::sea_query::Query;
 
 use openstack_keystone_core::application_credential::ApplicationCredentialProviderError;
 use openstack_keystone_core::error::DbContextExt;
 
 use crate::entity::{
     access_rule as db_access_rule, application_credential as db_application_credential,
+    application_credential_role as db_application_credential_role,
     prelude::{AccessRule as DbAccessRule, ApplicationCredential as DbApplicationCredential},
 };
 
@@ -75,6 +77,30 @@ pub async fn delete_for_project(
         .exec(db)
         .await
         .context("deleting application credentials for project")?;
+    Ok(())
+}
+
+/// Delete the application credentials granting a deleted role (role lifecycle
+/// cascade). Python Keystone does the same: a credential does not survive the
+/// drop of one of its roles. The role and access-rule association rows follow
+/// their credential through the foreign keys; the access rules stay.
+pub async fn delete_for_role(
+    db: &DatabaseConnection,
+    role_id: &str,
+) -> Result<(), ApplicationCredentialProviderError> {
+    DbApplicationCredential::delete_many()
+        .filter(
+            db_application_credential::Column::InternalId.in_subquery(
+                Query::select()
+                    .column(db_application_credential_role::Column::ApplicationCredentialId)
+                    .from(db_application_credential_role::Entity)
+                    .and_where(db_application_credential_role::Column::RoleId.eq(role_id))
+                    .to_owned(),
+            ),
+        )
+        .exec(db)
+        .await
+        .context("deleting application credentials for role")?;
     Ok(())
 }
 
@@ -139,6 +165,27 @@ mod tests {
                 DatabaseBackend::Postgres,
                 r#"DELETE FROM "application_credential" WHERE "application_credential"."project_id" = $1"#,
                 ["project_id".into()]
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_for_role() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 2,
+            }])
+            .into_connection();
+
+        delete_for_role(&db, "role_id").await.unwrap();
+
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"DELETE FROM "application_credential" WHERE "application_credential"."internal_id" IN (SELECT "application_credential_id" FROM "application_credential_role" WHERE "application_credential_role"."role_id" = $1)"#,
+                ["role_id".into()]
             )]
         );
     }

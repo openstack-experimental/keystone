@@ -1479,6 +1479,83 @@ async fn test_delete_group_invalidates_cache() {
 }
 
 #[tokio::test]
+async fn test_delete_group_cascade_failure_still_invalidates_cache() {
+    let mut assignment_mock = MockAssignmentProvider::default();
+    assignment_mock
+        .expect_list_role_assignments()
+        .returning(|_, _| Ok(Vec::new()));
+    assignment_mock
+        .expect_delete_assignments_for_group()
+        .returning(|_, _| {
+            Err(
+                openstack_keystone_core_types::assignment::AssignmentProviderError::Driver(
+                    "boom".into(),
+                ),
+            )
+        });
+    let state = get_mocked_state(
+        None,
+        Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+    )
+    .await;
+    let mut backend = MockIdentityBackend::default();
+    backend
+        .expect_get_group()
+        .times(2)
+        .returning(|_, _| Ok(Some(make_group("gid"))));
+    backend
+        .expect_list_users_of_group()
+        .returning(|_, _| Ok(Vec::new()));
+    backend.expect_is_read_only().return_const(false);
+    backend.expect_delete_group().returning(|_, _| Ok(()));
+    let provider = IdentityService::from_driver(backend);
+
+    crate::request_cache::RequestCache::scope(async {
+        let ctx = ExecutionContext::internal(&state);
+        provider.get_group(&ctx, "gid").await.unwrap();
+        provider.delete_group(&ctx, "gid").await.unwrap_err();
+        // Served by the backend again, not by the stale cache.
+        provider.get_group(&ctx, "gid").await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_delete_user_cascade_failure_still_invalidates_cache() {
+    let mut credential_mock = MockCredentialProvider::default();
+    credential_mock
+        .expect_delete_credentials_for_user()
+        .returning(|_, _| {
+            Err(
+                openstack_keystone_core_types::credential::CredentialProviderError::Driver(
+                    "boom".into(),
+                ),
+            )
+        });
+    let state = get_mocked_state(
+        None,
+        Some(Provider::mocked_builder().mock_credential(credential_mock)),
+    )
+    .await;
+    let mut backend = MockIdentityBackend::default();
+    backend
+        .expect_get_user()
+        .times(2)
+        .returning(|_, _| Ok(Some(make_user("uid"))));
+    backend.expect_delete_user().returning(|_, _| Ok(()));
+    let provider = IdentityService::from_driver(backend);
+
+    crate::request_cache::RequestCache::scope(async {
+        let ctx = ExecutionContext::internal(&state);
+        provider.get_user(&ctx, "uid").await.unwrap();
+        provider.delete_user(&ctx, "uid").await.unwrap_err();
+        // Served by the backend again, not by the stale cache.
+        provider.get_user(&ctx, "uid").await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn test_delete_group_already_gone_still_runs_cascade() {
     let mut assignment_mock = MockAssignmentProvider::default();
     assignment_mock

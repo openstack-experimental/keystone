@@ -105,6 +105,16 @@ pub trait ApplicationCredentialApi: Send + Sync {
         project_id: &'a str,
     ) -> Result<(), ApplicationCredentialProviderError>;
 
+    /// Delete all application credentials granting a role.
+    ///
+    /// Called when the role is deleted: a credential does not survive the
+    /// drop of one of its roles.
+    async fn delete_application_credentials_for_role<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        role_id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError>;
+
     /// Get a user's access rule by its ID.
     ///
     /// # Parameters

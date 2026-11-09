@@ -95,6 +95,7 @@ The cascades:
 | user    | credentials, application credentials and access rules, trusts (as trustor or trustee), role assignments |
 | group   | user-group memberships (direct and expiring), role assignments, id mapping                              |
 | project | credentials, application credentials, role assignments on the project                                   |
+| role    | role assignments of the role (direct and inheritable) and the application credentials granting it       |
 | domain  | projects (leaf first), users, groups, role assignments on the domain, id mappings                       |
 
 Rules that came out of implementing them:
@@ -167,6 +168,17 @@ deployments is known, because a wrong delete is a lost grant.
 - Known gap: the users and groups of a read-only identity backend are skipped
   by a domain delete, so the grants they hold on targets outside the domain
   stay behind. The sweep reports them once the domain is gone.
+- Known gap: deleting a role revokes its grants on every assignment backend
+  that can list them by role. A backend that cannot (the OpenFGA driver has no
+  reverse lookup by role) is skipped with a warning, so that its grants of the
+  deleted role stay behind. Failing the delete instead would make roles
+  undeletable on deployments with such a backend. The leftovers are inert
+  while the role does not exist, but a role created later with the same id
+  (`create_role` accepts a caller-supplied id) would inherit them. Do not
+  reuse the id of a deleted role on such a deployment. The orphan sweep does
+  not cover this: it checks the actor and the target of an assignment, not
+  its role, and cannot list a backend that has no listing without a target.
+  Closing the gap needs a by-role revoke in the OpenFGA driver.
 - Known gap: data keyed by a domain in providers that have no cascade yet
   (federation, mappings, k8s-auth, catalog endpoints).
 - The sweep covers role assignments only.

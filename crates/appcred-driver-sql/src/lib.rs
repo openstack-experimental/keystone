@@ -160,6 +160,16 @@ impl ApplicationCredentialBackend for SqlBackend {
         application_credential::delete_for_project(&state.db.connection(), project_id).await
     }
 
+    /// Delete all application credentials granting a role.
+    #[tracing::instrument(name = "driver.sql.appcred.delete_application_credentials_for_role", level = "debug", skip_all, fields(role_id = %role_id))]
+    async fn delete_application_credentials_for_role<'a>(
+        &self,
+        state: &ServiceState,
+        role_id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError> {
+        application_credential::delete_for_role(&state.db.connection(), role_id).await
+    }
+
     /// Get a user's access rule by its ID.
     ///
     /// # Parameters

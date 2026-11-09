@@ -118,12 +118,13 @@ pub enum EventPayload {
         user_id: String,
     },
 
-    // All application credentials (and, for a user, access rules) of a user
-    // or of a project, removed together when it is deleted. No credential IDs
-    // or secrets are carried.
+    // All application credentials (and, for a user, access rules) of a user,
+    // of a project or granting a role, removed together when the owner or the
+    // role is deleted. No credential IDs or secrets are carried.
     ApplicationCredentialSet {
         user_id: Option<String>,
         project_id: Option<String>,
+        role_id: Option<String>,
     },
 
     // Credentials provider (ADR 0019: EC2/TOTP/custom credential blobs)

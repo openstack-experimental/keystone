@@ -333,43 +333,49 @@ impl RoleApi for RoleService {
         id: &'a str,
     ) -> Result<(), RoleProviderError> {
         self.check_role_mutable(ctx, id, None).await?;
-        if let Some(vsc) = ctx.ctx() {
-            crate::audited_notify_op! {
-                dispatcher: &ctx.state().event_dispatcher,
-                ctx: vsc,
-                event: Event::new(
-                    Operation::Delete,
-                    EventPayload::Role { id: id.to_string() },
-                ),
-                operation: async {
-                    // Invalidate right after the commit so that a late audit failure cannot
-                    // leave a committed change hidden behind the cache.
-                    let result = self.backend_driver.delete_role(ctx.state(), id).await;
-                    self.cache.invalidate();
-                    result?;
-                    Ok::<(), RoleProviderError>(())
-                },
-                on_audit_error: |_: AuditDispatchError| RoleProviderError::Driver("audit dispatch failed".into()),
-            }?;
-        } else {
-            let result = self.backend_driver.delete_role(ctx.state(), id).await;
-            self.cache.invalidate();
-            result?;
+        let result = crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Delete,
+                EventPayload::Role { id: id.to_string() },
+            ),
+            operation: async {
+                // The role row goes first; an earlier attempt that already
+                // deleted it still gets its assignments revoked, then the
+                // NotFound is returned (ADR 0042).
+                let driver_result = self.backend_driver.delete_role(ctx.state(), id).await;
+                // Invalidate right after the commit so that a late audit
+                // failure cannot leave a committed change hidden behind
+                // the process-wide cache.
+                self.cache.invalidate();
+                let deleted = match driver_result {
+                    Ok(()) => Ok(()),
+                    Err(err @ RoleProviderError::RoleNotFound(_)) => Err(err),
+                    Err(err) => return Err(err),
+                };
+                ctx.state()
+                    .provider
+                    .get_assignment_provider()
+                    .delete_assignments_for_role(ctx, id)
+                    .await?;
+                ctx.state()
+                    .provider
+                    .get_application_credential_provider()
+                    .delete_application_credentials_for_role(ctx, id)
+                    .await?;
+                self.cache.invalidate();
+                deleted
+            },
+            on_audit_error: |_: AuditDispatchError| RoleProviderError::Driver("audit dispatch failed".into()),
+        };
 
-            ctx.state()
-                .event_dispatcher
-                .emit(Event::new(
-                    Operation::Delete,
-                    EventPayload::Role { id: id.to_string() },
-                ))
-                .await;
-        }
-
+        // The role row may be gone even when a cascade step failed: drop the
+        // cached entries before the result is returned.
         cache_remove(ROLE_CACHE_NS, id);
         cache_remove(ROLE_NAME_CACHE_NS, id);
         cache_remove(ROLE_IMPLY_BY_PRIOR_CACHE_NS, id);
         cache_remove(ROLE_IMPLY_ALL_CACHE_NS, ROLE_IMPLY_ALL_CACHE_KEY);
-        Ok(())
+        result
     }
 
     /// Delete a role imply rule.
@@ -678,9 +684,12 @@ mod tests {
 
     use super::*;
     use crate::auth::ExecutionContext;
+    use crate::mocks::{MockApplicationCredentialProvider, MockAssignmentProvider};
     use crate::provider::Provider;
     use crate::role::backend::MockRoleBackend;
     use crate::tests::get_mocked_state;
+    use openstack_keystone_core_types::application_credential::ApplicationCredentialProviderError;
+    use openstack_keystone_core_types::assignment::AssignmentProviderError;
 
     fn make_role(id: &str, name: &str) -> Role {
         RoleBuilder::default().id(id).name(name).build().unwrap()
@@ -774,9 +783,166 @@ mod tests {
         assert!(matches!(err, RoleProviderError::Immutable(id) if id == "rid"));
     }
 
+    /// Assignment provider expecting exactly one cascade for `role_id`.
+    fn assignment_mock_for(role_id: &'static str) -> MockAssignmentProvider {
+        let mut mock = MockAssignmentProvider::default();
+        mock.expect_delete_assignments_for_role()
+            .times(1)
+            .withf(move |_, id: &'_ str| id == role_id)
+            .returning(|_, _| Ok(()));
+        mock
+    }
+
+    /// Application credential provider expecting one cascade for `role_id`.
+    fn appcred_mock_for(role_id: &'static str) -> MockApplicationCredentialProvider {
+        let mut mock = MockApplicationCredentialProvider::default();
+        mock.expect_delete_application_credentials_for_role()
+            .times(1)
+            .withf(move |_, id: &'_ str| id == role_id)
+            .returning(|_, _| Ok(()));
+        mock
+    }
+
+    #[tokio::test]
+    async fn test_delete_role_application_credential_failure_is_returned() {
+        let mut appcred = MockApplicationCredentialProvider::default();
+        appcred
+            .expect_delete_application_credentials_for_role()
+            .returning(|_, _| Err(ApplicationCredentialProviderError::Driver("boom".into())));
+        let mut assignment = MockAssignmentProvider::default();
+        assignment
+            .expect_delete_assignments_for_role()
+            .returning(|_, _| Ok(()));
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_assignment(assignment)
+                    .mock_application_credential(appcred),
+            ),
+        )
+        .await;
+        let mut backend = MockRoleBackend::default();
+        backend
+            .expect_get_role()
+            .returning(|_, _| Ok(Some(make_role("rid", "admin"))));
+        backend.expect_delete_role().returning(|_, _| Ok(()));
+        let provider = RoleService {
+            backend_driver: Arc::new(backend),
+            cache: RoleCache::new(Duration::ZERO),
+        };
+
+        let err = provider
+            .delete_role(&ExecutionContext::internal(&state), "rid")
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            RoleProviderError::ApplicationCredentialProvider { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_delete_role_cascade_failure_still_invalidates_cache() {
+        let mut assignment = MockAssignmentProvider::default();
+        assignment
+            .expect_delete_assignments_for_role()
+            .returning(|_, _| Err(AssignmentProviderError::Driver("boom".into())));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment)),
+        )
+        .await;
+        let mut backend = MockRoleBackend::default();
+        backend
+            .expect_get_role()
+            .times(2)
+            .returning(|_, _| Ok(Some(make_role("rid", "admin"))));
+        backend.expect_delete_role().returning(|_, _| Ok(()));
+        let provider = RoleService {
+            backend_driver: Arc::new(backend),
+            cache: RoleCache::new(Duration::ZERO),
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            provider.get_role(&ctx, "rid").await.unwrap();
+            provider.delete_role(&ctx, "rid").await.unwrap_err();
+            // Served by the backend again, not by the stale cache.
+            provider.get_role(&ctx, "rid").await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_role_already_gone_still_revokes_assignments() {
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_assignment(assignment_mock_for("rid"))
+                    .mock_application_credential(appcred_mock_for("rid")),
+            ),
+        )
+        .await;
+        let mut backend = MockRoleBackend::default();
+        backend
+            .expect_get_role()
+            .returning(|_, _| Ok(Some(make_role("rid", "admin"))));
+        backend
+            .expect_delete_role()
+            .returning(|_, _| Err(RoleProviderError::RoleNotFound("rid".into())));
+        let provider = RoleService {
+            backend_driver: Arc::new(backend),
+            cache: RoleCache::new(Duration::ZERO),
+        };
+
+        let err = provider
+            .delete_role(&ExecutionContext::internal(&state), "rid")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RoleProviderError::RoleNotFound(id) if id == "rid"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_role_revocation_failure_is_returned() {
+        let mut assignment = MockAssignmentProvider::default();
+        assignment
+            .expect_delete_assignments_for_role()
+            .returning(|_, _| Err(AssignmentProviderError::Driver("boom".into())));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment)),
+        )
+        .await;
+        let mut backend = MockRoleBackend::default();
+        backend
+            .expect_get_role()
+            .returning(|_, _| Ok(Some(make_role("rid", "admin"))));
+        backend.expect_delete_role().returning(|_, _| Ok(()));
+        let provider = RoleService {
+            backend_driver: Arc::new(backend),
+            cache: RoleCache::new(Duration::ZERO),
+        };
+
+        let err = provider
+            .delete_role(&ExecutionContext::internal(&state), "rid")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RoleProviderError::AssignmentProvider { .. }));
+    }
+
     #[tokio::test]
     async fn test_delete_role_not_immutable_proceeds() {
-        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_assignment(assignment_mock_for("rid"))
+                    .mock_application_credential(appcred_mock_for("rid")),
+            ),
+        )
+        .await;
         let mut backend = MockRoleBackend::default();
         backend
             .expect_get_role()
@@ -904,7 +1070,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_role_invalidates_cache() {
-        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_assignment(assignment_mock_for("rid"))
+                    .mock_application_credential(appcred_mock_for("rid")),
+            ),
+        )
+        .await;
         let mut backend = MockRoleBackend::default();
         backend
             .expect_get_role()
@@ -1310,7 +1484,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_role_invalidates_process_cache() {
-        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_assignment(assignment_mock_for("rid"))
+                    .mock_application_credential(appcred_mock_for("rid")),
+            ),
+        )
+        .await;
         let mut backend = MockRoleBackend::default();
         let mut seq = mockall::Sequence::new();
         backend

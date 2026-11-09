@@ -877,6 +877,12 @@ mod application_credential {
                 project_id: &'a str,
             ) -> Result<(), ApplicationCredentialProviderError>;
 
+            async fn delete_application_credentials_for_role<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                role_id: &'a str,
+            ) -> Result<(), ApplicationCredentialProviderError>;
+
             async fn get_access_rule<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -1078,6 +1084,12 @@ mod assignment {
                 &self,
                 ctx: &ExecutionContext<'a>,
                 domain_id: &'a str,
+            ) -> Result<(), AssignmentProviderError>;
+
+            async fn delete_assignments_for_role<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                role_id: &'a str,
             ) -> Result<(), AssignmentProviderError>;
 
             async fn delete_assignments_for_project<'a>(

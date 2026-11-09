@@ -140,6 +140,16 @@ pub trait AssignmentApi: Send + Sync {
         group_id: &'a str,
     ) -> Result<(), AssignmentProviderError>;
 
+    /// Revoke every assignment of the role, on any actor and target.
+    ///
+    /// Called when the role is deleted. Each one is revoked through
+    /// [`AssignmentApi::revoke_grant`].
+    async fn delete_assignments_for_role<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        role_id: &'a str,
+    ) -> Result<(), AssignmentProviderError>;
+
     /// Rebuild the per-domain dispatch bundle — the global backend, the named
     /// `[assignment.backends.*]` instances and the fan-out set — from the
     /// current configuration and the stored `assignment/driver` bindings

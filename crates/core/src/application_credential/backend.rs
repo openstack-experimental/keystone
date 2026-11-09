@@ -113,6 +113,20 @@ pub trait ApplicationCredentialBackend: Send + Sync {
         project_id: &'a str,
     ) -> Result<(), ApplicationCredentialProviderError>;
 
+    /// Delete all application credentials granting a role (role lifecycle
+    /// cascade). Python Keystone deletes the credential when one of its roles
+    /// is dropped, unlike a user losing an assignment, where the role is only
+    /// stripped. Access rules stay.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `role_id`: The ID of the role.
+    async fn delete_application_credentials_for_role<'a>(
+        &self,
+        state: &ServiceState,
+        role_id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError>;
+
     /// Get a user's access rule by its ID.
     ///
     /// # Parameters
