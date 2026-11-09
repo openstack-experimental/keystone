@@ -41,7 +41,9 @@ ALLOWED_PATHS=(
     'crates/'
     'doc/'
     'tools/k8s/keystone/overlays/skaffold/'
+    'tools/k8s/keystone/overlays/loadtest/'
     'tools/k8s/tests/'
+    'tools/k8s/keystone/overlays/skaffold-loadtest'
 )
 
 is_allowed() {
