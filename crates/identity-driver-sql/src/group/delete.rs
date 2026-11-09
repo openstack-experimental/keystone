@@ -14,13 +14,22 @@
 
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
+use sea_orm::query::*;
 
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::identity::IdentityProviderError;
 
-use crate::entity::prelude::Group as DbGroup;
+use crate::entity::{
+    expiring_user_group_membership, prelude::ExpiringUserGroupMembership,
+    prelude::Group as DbGroup, prelude::UserGroupMembership, user_group_membership,
+};
 
 /// Deletes a group by its ID.
+///
+/// The user<->group membership rows (direct and expiring) reference the group
+/// without a cascading foreign key, so they are removed in the same
+/// transaction before the group record itself (python-keystone drops them the
+/// same way).
 ///
 /// # Parameters
 /// - `db`: The database connection.
@@ -32,22 +41,42 @@ pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     group_id: S,
 ) -> Result<(), IdentityProviderError> {
+    let txn = db
+        .begin()
+        .await
+        .context("starting group deletion transaction")?;
+    UserGroupMembership::delete_many()
+        .filter(user_group_membership::Column::GroupId.eq(group_id.as_ref()))
+        .exec(&txn)
+        .await
+        .context("removing group memberships")?;
+    ExpiringUserGroupMembership::delete_many()
+        .filter(expiring_user_group_membership::Column::GroupId.eq(group_id.as_ref()))
+        .exec(&txn)
+        .await
+        .context("removing expiring group memberships")?;
     let res = DbGroup::delete_by_id(group_id.as_ref())
-        .exec(db)
+        .exec(&txn)
         .await
         .context("removing group record")?;
-    if res.rows_affected == 1 {
-        Ok(())
-    } else {
-        Err(IdentityProviderError::GroupNotFound(
+    if res.rows_affected != 1 {
+        // Nothing was deleted: do not commit side effects on an error path.
+        txn.rollback()
+            .await
+            .context("rolling back group deletion transaction")?;
+        return Err(IdentityProviderError::GroupNotFound(
             group_id.as_ref().to_string(),
-        ))
+        ));
     }
+    txn.commit()
+        .await
+        .context("committing group deletion transaction")?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Statement, Transaction};
 
     use super::*;
 
@@ -55,21 +84,73 @@ mod tests {
     async fn test_delete() {
         // Create MockDatabase with mock query results
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
+            .append_exec_results([
+                MockExecResult {
+                    rows_affected: 2,
+                    ..Default::default()
+                },
+                MockExecResult {
+                    rows_affected: 0,
+                    ..Default::default()
+                },
+                MockExecResult {
+                    rows_affected: 1,
+                    ..Default::default()
+                },
+            ])
             .into_connection();
 
         delete(&db, "id").await.unwrap();
         // Checking transaction log
         assert_eq!(
             db.into_transaction_log(),
-            [Transaction::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                r#"DELETE FROM "group" WHERE "group"."id" = $1"#,
-                ["id".into()]
-            ),]
+            [Transaction::many([
+                Statement::from_string(DatabaseBackend::Postgres, "BEGIN"),
+                Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"DELETE FROM "user_group_membership" WHERE "user_group_membership"."group_id" = $1"#,
+                    ["id".into()]
+                ),
+                Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"DELETE FROM "expiring_user_group_membership" WHERE "expiring_user_group_membership"."group_id" = $1"#,
+                    ["id".into()]
+                ),
+                Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"DELETE FROM "group" WHERE "group"."id" = $1"#,
+                    ["id".into()]
+                ),
+                Statement::from_string(DatabaseBackend::Postgres, "COMMIT"),
+            ])]
         );
+    }
+
+    #[tokio::test]
+    async fn test_delete_not_found_rolls_back() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([
+                MockExecResult {
+                    rows_affected: 0,
+                    ..Default::default()
+                },
+                MockExecResult {
+                    rows_affected: 0,
+                    ..Default::default()
+                },
+                MockExecResult {
+                    rows_affected: 0,
+                    ..Default::default()
+                },
+            ])
+            .into_connection();
+
+        assert!(matches!(
+            delete(&db, "id").await,
+            Err(IdentityProviderError::GroupNotFound(_))
+        ));
+        let log = db.into_transaction_log();
+        let last = log[0].statements().last().map(|s| s.sql.clone());
+        assert_eq!(last.as_deref(), Some("ROLLBACK"));
     }
 }

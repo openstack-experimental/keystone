@@ -92,17 +92,7 @@ pub(super) async fn delete(
             &exec,
             RevocationEventCreate {
                 domain_id: Some(realm.domain_id.clone()),
-                project_id: None,
-                user_id: Some(id.clone()),
-                role_id: None,
-                trust_id: None,
-                consumer_id: None,
-                access_token_id: None,
-                issued_before: Utc::now(),
-                expires_at: None,
-                audit_id: None,
-                audit_chain_id: None,
-                revoked_at: Utc::now(),
+                ..RevocationEventCreate::for_user(id.clone(), Utc::now())
             },
         )
         .await?;

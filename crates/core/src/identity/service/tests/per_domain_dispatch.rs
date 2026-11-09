@@ -1055,3 +1055,115 @@ async fn list_users_shadows_entities_from_a_non_default_backend() {
     assert_eq!(users.len(), 1);
     assert_eq!(users[0].id, "shadow-pub");
 }
+
+/// Deleting a group served by a non-default backend revokes the tokens of
+/// its members under their mapped public ids, never creates a mapping for a
+/// member that has none, and forgets the group's own mapping.
+#[tokio::test]
+async fn delete_group_on_a_domain_specific_backend_revokes_mapped_members() {
+    let mut idmapping = MockIdMappingProvider::default();
+    idmapping
+        .expect_get_by_public_id()
+        .withf(|_, public_id: &'_ str| public_id == "g")
+        .returning(|_, _| {
+            Ok(Some(IdMapping {
+                domain_id: "d-ldap".to_string(),
+                entity_type: IdMappingEntityType::Group,
+                local_id: "gl".to_string(),
+                public_id: "g".to_string(),
+            }))
+        });
+    idmapping
+        .expect_get_by_local_id()
+        .returning(|_, local_id: &'_ str, _, _| {
+            Ok((local_id == "u1").then(|| IdMapping {
+                domain_id: "d-ldap".to_string(),
+                entity_type: IdMappingEntityType::User,
+                local_id: "u1".to_string(),
+                public_id: "pub-u1".to_string(),
+            }))
+        });
+    // `create_id_mapping` has no expectation: creating a mapping panics.
+    idmapping
+        .expect_delete_id_mapping()
+        .withf(|_, public_id: &'_ str| public_id == "g")
+        .times(1)
+        .returning(|_, _| Ok(()));
+    let mut assignment_mock = crate::assignment::MockAssignmentProvider::default();
+    assignment_mock
+        .expect_list_role_assignments()
+        .returning(|_, _| {
+            Ok(vec![
+                openstack_keystone_core_types::assignment::AssignmentBuilder::default()
+                    .actor_id("g")
+                    .role_id("rid")
+                    .target_id("did")
+                    .r#type(openstack_keystone_core_types::assignment::AssignmentType::GroupDomain)
+                    .build()
+                    .unwrap(),
+            ])
+        });
+    assignment_mock
+        .expect_delete_assignments_for_group()
+        .times(1)
+        .returning(|_, _| Ok(()));
+    let mut revoke_mock = crate::revoke::MockRevokeProvider::default();
+    revoke_mock
+        .expect_create_revocation_event()
+        .times(1)
+        .withf(|_, ev| ev.user_id.as_deref() == Some("pub-u1"))
+        .returning(|_, ev| {
+            Ok(openstack_keystone_core_types::revoke::RevocationEvent {
+                user_id: ev.user_id,
+                issued_before: ev.issued_before,
+                revoked_at: ev.revoked_at,
+                ..Default::default()
+            })
+        });
+    let state = get_mocked_state(
+        None,
+        Some(
+            Provider::mocked_builder()
+                .mock_idmapping(idmapping)
+                .mock_assignment(assignment_mock)
+                .mock_revoke(revoke_mock),
+        ),
+    )
+    .await;
+
+    let sql = identity_backend(0);
+    let mut ldap_mock = MockIdentityBackend::default();
+    ldap_mock.expect_is_domain_aware().return_const(true);
+    ldap_mock.expect_is_read_only().return_const(false);
+    ldap_mock
+        .expect_list_users_of_group()
+        .withf(|_, group_id: &'_ str| group_id == "gl")
+        .returning(|_, _| Ok(vec!["u1".into(), "u2".into()]));
+    ldap_mock.expect_get_group().returning(|_, group_id| {
+        Ok(Some(
+            openstack_keystone_core_types::identity::GroupBuilder::default()
+                .id(group_id)
+                .domain_id("d-ldap")
+                .name("g-name")
+                .build()
+                .expect("valid group"),
+        ))
+    });
+    ldap_mock
+        .expect_delete_group()
+        .withf(|_, group_id: &'_ str| group_id == "gl")
+        .times(1)
+        .returning(|_, _| Ok(()));
+    let ldap: Arc<dyn IdentityBackend> = Arc::new(ldap_mock);
+
+    let mut backends = HashMap::new();
+    backends.insert("sql".to_string(), sql.clone());
+    backends.insert("ldap".to_string(), ldap);
+    let provider =
+        IdentityService::from_backends("sql", sql, backends, Some(resolver(ldap_config_source(1))));
+
+    provider
+        .delete_group(&ExecutionContext::internal(&state), "g")
+        .await
+        .unwrap();
+}

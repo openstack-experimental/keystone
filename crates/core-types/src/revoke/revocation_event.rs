@@ -94,6 +94,18 @@ pub struct RevocationEventCreate {
     pub user_id: Option<String>,
 }
 
+impl RevocationEventCreate {
+    /// Event invalidating every token issued to `user_id` before `now`.
+    pub fn for_user<U: Into<String>>(user_id: U, now: DateTime<Utc>) -> Self {
+        Self {
+            user_id: Some(user_id.into()),
+            issued_before: now,
+            revoked_at: now,
+            ..Default::default()
+        }
+    }
+}
+
 /// Revocation list parameters.
 ///
 /// It may be necessary to list revocation events not related to the certain

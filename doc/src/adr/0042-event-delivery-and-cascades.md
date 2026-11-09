@@ -93,6 +93,7 @@ The cascades:
 | Deleted | Removed with it                                                                                         |
 | ------- | ------------------------------------------------------------------------------------------------------- |
 | user    | credentials, application credentials and access rules, trusts (as trustor or trustee), role assignments |
+| group   | user-group memberships (direct and expiring), role assignments, id mapping                              |
 | project | credentials, application credentials, role assignments on the project                                   |
 | domain  | projects (leaf first), users, groups, role assignments on the domain, id mappings                       |
 
@@ -106,6 +107,11 @@ Rules that came out of implementing them:
   domain cascades run both.
 - **Deleting a group revokes all of its grants**, on any target, including
   the ones on other domains and the system (`delete_assignments_for_group`).
+- **Deleting a group revokes the tokens of its members, but only if it held
+  role assignments** (python-keystone parity: without grants the members'
+  effective roles do not change). The revocation events are written before the
+  group is deleted, because the member list is gone afterwards and a retry
+  could not recover it. A read-only backend fails before anything is revoked.
 - **Project deletion is ordered**: children before parents, by depth, with the
   depth walk bounded so corrupt parent data cannot hang it.
 - **Users and groups of a read-only identity backend (LDAP) are skipped** during

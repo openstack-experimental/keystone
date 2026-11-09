@@ -143,6 +143,11 @@ impl IdentityBackend for LdapBackend {
         false
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.is_read_only", level = "debug", skip_all)]
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
     #[tracing::instrument(name = "driver.ldap.identity.add_user_to_group", level = "debug", skip_all, fields(user_id = %_user_id, group_id = %_group_id))]
     async fn add_user_to_group<'a>(
         &self,
