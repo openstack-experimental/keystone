@@ -93,8 +93,8 @@ esac
 
 cat << EOF > "$CONFIG_FILE"
 
-# Policies are evaluated in-process by regorus (cargo feature `regorus`), so
-# the API tests do not depend on an `opa` binary.
+# Policies are evaluated in-process by regorus (cargo feature "regorus"), so
+# the API tests do not depend on an "opa" binary.
 [api_policy]
 engine = regorus
 regorus_policies_path = policy
