@@ -164,7 +164,7 @@ pub struct Config {
     pub auth_plugin_identity: AuthPluginIdentityProvider,
 
     /// API policy enforcement.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "policy::deserialize_or_default_opa")]
     pub api_policy: PolicyEngine,
 
     /// Assignments (roles) provider configuration.
@@ -637,10 +637,7 @@ mod tests {
     #[serial]
     fn test_env() {
         temp_env::with_vars(
-            [
-                ("OS_API_POLICY__ENGINE", Some("opa")),
-                ("OS_API_POLICY__OPA_BASE_URL", Some("http://test/")),
-            ],
+            [("OS_API_POLICY__OPA_BASE_URL", Some("http://test/"))],
             || {
                 let mut cfg_file = NamedTempFile::new().unwrap();
                 write!(
@@ -675,7 +672,6 @@ mod tests {
             site_vars_file,
             r#"
     [api_policy]
-    engine = "opa"
     opa_base_url = "http://site-vars:8181"
             "#
         )
@@ -827,7 +823,6 @@ mod tests {
     [database]
     connection = "from-site-vars"
     [api_policy]
-    engine = "opa"
     opa_base_url = "http://site-vars/"
             "#
         )
@@ -841,7 +836,6 @@ mod tests {
     [database]
     connection = "from-file"
     [api_policy]
-    engine = "opa"
     opa_base_url = "http://file/"
     [identity]
     max_password_length = 77

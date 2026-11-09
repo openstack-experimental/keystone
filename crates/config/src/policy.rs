@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::path::PathBuf;
 use url::Url;
 use url_macro::url;
@@ -55,8 +55,8 @@ pub struct RegorusConfig {
 /// options (`[api_policy]`).
 ///
 /// `engine` selects the kind and the engine specific options carry the engine
-/// name as prefix. The `engine` option is required whenever the section is
-/// present; an absent section selects OPA with its defaults.
+/// name as prefix. A missing `engine` (or an absent section) selects OPA, see
+/// [`deserialize_or_default_opa`].
 ///
 /// ```ini
 /// [api_policy]
@@ -86,6 +86,21 @@ impl Default for PolicyEngine {
     }
 }
 
+/// Deserialize `[api_policy]`, selecting OPA when `engine` is not set.
+///
+/// serde cannot default the tag of an internally tagged enum, so it is
+/// inserted here. Meant for `#[serde(deserialize_with = ...)]`.
+pub fn deserialize_or_default_opa<'de, D>(deserializer: D) -> Result<PolicyEngine, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mut section = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+    section
+        .entry("engine")
+        .or_insert_with(|| serde_json::Value::String("opa".into()));
+    PolicyEngine::deserialize(serde_json::Value::Object(section)).map_err(serde::de::Error::custom)
+}
+
 fn default_opa_base_url() -> Url {
     url!("http://localhost:8181")
 }
@@ -95,11 +110,19 @@ mod tests {
     use super::*;
     use config::{Config as RawConfig, File, FileFormat};
 
+    #[derive(Deserialize)]
+    struct Wrapper {
+        #[serde(default, deserialize_with = "deserialize_or_default_opa")]
+        api_policy: PolicyEngine,
+    }
+
     fn parse(ini: &str) -> Result<PolicyEngine, config::ConfigError> {
-        RawConfig::builder()
-            .add_source(File::from_str(ini, FileFormat::Ini))
+        let ini = format!("[api_policy]\n{ini}");
+        Ok(RawConfig::builder()
+            .add_source(File::from_str(&ini, FileFormat::Ini))
             .build()?
-            .try_deserialize()
+            .try_deserialize::<Wrapper>()?
+            .api_policy)
     }
 
     #[test]
@@ -146,8 +169,20 @@ mod tests {
     }
 
     #[test]
-    fn engine_is_required() {
-        assert!(parse("opa_base_url = http://x/\n").is_err());
+    fn missing_engine_is_opa() {
+        let cfg = parse("opa_base_url = http://x/\n").unwrap();
+        assert_eq!(
+            cfg,
+            PolicyEngine::Opa(OpaConfig {
+                base_url: Url::parse("http://x/").unwrap(),
+                policies_path: None,
+            })
+        );
+    }
+
+    #[test]
+    fn unknown_engine_is_rejected() {
+        assert!(parse("engine = nope\n").is_err());
     }
 
     #[test]
