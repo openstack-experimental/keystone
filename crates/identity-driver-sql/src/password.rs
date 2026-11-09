@@ -124,10 +124,33 @@ pub(super) fn is_password_expired(
     Ok(false)
 }
 
+/// Expiration data of a password.
+///
+/// The only part of the latest password required to build a user response.
+/// Selecting just these columns keeps the password hash out of the user
+/// lookup, which does not need it.
+#[derive(Clone, Debug, PartialEq, Eq, sea_orm::FromQueryResult)]
+pub struct PasswordExpiry {
+    pub expires_at: Option<chrono::NaiveDateTime>,
+    pub expires_at_int: Option<i64>,
+}
+
+impl From<&db_password::Model> for PasswordExpiry {
+    fn from(value: &db_password::Model) -> Self {
+        Self {
+            expires_at: value.expires_at,
+            expires_at_int: value.expires_at_int,
+        }
+    }
+}
+
 pub trait MergePasswordData {
     fn merge_passwords_data<I>(&mut self, passwords: I) -> &mut Self
     where
         I: IntoIterator<Item = db_password::Model>;
+
+    /// Merge the expiration of the latest password.
+    fn merge_password_expiry(&mut self, latest: Option<&PasswordExpiry>) -> &mut Self;
 }
 
 impl MergePasswordData for UserResponseBuilder {
@@ -143,11 +166,18 @@ impl MergePasswordData for UserResponseBuilder {
         I: IntoIterator<Item = db_password::Model>,
     {
         if let Some(latest_password) = passwords.into_iter().next() {
-            if let Some(microseconds) = latest_password.expires_at_int
+            self.merge_password_expiry(Some(&PasswordExpiry::from(&latest_password)));
+        }
+        self
+    }
+
+    fn merge_password_expiry(&mut self, latest: Option<&PasswordExpiry>) -> &mut Self {
+        if let Some(latest) = latest {
+            if let Some(microseconds) = latest.expires_at_int
                 && let Some(ts) = DateTime::from_timestamp_micros(microseconds)
             {
                 self.password_expires_at(ts);
-            } else if let Some(expires_at) = latest_password.expires_at {
+            } else if let Some(expires_at) = latest.expires_at {
                 self.password_expires_at(expires_at.and_utc());
             }
         }
