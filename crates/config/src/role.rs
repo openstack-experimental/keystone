@@ -26,6 +26,31 @@ pub struct RoleProvider {
     /// `GET /v3/roles` pagination limits.
     #[serde(default)]
     pub list_limit: ListLimitConfig,
+
+    /// Toggle for role caching.
+    ///
+    /// When enabled the roles (including their names) and the role imply
+    /// rules are cached in memory for `cache_time` seconds.
+    #[serde(default = "default_caching")]
+    pub caching: bool,
+
+    /// Time in seconds the roles and the role imply rules are cached in
+    /// memory.
+    ///
+    /// Changes made through this process invalidate the cache immediately;
+    /// changes made by other processes become visible after at most this
+    /// time. `0` disables the cache. Only effective when `caching` is
+    /// enabled.
+    #[serde(default = "default_cache_time")]
+    pub cache_time: u64,
+}
+
+fn default_caching() -> bool {
+    true
+}
+
+fn default_cache_time() -> u64 {
+    10
 }
 
 impl Default for RoleProvider {
@@ -33,6 +58,8 @@ impl Default for RoleProvider {
         Self {
             driver: default_sql_driver(),
             list_limit: ListLimitConfig::default(),
+            caching: default_caching(),
+            cache_time: default_cache_time(),
         }
     }
 }

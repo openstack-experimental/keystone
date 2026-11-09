@@ -25,6 +25,7 @@ use crate::entity::{
     local_user, password,
     prelude::{LocalUser, Password},
 };
+use crate::password::PasswordExpiry;
 
 /// Load local user record with passwords from database.
 ///
@@ -126,6 +127,54 @@ pub async fn load_local_user_by_id<C: ConnectionTrait>(
     Ok(Some((
         local_user,
         latest_password.context("fetching latest user password")?,
+    )))
+}
+
+/// Load local user record by the user ID with the expiration of its latest
+/// password.
+///
+/// Same lookup as [`load_local_user_by_id`], but only the expiration columns
+/// of the newest password are selected. For callers building a user response
+/// that never needs the password hash.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `(local_user::Model,
+/// Option<PasswordExpiry>)` if found, or an `Error`.
+pub async fn load_local_user_with_password_expiry<C: ConnectionTrait>(
+    db: &C,
+    user_id: &str,
+) -> Result<Option<(local_user::Model, Option<PasswordExpiry>)>, IdentityProviderError> {
+    let (local_user, expiry) = tokio::join!(
+        LocalUser::find()
+            .filter(local_user::Column::UserId.eq(user_id))
+            .one(db),
+        Password::find()
+            .select_only()
+            .column(password::Column::ExpiresAt)
+            .column(password::Column::ExpiresAtInt)
+            .filter(
+                password::Column::LocalUserId.in_subquery(
+                    Query::select()
+                        .column(local_user::Column::Id)
+                        .from(LocalUser)
+                        .and_where(local_user::Column::UserId.eq(user_id))
+                        .to_owned(),
+                ),
+            )
+            .order_by(password::Column::CreatedAtInt, Order::Desc)
+            .into_model::<PasswordExpiry>()
+            .one(db)
+    );
+    let Some(local_user) = local_user.context("fetching local user")? else {
+        return Ok(None);
+    };
+    Ok(Some((
+        local_user,
+        expiry.context("fetching latest user password expiration")?,
     )))
 }
 

@@ -83,7 +83,7 @@ pub async fn get(
         UserOption::find()
             .filter(db_user_option::Column::UserId.eq(user_id))
             .all(db),
-        local_user::load_local_user_by_id(db, user_id, true)
+        local_user::load_local_user_with_password_expiry(db, user_id)
     );
 
     if let Some(user) = user_entry? {
@@ -99,7 +99,7 @@ pub async fn get(
         match local_user_with_passwords? {
             Some(local_user_with_passwords) => {
                 user_builder.merge_local_user_data(&local_user_with_passwords.0);
-                user_builder.merge_passwords_data(local_user_with_passwords.1);
+                user_builder.merge_password_expiry(local_user_with_passwords.1.as_ref());
             }
             _ => match NonlocalUser::find()
                 .filter(db_nonlocal_user::Column::UserId.eq(&user.id))
@@ -388,7 +388,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" IN (SELECT "id" FROM "local_user" WHERE "local_user"."user_id" = $1) ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
+                    r#"SELECT "password"."expires_at", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" IN (SELECT "id" FROM "local_user" WHERE "local_user"."user_id" = $1) ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
                     ["1".into(), 1u64.into()]
                 ),
             ]
@@ -465,7 +465,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" IN (SELECT "id" FROM "local_user" WHERE "local_user"."user_id" = $1) ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
+                    r#"SELECT "password"."expires_at", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" IN (SELECT "id" FROM "local_user" WHERE "local_user"."user_id" = $1) ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
                     ["1".into(), 1u64.into()]
                 ),
             ]
