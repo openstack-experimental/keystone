@@ -55,7 +55,9 @@ impl RegorusPolicyEnforcer {
 
     /// Re-read the policy directory and atomically replace the policies.
     ///
-    /// On error the previous policies stay active.
+    /// On error the previous policies stay active. Keystone calls this on
+    /// `SIGHUP`. Compilation is CPU bound, so an async caller must run it in
+    /// `spawn_blocking`.
     pub fn reload(&self) -> Result<(), RegorusError> {
         self.policies.store(Arc::new(PolicySet::load(&self.path)?));
         Ok(())
@@ -122,6 +124,8 @@ fn evaluate_entrypoint(
         },
         None => None,
     };
+    // Evaluated on allow too: OPA returns the whole package document and
+    // `tools/policy-diff.py` checks for parity.
     let violations = match &ep.violation {
         Some(p) => match eval_rule(p, &input)? {
             regorus::Value::Undefined => None,

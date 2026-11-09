@@ -42,7 +42,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 /// policy checks) before the embedded OPA is actually serving.
 pub async fn spawn(startup: &Startup, handles: &mut JoinSet<()>) -> Result<(), Report> {
     let cfg = &startup.cfg;
-    let crate::config::PolicyEngine::Opa(opa) = &cfg.api_policy.engine else {
+    let crate::config::PolicyEngine::Opa(opa) = &cfg.api_policy else {
         // Policies are evaluated in-process, there is no OPA to supervise.
         return Ok(());
     };

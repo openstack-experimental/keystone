@@ -9,7 +9,7 @@ with later sources winning:
    option.
 
 For example, `OS_API_POLICY__OPA_BASE_URL=http://opa:8181` overrides
-`opa_base_url` in `[api_policy]`.
+`opa_base_url` in `[api_policy]` (with `engine = opa`).
 
 The [configuration reference](../configuration/index.md) lists every section
 and directs operators to the authoritative detailed guide.
@@ -28,7 +28,13 @@ readiness, and Prometheus metrics and must not be placed on an untrusted network
 ## Core Services
 
 - `[database]` selects the SQL connection.
-- `[api_policy]` selects OPA and an optional local policy directory.
+- `[api_policy]` selects the policy engine; `engine` is required when the
+  section is present (`opa` or `regorus`). `engine = opa` talks to
+  OPA over `opa_base_url`, optionally starting it from `opa_policies_path`.
+  `engine = regorus` (experimental) evaluates the Rego policies in-process from
+  `regorus_policies_path`; it needs keystone built with the `regorus` cargo
+  feature and ignores the `opa_*` options. Send `SIGHUP` to reload the
+  policies; a failed reload is logged and the previous policies stay active.
 - `[auth]` enables built-in and registered authentication methods.
 - `[token]` selects the token provider and lifetime.
 - `[fernet_tokens]` configures the Fernet key repository.

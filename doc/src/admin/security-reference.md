@@ -26,7 +26,7 @@ default and should be turned on.
 | `[distributed_storage] dev_mode` | `false` | KEK source and process hardening pre-flight checks are enforced. | Never set in production. |
 | `[distributed_storage] kek_provider` | `env` | The `env` KEK is accepted **only** with `dev_mode = true`, so a production node does not start until `pkcs11` or `tpm` is set explicitly. | `pkcs11` or `tpm`. |
 | `[distributed_storage] local_reads_mode` | `disabled` | Every read is linearizable; no stale reads. | Keep `disabled` unless a consumer needs stale `PUBLIC`/`INTERNAL` reads. |
-| `[api_policy]` | OPA at `http://localhost:8181` | Every authorised endpoint is evaluated by OPA. | Run OPA beside Keystone; see [policy](policy.md). |
+| `[api_policy]` | `engine = opa`, OPA at `http://localhost:8181` | Every authorised endpoint is evaluated by the selected engine: OPA over HTTP, or in-process `regorus` (experimental, `engine = regorus`, reloaded on `SIGHUP`). | Run OPA beside Keystone; see [policy](policy.md). |
 | `[rate_limit_global_ip]`, `[rate_limit_user_auth]` | `enabled = true`, `burst_size = 100`, `replenish_rate_per_second = 10` | Both limiters are active without configuration. Limits are per node and held in memory (ADR 0022). Enabled values outside `1..=100000` stop startup. | Size the buckets for the deployment; set `enabled = false` only when a proxy already limits. |
 | `[rate_limit_trusted_proxies] trusted_proxies` | empty | No forwarding header is trusted; the peer address is used. Behind an unlisted proxy every client shares the proxy's bucket. | List the proxies that sanitise the header, and set `trusted_header`. |
 | `[interface_admin]` | not configured | The admin interface is not started. When configured it is a Unix socket only, with optional `peer_uid` and `peer_gid` checks. | Configure `peer_uid` or `peer_gid`, and restrict the socket directory. |
@@ -55,7 +55,7 @@ public listener.
 | OPA | `[api_policy] opa_base_url` | outbound, `http://localhost:8181` | HTTP, or a Unix socket URL | Keep on loopback or a Unix socket. With `opa_policies_path` set, Keystone starts OPA itself. |
 | Auth plugins | `[auth_plugins]` | in-process WASM | Capability list and SHA-256 artefact pinning (TOK-10) | Pre-authentication attack surface; load only reviewed plugins. |
 
-Policy enforcement has no off switch: the OPA enforcer is always created.
+Policy enforcement has no off switch: an enforcer (OPA by default, or `regorus`) is always created.
 
 ## Failure semantics
 

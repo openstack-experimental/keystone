@@ -25,6 +25,8 @@ use secrecy::ExposeSecret;
 use tokio::spawn;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
+#[cfg(feature = "regorus")]
+use tracing::{error, info};
 
 use super::{Startup, audit, debug_elapsed};
 use crate::config::{Config, ConfigManager, ListenerConfig, LoadedConfig, PolicyEngine};
@@ -68,7 +70,7 @@ pub async fn run(
 
     let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client, nova_http_client)?;
     debug!("Central provider manager initialized.");
-    let policy = init_policy_enforcer(&cfg).await?;
+    let policy = init_policy_enforcer(&cfg, &token).await?;
     debug!("Policy enforcer started.");
     debug_elapsed(startup_timer, "policy_enforcer");
 
@@ -118,16 +120,17 @@ pub async fn run(
     })
 }
 
-/// ADR 0019 §4: refuse to start if either Fernet key repository (credential
-/// or token) contains the well-known Null Key, unless the operator has
-/// explicitly opted in. This is an eager check on top of the lazy one each
-/// repository already performs on first access.
 /// Build the policy enforcer selected by `[api_policy] engine`.
 ///
 /// The OPA (HTTP) enforcer is the default. The in-process `regorus` enforcer
-/// is experimental and only available with the `regorus` cargo feature.
-async fn init_policy_enforcer(cfg: &Config) -> Result<Arc<dyn PolicyEnforcer>, Report> {
-    match &cfg.api_policy.engine {
+/// is experimental and only available with the `regorus` cargo feature. It
+/// re-reads the policy directory on `SIGHUP`.
+#[cfg_attr(not(feature = "regorus"), allow(unused_variables))]
+async fn init_policy_enforcer(
+    cfg: &Config,
+    token: &CancellationToken,
+) -> Result<Arc<dyn PolicyEnforcer>, Report> {
+    match &cfg.api_policy {
         PolicyEngine::Opa(opa) => Ok(Arc::new(
             HttpPolicyEnforcer::new(opa.base_url.clone()).await?,
         )),
@@ -141,7 +144,9 @@ async fn init_policy_enforcer(cfg: &Config) -> Result<Arc<dyn PolicyEnforcer>, R
             .await
             .wrap_err("compiling the regorus policies")?
             .wrap_err("loading the regorus policies")?;
-            Ok(Arc::new(enforcer))
+            let enforcer = Arc::new(enforcer);
+            spawn_regorus_reload(Arc::clone(&enforcer), token.clone());
+            Ok(enforcer)
         }
         #[cfg(not(feature = "regorus"))]
         PolicyEngine::Regorus(_) => Err(eyre::eyre!(
@@ -150,6 +155,49 @@ async fn init_policy_enforcer(cfg: &Config) -> Result<Arc<dyn PolicyEnforcer>, R
     }
 }
 
+/// Reload the `regorus` policies on every `SIGHUP`.
+///
+/// A failed reload is logged and the previous policies stay active. The
+/// compilation is CPU bound and runs on the blocking pool.
+#[cfg(feature = "regorus")]
+fn spawn_regorus_reload(
+    enforcer: Arc<openstack_keystone_policy_regorus::RegorusPolicyEnforcer>,
+    token: CancellationToken,
+) {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut hup = match signal(SignalKind::hangup()) {
+        Ok(hup) => hup,
+        Err(e) => {
+            warn!("Cannot install the SIGHUP handler, policies will not be reloaded: {e}");
+            return;
+        }
+    };
+    spawn(async move {
+        loop {
+            tokio::select! {
+                () = token.cancelled() => return,
+                received = hup.recv() => {
+                    if received.is_none() {
+                        return;
+                    }
+                }
+            }
+            info!("SIGHUP received, reloading the regorus policies");
+            let current = Arc::clone(&enforcer);
+            match tokio::task::spawn_blocking(move || current.reload()).await {
+                Ok(Ok(())) => info!("regorus policies reloaded"),
+                Ok(Err(e)) => error!("regorus policy reload failed, keeping the old policies: {e}"),
+                Err(e) => error!("regorus policy reload task failed: {e}"),
+            }
+        }
+    });
+}
+
+/// ADR 0019 §4: refuse to start if either Fernet key repository (credential
+/// or token) contains the well-known Null Key, unless the operator has
+/// explicitly opted in. This is an eager check on top of the lazy one each
+/// repository already performs on first access.
 async fn check_fernet_repositories(cfg: &Config) -> Result<(), Report> {
     FernetKeyRepository::new(cfg.credential.key_repository.clone())
         .check_startup_null_key(cfg.credential.insecure_allow_null_key)

@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Loading and compiling the Rego policy tree.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -71,6 +71,8 @@ pub struct PolicySet {
 pub(crate) struct SourceFile {
     pub path: PathBuf,
     pub package: String,
+    /// Names of the rules declared at the top level of the module.
+    pub rules: HashSet<String>,
     /// The module defines a top-level `allow` rule.
     pub is_entrypoint: bool,
     pub is_test: bool,
@@ -108,8 +110,12 @@ impl PolicySet {
 
         let mut entrypoints = HashMap::with_capacity(by_package.len());
         for (package, modules) in by_package {
-            let engine = engine_for(package, helpers.iter().copied().chain(modules))?;
-            let ep = compile_entrypoint(package, engine)?;
+            let engine = engine_for(
+                package,
+                helpers.iter().copied().chain(modules.iter().copied()),
+            )?;
+            let declares = |rule: &str| modules.iter().any(|f| f.rules.contains(rule));
+            let ep = compile_entrypoint(package, engine, declares)?;
             entrypoints.insert(package.replace('.', "/"), ep);
         }
         debug!(count = entrypoints.len(), "compiled policy entrypoints");
@@ -138,20 +144,30 @@ pub(crate) fn engine_for<'a>(
 fn compile_entrypoint(
     package: &str,
     mut engine: regorus::Engine,
+    declares: impl Fn(&str) -> bool,
 ) -> Result<Entrypoint, RegorusError> {
-    let mut compile = |rule: &str| -> Result<regorus::CompiledPolicy, String> {
+    let mut compile = |rule: &str| -> Result<regorus::CompiledPolicy, RegorusError> {
         let path: Arc<str> = format!("data.{package}.{rule}").into();
         engine
             .compile_with_entrypoint(&path)
-            .map_err(|e| e.to_string())
+            .map_err(|e| RegorusError::Compile {
+                package: package.to_string(),
+                message: format!("rule `{rule}`: {e}"),
+            })
     };
-    let allow = compile("allow").map_err(|message| RegorusError::Compile {
-        package: package.to_string(),
-        message,
-    })?;
-    // The optional rules are absent in most of the packages.
-    let violation = compile("violation").ok();
-    let can_see_other_domain_resources = compile("can_see_other_domain_resources").ok();
+    let allow = compile("allow")?;
+    // The optional rules are absent in most of the packages. A rule that is
+    // declared but does not compile is a hard error: swallowing it would
+    // silently drop violations or narrow the list scope.
+    let mut optional = |rule: &str| -> Result<Option<regorus::CompiledPolicy>, RegorusError> {
+        if declares(rule) {
+            compile(rule).map(Some)
+        } else {
+            Ok(None)
+        }
+    };
+    let violation = optional("violation")?;
+    let can_see_other_domain_resources = optional("can_see_other_domain_resources")?;
     Ok(Entrypoint {
         allow,
         violation,
@@ -159,7 +175,35 @@ fn compile_entrypoint(
     })
 }
 
+/// Name of the rule declared by a top-level line, if any.
+///
+/// Rule heads start in the first column (`opa fmt` indents the bodies), so
+/// indented lines, comments and `package`/`import` lines are skipped.
+fn rule_head(line: &str) -> Option<&str> {
+    let line = line.strip_prefix("default ").unwrap_or(line);
+    let end = line
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(line.len());
+    let name = &line[..end];
+    if name.is_empty() || matches!(name, "package" | "import") {
+        return None;
+    }
+    Some(name)
+}
+
+/// Package path of the module, without a trailing comment.
+fn package_name(src: &str) -> Option<String> {
+    src.lines()
+        .find_map(|l| l.strip_prefix("package "))
+        .map(|p| p.split('#').next().unwrap_or(p).trim().to_string())
+        .filter(|p| !p.is_empty())
+}
+
 /// Recursively collect the `.rego` files with their package.
+///
+/// Symlinks and hidden entries are skipped: Kubernetes ConfigMap volumes
+/// expose every file again through `..data` and `..<timestamp>`, which would
+/// load each module several times (and a symlink loop would never end).
 pub(crate) fn scan(dir: &Path) -> Result<Vec<SourceFile>, RegorusError> {
     let io = |path: &Path| {
         let path = path.to_path_buf();
@@ -169,26 +213,42 @@ pub(crate) fn scan(dir: &Path) -> Result<Vec<SourceFile>, RegorusError> {
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
         for entry in std::fs::read_dir(&d).map_err(io(&d))? {
-            let path = entry.map_err(io(&d))?.path();
-            if path.is_dir() {
+            let entry = entry.map_err(io(&d))?;
+            let path = entry.path();
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let file_type = entry.file_type().map_err(io(&path))?;
+            if file_type.is_symlink() {
+                // A ConfigMap exposes its files as symlinks into `..data`.
+                // Follow a link only when it is a regular file inside `dir`.
+                let target = std::fs::canonicalize(&path).map_err(io(&path))?;
+                let root = std::fs::canonicalize(dir).map_err(io(dir))?;
+                if !target.is_file() || !target.starts_with(&root) {
+                    trace!(path = %path.display(), "skipping symlink");
+                    continue;
+                }
+            } else if file_type.is_dir() {
                 stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "rego") {
+                continue;
+            }
+            if path.extension().is_some_and(|e| e == "rego") {
                 let src = std::fs::read_to_string(&path).map_err(io(&path))?;
-                let package = src
-                    .lines()
-                    .find_map(|l| l.strip_prefix("package "))
-                    .map(|p| p.trim().to_string())
-                    .ok_or_else(|| RegorusError::MissingPackage(path.clone()))?;
+                let package =
+                    package_name(&src).ok_or_else(|| RegorusError::MissingPackage(path.clone()))?;
                 let is_test = path
                     .file_name()
                     .is_some_and(|n| n.to_string_lossy().ends_with("_test.rego"));
-                let is_entrypoint = !is_test
-                    && src
-                        .lines()
-                        .any(|l| l.starts_with("allow ") || l.starts_with("default allow"));
+                let rules: HashSet<String> = src
+                    .lines()
+                    .filter_map(rule_head)
+                    .map(str::to_string)
+                    .collect();
+                let is_entrypoint = !is_test && rules.contains("allow");
                 res.push(SourceFile {
                     path,
                     package,
+                    rules,
                     is_entrypoint,
                     is_test,
                 });

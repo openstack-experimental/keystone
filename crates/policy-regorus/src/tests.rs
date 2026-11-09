@@ -220,3 +220,68 @@ fn dump_decisions() {
         .collect();
     std::fs::write(out, serde_json::to_string(&res).unwrap()).unwrap();
 }
+
+mod loader {
+    use std::fs;
+
+    use crate::loader::PolicySet;
+
+    const ALLOW: &str = "package p.a\n\ndefault allow := false\n\nallow if input.x\n";
+
+    fn write(dir: &std::path::Path, name: &str, body: &str) {
+        fs::write(dir.join(name), body).unwrap();
+    }
+
+    #[test]
+    fn test_declared_optional_rule_is_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "a.rego",
+            &format!("{ALLOW}\nviolation contains {{\"msg\": \"no\"}} if not input.x\n"),
+        );
+        let set = PolicySet::load(dir.path()).unwrap();
+        assert!(set.entrypoints["p/a"].violation.is_some());
+        assert!(
+            set.entrypoints["p/a"]
+                .can_see_other_domain_resources
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_absent_optional_rule_is_fine() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "a.rego", ALLOW);
+        assert!(PolicySet::load(dir.path()).unwrap().contains("p/a"));
+    }
+
+    #[test]
+    fn test_entrypoint_detection_ignores_comments_and_accepts_braces() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "helper.rego",
+            "package h # trailing\n\n# allow lists everything\nfoo := 1\n",
+        );
+        write(dir.path(), "a.rego", "package p.a\n\nallow := input.x\n");
+        let set = PolicySet::load(dir.path()).unwrap();
+        assert_eq!(set.len(), 1);
+        assert!(set.contains("p/a"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_symlinks_and_hidden_entries_are_not_duplicated() {
+        let dir = tempfile::tempdir().unwrap();
+        let ts = dir.path().join("..2026_ts");
+        fs::create_dir(&ts).unwrap();
+        write(&ts, "a.rego", ALLOW);
+        std::os::unix::fs::symlink("..2026_ts", dir.path().join("..data")).unwrap();
+        std::os::unix::fs::symlink("..data/a.rego", dir.path().join("a.rego")).unwrap();
+        // A loop must not hang the scan.
+        std::os::unix::fs::symlink(".", dir.path().join("loop")).unwrap();
+        let set = PolicySet::load(dir.path()).unwrap();
+        assert_eq!(set.len(), 1);
+    }
+}

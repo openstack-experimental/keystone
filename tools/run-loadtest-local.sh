@@ -45,6 +45,7 @@ done
 
 cat <<EOF > "$CONFIG_FILE"
 [api_policy]
+engine = opa
 opa_base_url = unix://${STATE_DIR}/opa.sock
 opa_policies_path = policy
 

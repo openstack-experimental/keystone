@@ -33,8 +33,12 @@
 //!   `can_see_other_domain_resources`). regorus can only compile a rule
 //!   path, so each of the three rules is compiled and evaluated separately.
 //! * The compiled set sits in an [`ArcSwap`], so [`RegorusPolicyEnforcer::reload`]
-//!   atomically replaces the policies while in-flight evaluations finish on
-//!   the old set.
+//!   can atomically replace the policies while in-flight evaluations finish on
+//!   the old set. Keystone calls it on `SIGHUP`.
+//! * Optional rules (`violation`, `can_see_other_domain_resources`) that a
+//!   package declares but that fail to compile abort the load instead of being
+//!   treated as absent. Symlinks and hidden entries (Kubernetes `..data`) in
+//!   the policy directory are not followed.
 
 //!
 //! ## Policy conventions required by regorus
