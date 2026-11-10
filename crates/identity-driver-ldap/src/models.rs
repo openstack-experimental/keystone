@@ -102,8 +102,18 @@ pub fn to_user_response(
     let name = single_value(&lower_attrs, &cfg.user_name_attribute).unwrap_or_else(|| id.clone());
     let enabled_raw = single_value(&lower_attrs, &cfg.user_enabled_attribute);
     let enabled = enabled_from_attribute(cfg, enabled_raw.as_deref());
-    let mut mapping = HashMap::from([(cfg.user_mail_attribute.clone(), "email".to_string())]);
-    mapping.extend(cfg.user_additional_attribute_mapping.clone());
+    // LDAP attribute names are case-insensitive: normalize keys before merging
+    // so an operator override replaces the default `mail -> email` entry
+    // regardless of key case.
+    let mut mapping = HashMap::from([(
+        cfg.user_mail_attribute.to_ascii_lowercase(),
+        "email".to_string(),
+    )]);
+    mapping.extend(
+        cfg.user_additional_attribute_mapping
+            .iter()
+            .map(|(k, v)| (k.to_ascii_lowercase(), v.clone())),
+    );
     let extra = build_extra(&lower_attrs, &mapping, &cfg.user_pass_attribute);
 
     Ok(UserResponse {
@@ -252,6 +262,26 @@ mod tests {
         // operator remaps mail → "contact_email" instead of the default "email"
         cfg.user_additional_attribute_mapping
             .insert("mail".into(), "contact_email".into());
+        let e = entry(
+            "cn=jdoe,ou=Users,dc=example,dc=com",
+            &[("cn", &["jdoe"]), ("mail", &["jdoe@example.com"])],
+        );
+        let user = to_user_response(&cfg, "default", &e)?;
+        assert_eq!(
+            user.extra.get("contact_email"),
+            Some(&Value::String("jdoe@example.com".into()))
+        );
+        assert!(!user.extra.contains_key("email"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_user_response_mail_override_is_case_insensitive() -> Result<(), IdentityProviderError>
+    {
+        let mut cfg = LdapProvider::default();
+        cfg.user_mail_attribute = "mail".to_string();
+        cfg.user_additional_attribute_mapping
+            .insert("Mail".into(), "contact_email".into());
         let e = entry(
             "cn=jdoe,ou=Users,dc=example,dc=com",
             &[("cn", &["jdoe"]), ("mail", &["jdoe@example.com"])],
