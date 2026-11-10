@@ -240,8 +240,7 @@ mod tests {
     #[test]
     fn test_to_user_response_mail_attribute_mapped_to_email_by_default()
     -> Result<(), IdentityProviderError> {
-        let mut cfg = LdapProvider::default();
-        cfg.user_mail_attribute = "mail".to_string();
+        let cfg = LdapProvider::default();
         let e = entry(
             "cn=jdoe,ou=Users,dc=example,dc=com",
             &[("cn", &["jdoe"]), ("mail", &["jdoe@example.com"])],
@@ -258,7 +257,6 @@ mod tests {
     fn test_to_user_response_additional_mapping_overrides_mail_default()
     -> Result<(), IdentityProviderError> {
         let mut cfg = LdapProvider::default();
-        cfg.user_mail_attribute = "mail".to_string();
         // operator remaps mail → "contact_email" instead of the default "email"
         cfg.user_additional_attribute_mapping
             .insert("mail".into(), "contact_email".into());
@@ -279,7 +277,6 @@ mod tests {
     fn test_to_user_response_mail_override_is_case_insensitive() -> Result<(), IdentityProviderError>
     {
         let mut cfg = LdapProvider::default();
-        cfg.user_mail_attribute = "mail".to_string();
         cfg.user_additional_attribute_mapping
             .insert("Mail".into(), "contact_email".into());
         let e = entry(
