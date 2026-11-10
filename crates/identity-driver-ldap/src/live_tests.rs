@@ -186,9 +186,9 @@ async fn test_list_users_all_finds_seeded_entries() -> Result<(), IdentityProvid
         &params,
     )
     .await?;
-    let ids: Vec<&str> = users.iter().map(|u| u.id.as_str()).collect();
-    assert!(ids.contains(&"jdoe"));
-    assert!(ids.contains(&"bsmith"));
+    let mut ids: Vec<&str> = users.iter().map(|u| u.id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["bsmith", "disableduser", "jdoe"]);
     assert!(ids.contains(&"disableduser"));
     Ok(())
 }
@@ -725,11 +725,13 @@ async fn test_nested_group_membership_is_not_resolved() -> Result<(), IdentityPr
     Ok(())
 }
 
-// Side-by-side (sbs_) tests use the standard ldap profile with an explicit
-// inetOrgPerson/cn/mail config matching Python Keystone's LDAP defaults.
+// Explicit-config tests: an explicit inetOrgPerson/cn/mail attribute mapping
+// (the common Keystone LDAP layout) with `page_size = 1` to force pagination.
+// They assert against the seeded fixture only; they do not compare with
+// another Keystone implementation.
 
-/// Python Keystone-compatible config; page_size=1 forces pagination.
-fn sbs_config(url: &str) -> LdapProvider {
+/// Explicit inetOrgPerson/cn/mail config; page_size=1 forces pagination.
+fn explicit_config(url: &str) -> LdapProvider {
     LdapProvider {
         url: url.to_string(),
         user: Some(admin_dn()),
@@ -747,9 +749,10 @@ fn sbs_config(url: &str) -> LdapProvider {
 
 /// All fixture users returned despite page_size=1 (pagination transparent).
 #[tokio::test]
-async fn sbs_list_all_users_returns_full_seeded_set() -> Result<(), IdentityProviderError> {
+async fn test_explicit_config_list_users_paginated_returns_all_seeded()
+-> Result<(), IdentityProviderError> {
     let url = skip_unless_configured!();
-    let cfg = sbs_config(&url);
+    let cfg = explicit_config(&url);
     let backend = LdapBackend::new(&cfg)
         .await
         .map_err(|e| IdentityProviderError::LdapConnection(format!("failed to connect: {e}")))?;
@@ -761,16 +764,17 @@ async fn sbs_list_all_users_returns_full_seeded_set() -> Result<(), IdentityProv
         &params,
     )
     .await?;
-    let ids: Vec<&str> = users.iter().map(|u| u.id.as_str()).collect();
-    assert!(ids.contains(&"jdoe"));
-    assert!(ids.contains(&"bsmith"));
+    let mut ids: Vec<&str> = users.iter().map(|u| u.id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["bsmith", "disableduser", "jdoe"]);
     Ok(())
 }
 
 #[tokio::test]
-async fn sbs_filter_by_name_finds_exact_user() -> Result<(), IdentityProviderError> {
+async fn test_explicit_config_filter_by_name_finds_exact_user() -> Result<(), IdentityProviderError>
+{
     let url = skip_unless_configured!();
-    let cfg = sbs_config(&url);
+    let cfg = explicit_config(&url);
     let backend = LdapBackend::new(&cfg)
         .await
         .map_err(|e| IdentityProviderError::LdapConnection(format!("failed to connect: {e}")))?;
@@ -790,11 +794,11 @@ async fn sbs_filter_by_name_finds_exact_user() -> Result<(), IdentityProviderErr
     Ok(())
 }
 
-/// `cn` -> id/name, `mail` -> email: must match Python Keystone's attribute mapping.
+/// `cn` -> id/name, `mail` -> email with the explicit attribute mapping.
 #[tokio::test]
-async fn sbs_user_attributes_match_python_keystone_mapping() -> Result<(), IdentityProviderError> {
+async fn test_explicit_config_user_attributes_mapping() -> Result<(), IdentityProviderError> {
     let url = skip_unless_configured!();
-    let cfg = sbs_config(&url);
+    let cfg = explicit_config(&url);
     let backend = LdapBackend::new(&cfg)
         .await
         .map_err(|e| IdentityProviderError::LdapConnection(format!("failed to connect: {e}")))?;
