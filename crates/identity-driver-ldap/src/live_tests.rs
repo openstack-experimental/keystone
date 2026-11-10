@@ -493,9 +493,7 @@ async fn test_pagination_transparent_with_page_size_one() -> Result<(), Identity
     let backend = LdapBackend::new(&cfg)
         .await
         .map_err(|e| IdentityProviderError::LdapConnection(e.to_string()))?;
-    let params = UserListParametersBuilder::default()
-        .build()
-        .expect("valid params");
+    let params = UserListParametersBuilder::default().build()?;
     let users = user::list(
         &backend.service_pool,
         &backend.config,
@@ -631,7 +629,7 @@ async fn test_service_pool_under_concurrent_load() -> Result<(), IdentityProvide
         ),
     );
     for result in [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9] {
-        let found = result?.expect("jdoe must be found in every concurrent call");
+        let found = result?.ok_or_else(|| IdentityProviderError::UserNotFound("jdoe".into()))?;
         assert_eq!(found.id, "jdoe");
     }
     Ok(())
@@ -649,8 +647,7 @@ async fn test_auth_pool_under_concurrent_load() -> Result<(), IdentityProviderEr
     let req = UserPasswordAuthRequestBuilder::default()
         .id("jdoe")
         .password(SecretString::from("jdoepass"))
-        .build()
-        .expect("valid auth request");
+        .build()?;
     let (r0, r1, r2, r3, r4) = tokio::join!(
         authenticate::authenticate_by_password(
             &backend.service_pool,
@@ -689,7 +686,7 @@ async fn test_auth_pool_under_concurrent_load() -> Result<(), IdentityProviderEr
         ),
     );
     for result in [r0, r1, r2, r3, r4] {
-        let auth = result.expect("concurrent auth must succeed");
+        let auth = result?;
         match auth.principal.identity {
             openstack_keystone_core::auth::IdentityInfo::User(u) => {
                 assert_eq!(u.user_id, "jdoe");
@@ -756,7 +753,7 @@ async fn test_explicit_config_list_users_paginated_returns_all_seeded()
     let backend = LdapBackend::new(&cfg)
         .await
         .map_err(|e| IdentityProviderError::LdapConnection(format!("failed to connect: {e}")))?;
-    let params = UserListParametersBuilder::default().build().unwrap();
+    let params = UserListParametersBuilder::default().build()?;
     let users = user::list(
         &backend.service_pool,
         &backend.config,
@@ -780,8 +777,7 @@ async fn test_explicit_config_filter_by_name_finds_exact_user() -> Result<(), Id
         .map_err(|e| IdentityProviderError::LdapConnection(format!("failed to connect: {e}")))?;
     let params = UserListParametersBuilder::default()
         .name(Some("jdoe".to_string()))
-        .build()
-        .unwrap();
+        .build()?;
     let users = user::list(
         &backend.service_pool,
         &backend.config,
@@ -809,7 +805,7 @@ async fn test_explicit_config_user_attributes_mapping() -> Result<(), IdentityPr
         "jdoe",
     )
     .await?
-    .expect("jdoe must exist in the seeded fixture");
+    .ok_or_else(|| IdentityProviderError::UserNotFound("jdoe".into()))?;
     assert_eq!(user.id, "jdoe");
     assert_eq!(user.name, "jdoe");
     assert_eq!(

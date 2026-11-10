@@ -287,10 +287,11 @@ mod tests {
     }
 
     #[test]
-    fn test_group_list_filter_includes_configured_group_filter() {
+    fn test_group_list_filter_includes_configured_group_filter()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut c = cfg();
         c.group_filter = Some("(description=*admin*)".into());
-        let params = GroupListParametersBuilder::default().build().unwrap();
+        let params = GroupListParametersBuilder::default().build()?;
         match group_list_filter(&c, "default", &params) {
             ListDecision::Query(f) => {
                 assert_eq!(
@@ -300,14 +301,16 @@ mod tests {
             }
             ListDecision::EmptyResult => panic!("expected a query"),
         }
+
+        Ok(())
     }
 
     #[test]
-    fn test_user_list_filter_name_with_injection_chars_is_escaped() {
+    fn test_user_list_filter_name_with_injection_chars_is_escaped()
+    -> Result<(), Box<dyn std::error::Error>> {
         let params = UserListParametersBuilder::default()
             .name(Some("a*(b)\\".to_string()))
-            .build()
-            .unwrap();
+            .build()?;
         match user_list_filter(&cfg(), "default", &params) {
             ListDecision::Query(f) => assert_eq!(
                 f, "(&(objectClass=inetOrgPerson)(cn=*)(sn=a\\2a\\28b\\29\\5c))",
@@ -315,5 +318,6 @@ mod tests {
             ),
             ListDecision::EmptyResult => panic!("expected a query"),
         }
+        Ok(())
     }
 }
