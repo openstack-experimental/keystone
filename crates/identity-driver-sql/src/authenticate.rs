@@ -114,11 +114,6 @@ pub async fn authenticate_by_password(
             local_user_entry.user_id.clone(),
         ))?;
 
-    // Check if the user is disabled
-    if !user_entry.enabled.unwrap_or(false) {
-        return Err(AuthenticationError::UserDisabled(local_user_entry.user_id.clone()).into());
-    }
-
     let latest_password = password
         .as_ref()
         .ok_or(IdentityProviderError::NoPasswordsForUser(
@@ -141,6 +136,14 @@ pub async fn authenticate_by_password(
         local_user::log_failed_auth(db, &local_user_entry, now).await?;
         return Err(AuthenticationError::UserNameOrPasswordWrong.into());
     }
+
+    // Check if the user is disabled. Only after the password has been verified:
+    // answering earlier would let a caller without credentials learn that an
+    // account exists and is disabled (and skip the KDF cost, a timing signal).
+    if !user_entry.enabled.unwrap_or(false) {
+        return Err(AuthenticationError::UserDisabled(local_user_entry.user_id.clone()).into());
+    }
+
     // Check if expired password exempt is on
     if !user_opts.ignore_password_expiry.is_some_and(|val| val) {
         // otherwise check for expired password
@@ -798,6 +801,15 @@ mod tests {
     async fn test_authenticate_timing_consistency() {
         let config = Config::default();
         let iterations = 10;
+        // A real, valid hash of a different password, so the "wrong password"
+        // path runs a full KDF verification instead of failing to parse.
+        let real_hash = password_hashing::hash_password(&config, &SecretString::from("other"))
+            .await
+            .unwrap();
+        // Warm the dummy-hash cache: the cold-start cost is not what is measured.
+        password_hashing::warm_dummy_hash_cache(&config)
+            .await
+            .unwrap();
 
         // Measure "user not found" timing
         let mut not_found_total = std::time::Duration::ZERO;
@@ -826,7 +838,7 @@ mod tests {
                 .append_query_results([vec![get_local_user_mock("user_id")]])
                 .append_query_results([vec![
                     db_password::ModelBuilder::default()
-                        .password_hash("wrong_hash")
+                        .password_hash(real_hash.clone())
                         .build()
                         .unwrap(),
                 ]])
@@ -854,24 +866,66 @@ mod tests {
         let not_found_avg = not_found_total.as_secs_f64() / iterations as f64;
         let wrong_password_avg = wrong_password_total.as_secs_f64() / iterations as f64;
 
-        // The "user not found" path should take at least 70% of the time of the
-        // "wrong password" path. If it's significantly faster, an
-        // attacker could distinguish between the two paths.
+        // Both paths are dominated by one KDF verification, so the averages
+        // must be close. If "user not found" is significantly faster (or
+        // slower), an attacker could distinguish between the two paths.
         let ratio = if wrong_password_avg > 0.0 {
             not_found_avg / wrong_password_avg
         } else {
             0.0
         };
 
-        // Allow some variance (up to 150%) to account for system noise,
-        // but if the ratio is much less than 1, it indicates a leak.
+        // Allow some variance to account for system noise.
         assert!(
-            ratio >= 0.5,
+            (0.8..=1.25).contains(&ratio),
             "Timing leak detected: user_not_found avg {:.3}s, wrong_password avg {:.3}s (ratio {:.2}).",
             not_found_avg,
             wrong_password_avg,
             ratio
         );
+    }
+
+    /// A disabled user must not be reported as disabled before the password has
+    /// been verified.
+    #[tokio::test]
+    async fn test_authenticate_disabled_user_wrong_password_hides_state() {
+        let config = Config::default();
+        let hash = password_hashing::hash_password(&config, &SecretString::from("right"))
+            .await
+            .unwrap();
+        let mut disabled = get_user_mock("user_id");
+        disabled.enabled = Some(false);
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_local_user_mock("user_id")]])
+            .append_query_results([vec![
+                db_password::ModelBuilder::default()
+                    .password_hash(hash)
+                    .build()
+                    .unwrap(),
+            ]])
+            .append_query_results([user_option::tests::get_user_options_mock(
+                "user_id",
+                &UserOptions::default(),
+            )])
+            .append_query_results([vec![disabled]])
+            .append_query_results([vec![get_local_user_mock("user_id")]])
+            .into_connection();
+        match authenticate_by_password(
+            &config,
+            &db,
+            &UserPasswordAuthRequest {
+                id: Some("user_id".into()),
+                password: "wrong".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        {
+            Err(IdentityProviderError::Authentication {
+                source: AuthenticationError::UserNameOrPasswordWrong,
+            }) => {}
+            other => panic!("wrong password must win over disabled state: {other:?}"),
+        }
     }
 
     #[tokio::test]
