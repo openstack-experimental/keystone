@@ -518,7 +518,7 @@ impl ResourceApi for ResourceService {
         id: &'a str,
     ) -> Result<(), ResourceProviderError> {
         self.check_project_mutable(ctx, id, None).await?;
-        crate::audited_if_ctx! {
+        let result = crate::audited_if_ctx! {
             ctx: ctx,
             event: Event::new(
                 Operation::Delete,
@@ -551,8 +551,10 @@ impl ResourceApi for ResourceService {
                 deleted
             },
             on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
-        }?;
+        };
 
+        // The project row may be gone even when a cascade step failed: drop
+        // the cached entries before the result is returned.
         cache_remove(PROJECT_CACHE_NS, id);
 
         cache_remove(PROJECT_REF_CACHE_NS, id);
@@ -567,7 +569,7 @@ impl ResourceApi for ResourceService {
                 .await
                 .retain(|key, parents| key != id && !parents.iter().any(|parent| parent == id));
         }
-        Ok(())
+        result
     }
 
     /// Delete a single tag from a project.
@@ -2390,6 +2392,41 @@ mod tests {
             let ctx = ExecutionContext::internal(&state);
             provider.get_project(&ctx, "pid").await.unwrap();
             provider.delete_project(&ctx, "pid").await.unwrap();
+            provider.get_project(&ctx, "pid").await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_project_cascade_failure_still_invalidates_cache() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_delete_credentials_for_project()
+            .returning(|_, _| {
+                Err(
+                    openstack_keystone_core_types::credential::CredentialProviderError::Driver(
+                        "boom".into(),
+                    ),
+                )
+            });
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+        )
+        .await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project()
+            .times(2)
+            .returning(|_, _| Ok(Some(make_project("pid", "did"))));
+        backend.expect_delete_project().returning(|_, _| Ok(()));
+        let provider = ResourceService::with_backend(Arc::new(backend), false);
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            provider.get_project(&ctx, "pid").await.unwrap();
+            provider.delete_project(&ctx, "pid").await.unwrap_err();
+            // Served by the backend again, not by the stale cache.
             provider.get_project(&ctx, "pid").await.unwrap();
         })
         .await;

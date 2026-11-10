@@ -59,9 +59,13 @@ fn b64(s: &str) -> Vec<u8> {
 
 fn roundtrip(alg: Algorithm, enc: &EncodingKey, dec: &DecodingKey) {
     install().unwrap();
-    let token = encode(&Header::new(alg), &claims(), enc).unwrap();
+    // Build the claims once: `exp` is derived from the clock in whole
+    // seconds, so a second `claims()` call could cross a second boundary and
+    // differ from the signed one.
+    let expected = claims();
+    let token = encode(&Header::new(alg), &expected, enc).unwrap();
     let decoded = decode::<Claims>(&token, dec, &Validation::new(alg)).unwrap();
-    assert_eq!(decoded.claims, claims());
+    assert_eq!(decoded.claims, expected);
 }
 
 fn ec_keys(signing: &'static ring::signature::EcdsaSigningAlgorithm) -> (Vec<u8>, Vec<u8>) {

@@ -592,6 +592,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
                 EventPayload::ApplicationCredentialSet {
                     user_id: Some(user_id.to_string()),
                     project_id: None,
+                    role_id: None,
                 },
             ),
             operation: op,
@@ -618,6 +619,34 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
                 EventPayload::ApplicationCredentialSet {
                     user_id: None,
                     project_id: Some(project_id.to_string()),
+                    role_id: None,
+                },
+            ),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| ApplicationCredentialProviderError::Driver("audit dispatch failed".into()),
+        }
+    }
+
+    /// Delete all application credentials granting a role.
+    #[tracing::instrument(name = "provider.application_credential.delete_application_credentials_for_role", level = "debug", skip_all, fields(role_id = %role_id))]
+    async fn delete_application_credentials_for_role<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        role_id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError> {
+        let op = async {
+            self.backend_driver
+                .delete_application_credentials_for_role(ctx.state(), role_id)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Delete,
+                EventPayload::ApplicationCredentialSet {
+                    user_id: None,
+                    project_id: None,
+                    role_id: Some(role_id.to_string()),
                 },
             ),
             operation: op,

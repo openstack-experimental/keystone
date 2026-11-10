@@ -1195,7 +1195,7 @@ impl IdentityApi for IdentityService {
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
         let (backend_driver, local_id) = self.resolve_public_id(ctx, group_id).await?;
-        crate::audited_if_ctx! {
+        let result = crate::audited_if_ctx! {
             ctx: ctx,
             event: Event::new(
                 Operation::Delete,
@@ -1231,12 +1231,17 @@ impl IdentityApi for IdentityService {
                 deleted
             },
             on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
-        }?;
+        };
 
+        // The group row may be gone even when a cascade step failed: drop the
+        // cached entry before the result is returned.
+        cache_remove(GROUP_CACHE_NS, group_id);
+        result?;
+        // The id mapping stays until the delete succeeded: a retry needs it to
+        // find the backend of the group.
         if !Arc::ptr_eq(&backend_driver, &self.backend_driver) {
             self.forget_id_mapping(ctx, group_id).await?;
         }
-        cache_remove(GROUP_CACHE_NS, group_id);
         Ok(())
     }
 
@@ -1252,7 +1257,7 @@ impl IdentityApi for IdentityService {
         user_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
         let (backend_driver, local_id) = self.resolve_public_id(ctx, user_id).await?;
-        crate::audited_if_ctx! {
+        let result = crate::audited_if_ctx! {
             ctx: ctx,
             event: Event::new(
                 Operation::Delete,
@@ -1297,13 +1302,18 @@ impl IdentityApi for IdentityService {
                 deleted
             },
             on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
-        }?;
+        };
 
+        // The user row may be gone even when a cascade step failed: drop the
+        // cached entries before the result is returned.
+        cache_remove(USER_CACHE_NS, user_id);
+        cache_remove(USER_CORE_CACHE_NS, user_id);
+        result?;
+        // The id mapping stays until the delete succeeded: a retry needs it to
+        // find the backend of the user.
         if !Arc::ptr_eq(&backend_driver, &self.backend_driver) {
             self.forget_id_mapping(ctx, user_id).await?;
         }
-        cache_remove(USER_CACHE_NS, user_id);
-        cache_remove(USER_CORE_CACHE_NS, user_id);
         Ok(())
     }
 

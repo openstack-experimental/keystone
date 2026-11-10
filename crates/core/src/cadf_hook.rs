@@ -81,10 +81,12 @@ fn build_target_from_event(event: &Event) -> Target {
         EventPayload::ApplicationCredentialSet {
             user_id,
             project_id,
+            role_id,
         } => (
             user_id
                 .as_deref()
                 .or(project_id.as_deref())
+                .or(role_id.as_deref())
                 .unwrap_or(UNKNOWN_TARGET_ID),
             "data/security/identity/application-credential",
         ),
@@ -546,6 +548,36 @@ mod tests {
         }
         // Counting a lost outcome is `audited_op!`'s job, not the hook's.
         assert_eq!(dispatcher.postaudit_dropped_count(), 0);
+    }
+
+    #[test]
+    fn application_credential_set_target_falls_back_to_role() {
+        const ROLE: &str = "0123456789abcdef0123456789abcdef";
+        const USER: &str = "fedcba9876543210fedcba9876543210";
+        let target = build_target_from_event(&Event::new(
+            Operation::Delete,
+            EventPayload::ApplicationCredentialSet {
+                user_id: None,
+                project_id: None,
+                role_id: Some(ROLE.into()),
+            },
+        ));
+        assert_eq!(target.id(), ROLE);
+        assert_eq!(
+            target.type_uri(),
+            "data/security/identity/application-credential"
+        );
+
+        // A user or project keeps precedence.
+        let target = build_target_from_event(&Event::new(
+            Operation::Delete,
+            EventPayload::ApplicationCredentialSet {
+                user_id: Some(USER.into()),
+                project_id: None,
+                role_id: Some(ROLE.into()),
+            },
+        ));
+        assert_eq!(target.id(), USER);
     }
 
     #[test]

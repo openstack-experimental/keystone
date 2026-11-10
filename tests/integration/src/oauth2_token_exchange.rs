@@ -103,6 +103,10 @@ async fn mint_app_cred_subject_token(
         openstack_keystone_core_types::resource::Project,
         openstack_keystone::keystone::ServiceState,
     >,
+    crate::common::AsyncResourceGuard<
+        openstack_keystone_core_types::role::Role,
+        openstack_keystone::keystone::ServiceState,
+    >,
 )> {
     let project = create_project!(state, domain_id.to_string())?;
     let user = create_user!(state, domain_id.to_string())?;
@@ -168,7 +172,9 @@ async fn mint_app_cred_subject_token(
         .provider
         .get_token_provider()
         .encode_token(vsc.inner().token().unwrap())?;
-    Ok((encoded, user, project))
+    // The role guard goes back to the caller: deleting the role revokes
+    // its assignments, which must not happen before the token is used.
+    Ok((encoded, user, project, role))
 }
 
 #[tokio::test]
@@ -178,7 +184,7 @@ async fn test_token_exchange_full_flow_issues_app_cred_delegated_claims() -> Res
     let domain = create_domain!(state)?;
     let client = provision_token_exchange_client(&state, &domain.id).await?;
     let app_cred_expires_at = chrono::Utc::now() + chrono::Duration::hours(1);
-    let (subject_token, _user_guard, _project_guard) =
+    let (subject_token, _user_guard, _project_guard, _role_guard) =
         mint_app_cred_subject_token(&state, &domain.id, app_cred_expires_at).await?;
 
     let (vsc, delegation, credential_expiration) =
@@ -209,7 +215,7 @@ async fn test_token_exchange_caps_expiry_at_short_lived_app_credential() -> Resu
     let domain = create_domain!(state)?;
     let client = provision_token_exchange_client(&state, &domain.id).await?;
     let app_cred_expires_at = chrono::Utc::now() + chrono::Duration::minutes(5);
-    let (subject_token, _user_guard, _project_guard) =
+    let (subject_token, _user_guard, _project_guard, _role_guard) =
         mint_app_cred_subject_token(&state, &domain.id, app_cred_expires_at).await?;
 
     let (vsc, delegation, credential_expiration) =
@@ -246,7 +252,7 @@ async fn test_token_exchange_rejects_cross_domain_subject_token() -> Result<()> 
     let domain_b = create_domain!(state)?;
     let client_b = provision_token_exchange_client(&state, &domain_b.id).await?;
     let app_cred_expires_at = chrono::Utc::now() + chrono::Duration::hours(1);
-    let (subject_token_a, _user_guard, _project_guard) =
+    let (subject_token_a, _user_guard, _project_guard, _role_guard) =
         mint_app_cred_subject_token(&state, &domain_a.id, app_cred_expires_at).await?;
 
     let (vsc, delegation, credential_expiration) =

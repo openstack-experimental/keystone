@@ -843,6 +843,51 @@ impl AssignmentApi for AssignmentService {
         Ok(())
     }
 
+    /// Revoke every assignment of the role.
+    ///
+    /// The role is listed on every backend of the fan-out set. A backend that
+    /// cannot enumerate grants by role (OpenFGA) is skipped with a warning:
+    /// failing on it would make the role undeletable, and the leftovers are
+    /// for the orphan sweep to report.
+    #[tracing::instrument(name = "provider.assignment.delete_assignments_for_role", level = "debug", skip_all, fields(role_id = %role_id))]
+    async fn delete_assignments_for_role<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        role_id: &'a str,
+    ) -> Result<(), AssignmentProviderError> {
+        let bundle = self.bundle.load_full();
+        let params = RoleAssignmentListParameters {
+            role_id: Some(role_id.to_string()),
+            ..Default::default()
+        };
+        let mut seen: HashSet<Assignment> = HashSet::new();
+        let mut assignments: Vec<Assignment> = Vec::new();
+        for backend in &bundle.fanout {
+            match backend.list_assignments(ctx.state(), &params).await {
+                Ok(found) => {
+                    for assignment in found.into_iter().filter(|x| x.role_id == role_id) {
+                        if seen.insert(assignment.clone()) {
+                            assignments.push(assignment);
+                        }
+                    }
+                }
+                Err(AssignmentProviderError::NotImplemented(reason)) => {
+                    tracing::warn!(
+                        role_id,
+                        reason,
+                        "assignment backend cannot list grants by role; its grants of the \
+                         deleted role are left behind"
+                    );
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        for assignment in assignments {
+            self.revoke_grant(ctx, assignment).await?;
+        }
+        Ok(())
+    }
+
     /// Revoke every role assignment on the domain.
     #[tracing::instrument(name = "provider.assignment.delete_assignments_for_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn delete_assignments_for_domain<'a>(

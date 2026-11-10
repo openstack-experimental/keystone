@@ -243,6 +243,10 @@ impl From<RoleProviderError> for KeystoneApiError {
             ref err @ RoleProviderError::Conflict(..) => Self::Conflict(err.to_string()),
             ref err @ RoleProviderError::Validation { .. } => Self::BadRequest(err.to_string()),
             err @ RoleProviderError::Immutable(..) => Self::forbidden(err),
+            // A cascade of the role deletion failed: keep the classification
+            // of the inner error (409, 501, ...).
+            RoleProviderError::AssignmentProvider { source } => (*source).into(),
+            RoleProviderError::ApplicationCredentialProvider { source } => (*source).into(),
             other => Self::InternalError(other.to_string()),
         }
     }

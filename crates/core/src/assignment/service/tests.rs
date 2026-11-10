@@ -636,3 +636,86 @@ async fn test_create_grant_unrelated_conflict_is_reported() {
         .await;
     assert!(matches!(res, Err(AssignmentProviderError::Conflict(_))));
 }
+
+fn role_grant(actor: &str, target: &str, role: &str, inherited: bool) -> Assignment {
+    AssignmentBuilder::default()
+        .actor_id(actor)
+        .role_id(role)
+        .target_id(target)
+        .r#type(AssignmentType::UserProject)
+        .inherited(inherited)
+        .build()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn test_delete_assignments_for_role_lists_once_and_revokes_each_grant() {
+    let mut revoke_mock = MockRevokeProvider::default();
+    revoke_mock
+        .expect_create_revocation_event()
+        .times(2)
+        .returning(|_, _| Ok(RevocationEvent::default()));
+    let state = get_mocked_state(
+        None,
+        Some(Provider::mocked_builder().mock_revoke(revoke_mock)),
+    )
+    .await;
+    let mut backend = MockAssignmentBackend::default();
+    backend
+        .expect_list_assignments()
+        .times(1)
+        .withf(|_, params: &RoleAssignmentListParameters| {
+            params.role_id.as_deref() == Some("rid") && params.inherited.is_none()
+        })
+        .returning(|_, _| {
+            Ok(vec![
+                role_grant("u1", "p1", "rid", false),
+                role_grant("u2", "p2", "rid", true),
+                // Not the role: filtered out.
+                role_grant("u3", "p3", "other", false),
+            ])
+        });
+    backend
+        .expect_revoke_grant()
+        .times(2)
+        .withf(|_, grant: &Assignment| grant.role_id == "rid")
+        .returning(|_, _| Ok(()));
+    let provider = AssignmentService::from_backend(Arc::new(backend));
+
+    provider
+        .delete_assignments_for_role(&ExecutionContext::internal(&state), "rid")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_delete_assignments_for_role_skips_a_backend_that_cannot_list_by_role() {
+    let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+    let mut backend = MockAssignmentBackend::default();
+    backend
+        .expect_list_assignments()
+        .returning(|_, _| Err(AssignmentProviderError::NotImplemented("by role".into())));
+    backend.expect_revoke_grant().never();
+    let provider = AssignmentService::from_backend(Arc::new(backend));
+
+    provider
+        .delete_assignments_for_role(&ExecutionContext::internal(&state), "rid")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_delete_assignments_for_role_propagates_a_backend_error() {
+    let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+    let mut backend = MockAssignmentBackend::default();
+    backend
+        .expect_list_assignments()
+        .returning(|_, _| Err(AssignmentProviderError::Driver("boom".into())));
+    let provider = AssignmentService::from_backend(Arc::new(backend));
+
+    let err = provider
+        .delete_assignments_for_role(&ExecutionContext::internal(&state), "rid")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AssignmentProviderError::Driver(_)));
+}

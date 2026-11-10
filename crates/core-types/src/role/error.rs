@@ -14,9 +14,28 @@
 //! # Role provider error types
 use thiserror::Error;
 
+use crate::application_credential::ApplicationCredentialProviderError;
+use crate::assignment::AssignmentProviderError;
+
 /// Role provider error.
 #[derive(Error, Debug)]
 pub enum RoleProviderError {
+    /// Application credential provider error, surfaced when a role deletion
+    /// cascades into the removal of the credentials granting the role.
+    #[error(transparent)]
+    ApplicationCredentialProvider {
+        /// The source error.
+        source: Box<ApplicationCredentialProviderError>,
+    },
+
+    /// Assignment provider error, surfaced when a role deletion cascades
+    /// into the revocation of the assignments of the role.
+    #[error(transparent)]
+    AssignmentProvider {
+        /// The source error.
+        source: Box<AssignmentProviderError>,
+    },
+
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
@@ -66,4 +85,20 @@ pub enum RoleProviderError {
         #[from]
         source: validator::ValidationErrors,
     },
+}
+
+impl From<AssignmentProviderError> for RoleProviderError {
+    fn from(source: AssignmentProviderError) -> Self {
+        Self::AssignmentProvider {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<ApplicationCredentialProviderError> for RoleProviderError {
+    fn from(source: ApplicationCredentialProviderError) -> Self {
+        Self::ApplicationCredentialProvider {
+            source: Box::new(source),
+        }
+    }
 }
