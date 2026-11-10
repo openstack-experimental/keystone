@@ -283,25 +283,39 @@ async fn cleanup(cancel: CancellationToken, state: ServiceState) {
     }
 }
 
-/// Clear the dummy-password-hash cache on every configuration reload.
+/// Re-warm the dummy-password-hash cache.
+///
+/// Computes a dummy hash for the current configuration and swaps it in for
+/// all cached entries, so the first authentication of a non-existent user
+/// never pays for hash generation (a timing side channel).
+async fn warm_dummy_hash(state: &ServiceState) {
+    let config = state.config_manager.config.read().await;
+    if let Err(err) = openstack_keystone_password_hashing::warm_dummy_hash_cache(&config).await {
+        // Not fatal: the cache falls back to lazy initialization.
+        warn!(%err, "Failed to warm the dummy-hash cache");
+    }
+}
+
+/// Warm the dummy-password-hash cache at startup and on every configuration
+/// reload.
 ///
 /// Subscribes to `ConfigManager::notify_tx`. On every notification (or a
-/// lagged receiver) we drop all cached `(algorithm, rounds)` dummy hashes so
-/// the next authentication of a non-existent user recomputes one matching
-/// the new configuration — always safe.
+/// lagged receiver) the cached `(algorithm, rounds)` dummy hashes are
+/// replaced by one matching the new configuration.
 async fn reset_dummy_hash_on_reload(cancel: CancellationToken, state: ServiceState) {
     let mut reload_rx = state.config_manager.notify_tx.subscribe();
+    warm_dummy_hash(&state).await;
     loop {
         tokio::select! {
             recv = reload_rx.recv() => {
                 match recv {
                     Ok(()) => {
-                        debug!("Configuration reloaded; clearing dummy-hash cache");
-                        openstack_keystone_password_hashing::reset_dummy_hash_cache().await;
+                        debug!("Configuration reloaded; warming dummy-hash cache");
+                        warm_dummy_hash(&state).await;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        warn!(skipped, "Lagged behind config reloads; clearing dummy-hash cache");
-                        openstack_keystone_password_hashing::reset_dummy_hash_cache().await;
+                        warn!(skipped, "Lagged behind config reloads; warming dummy-hash cache");
+                        warm_dummy_hash(&state).await;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }

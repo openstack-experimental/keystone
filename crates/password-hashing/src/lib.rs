@@ -202,13 +202,22 @@ fn get_dummy_cache() -> &'static DynamicDummyCache {
 // unaffected.
 // ---------------------------------------------------------------------------
 
+/// Cache key covering every setting that changes the cost of a hash.
+///
+/// The raw `password_hash_rounds` option is used (not a per-algorithm default
+/// substituted here) so `None` and an explicit value never share a key, even
+/// when the algorithms' own defaults differ (bcrypt 12, pbkdf2 25000).
+fn dummy_cache_key(conf: &Config) -> String {
+    format!(
+        "{:?}-{:?}",
+        conf.identity.password_hashing_algorithm, conf.identity.password_hash_rounds
+    )
+}
+
 /// Gets a cached dummy hash matching the precise parameters of the current
 /// configuration profile, preventing timing side-channel variations.
 pub async fn get_or_init_dummy_hash(conf: &Config) -> Result<String, PasswordHashError> {
-    let algo = &conf.identity.password_hashing_algorithm;
-    let rounds = conf.identity.password_hash_rounds.unwrap_or(12);
-    let cache_key = format!("{:?}-{}", algo, rounds);
-
+    let cache_key = dummy_cache_key(conf);
     let cache = get_dummy_cache();
 
     // Fast path: read lock only.
@@ -231,6 +240,20 @@ pub async fn get_or_init_dummy_hash(conf: &Config) -> Result<String, PasswordHas
     write_guard.insert(cache_key, new_hash.clone());
 
     Ok(new_hash)
+}
+
+/// Replace the cached dummy hashes with one matching `conf`.
+///
+/// The new hash is computed *before* the cache is touched and then swapped in
+/// atomically, so there is no window in which an unknown-user request finds a
+/// cold cache and pays for hash generation on top of verification (a timing
+/// signal). Call at startup and on every configuration reload.
+pub async fn warm_dummy_hash_cache(conf: &Config) -> Result<(), PasswordHashError> {
+    let new_hash = generate_dummy_hash(conf).await?;
+    let mut write_guard = get_dummy_cache().map.write().await;
+    write_guard.clear();
+    write_guard.insert(dummy_cache_key(conf), new_hash);
+    Ok(())
 }
 
 /// Clear all cached dummy hashes.
@@ -509,10 +532,10 @@ mod tests {
         // compute and overwrite it with a different value.
         //
         // Uses password_hash_rounds=4 (bcrypt minimum) to build a cache key
-        // ("Bcrypt-4") that no other test in this module uses, ensuring the
+        // ("Bcrypt-Some(4)") that no other test in this module uses, ensuring the
         // cache is genuinely cold regardless of test execution order.
         let mut conf = mock_config(PasswordHashingAlgo::Bcrypt, 255);
-        conf.identity.password_hash_rounds = Some(4); // unique key: "Bcrypt-4"
+        conf.identity.password_hash_rounds = Some(4); // unique key: "Bcrypt-Some(4)"
         let conf = std::sync::Arc::new(conf);
 
         let mut handles = Vec::new();
@@ -532,6 +555,36 @@ mod tests {
         assert!(
             results.iter().all(|hash| hash == first),
             "Concurrent cold-start callers must all observe the same cached dummy hash"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dummy_cache_key_distinguishes_default_rounds() {
+        let mut conf = mock_config(PasswordHashingAlgo::Pbkdf2Sha512, 255);
+        conf.identity.password_hash_rounds = None;
+        let default_key = dummy_cache_key(&conf);
+        conf.identity.password_hash_rounds = Some(12);
+        assert_ne!(
+            default_key,
+            dummy_cache_key(&conf),
+            "unset rounds (pbkdf2 default 25000) must not share a key with Some(12)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_warm_dummy_hash_cache_replaces_entries() {
+        let mut conf = mock_config(PasswordHashingAlgo::Bcrypt, 255);
+        conf.identity.password_hash_rounds = Some(5); // unique key
+        warm_dummy_hash_cache(&conf).await.unwrap();
+        let warmed = get_or_init_dummy_hash(&conf).await.unwrap();
+        assert!(
+            warmed.starts_with("$2b$05$"),
+            "warmed hash uses the configured cost"
+        );
+        assert_eq!(
+            warmed,
+            get_or_init_dummy_hash(&conf).await.unwrap(),
+            "get after warm must serve the warmed entry"
         );
     }
 
