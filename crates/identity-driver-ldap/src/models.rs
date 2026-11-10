@@ -102,11 +102,19 @@ pub fn to_user_response(
     let name = single_value(&lower_attrs, &cfg.user_name_attribute).unwrap_or_else(|| id.clone());
     let enabled_raw = single_value(&lower_attrs, &cfg.user_enabled_attribute);
     let enabled = enabled_from_attribute(cfg, enabled_raw.as_deref());
-    let extra = build_extra(
-        &lower_attrs,
-        &cfg.user_additional_attribute_mapping,
-        &cfg.user_pass_attribute,
+    // LDAP attribute names are case-insensitive: normalize keys before merging
+    // so an operator override replaces the default `mail -> email` entry
+    // regardless of key case.
+    let mut mapping = HashMap::from([(
+        cfg.user_mail_attribute.to_ascii_lowercase(),
+        "email".to_string(),
+    )]);
+    mapping.extend(
+        cfg.user_additional_attribute_mapping
+            .iter()
+            .map(|(k, v)| (k.to_ascii_lowercase(), v.clone())),
     );
+    let extra = build_extra(&lower_attrs, &mapping, &cfg.user_pass_attribute);
 
     Ok(UserResponse {
         default_project_id: None,
@@ -178,52 +186,114 @@ mod tests {
     }
 
     #[test]
-    fn test_to_user_response_basic_mapping() {
+    fn test_to_user_response_basic_mapping() -> Result<(), IdentityProviderError> {
         let cfg = LdapProvider::default();
         let e = entry(
             "cn=jdoe,ou=Users,dc=example,dc=com",
             &[("cn", &["jdoe"]), ("sn", &["Doe"]), ("enabled", &["TRUE"])],
         );
-        let user = to_user_response(&cfg, "default", &e).unwrap();
+        let user = to_user_response(&cfg, "default", &e)?;
         assert_eq!(user.id, "jdoe");
         assert_eq!(user.name, "Doe");
         assert_eq!(user.domain_id, "default");
         assert!(user.enabled);
+        Ok(())
     }
 
     #[test]
-    fn test_to_user_response_case_insensitive_attribute_matching() {
+    fn test_to_user_response_case_insensitive_attribute_matching()
+    -> Result<(), IdentityProviderError> {
         let cfg = LdapProvider::default();
         let e = entry(
             "cn=jdoe,ou=Users,dc=example,dc=com",
             &[("CN", &["jdoe"]), ("SN", &["Doe"])],
         );
-        let user = to_user_response(&cfg, "default", &e).unwrap();
+        let user = to_user_response(&cfg, "default", &e)?;
         assert_eq!(user.id, "jdoe");
         assert_eq!(user.name, "Doe");
+        Ok(())
     }
 
     #[test]
-    fn test_to_user_response_falls_back_to_dn_when_id_attribute_missing() {
+    fn test_to_user_response_falls_back_to_dn_when_id_attribute_missing()
+    -> Result<(), IdentityProviderError> {
         let cfg = LdapProvider::default();
         let e = entry("cn=jdoe,ou=Users,dc=example,dc=com", &[("sn", &["Doe"])]);
-        let user = to_user_response(&cfg, "default", &e).unwrap();
+        let user = to_user_response(&cfg, "default", &e)?;
         assert_eq!(user.id, "cn=jdoe,ou=Users,dc=example,dc=com");
+        Ok(())
     }
 
     #[test]
-    fn test_to_user_response_falls_back_to_dn_when_id_attribute_multivalued() {
+    fn test_to_user_response_falls_back_to_dn_when_id_attribute_multivalued()
+    -> Result<(), IdentityProviderError> {
         let cfg = LdapProvider::default();
         let e = entry(
             "cn=jdoe,ou=Users,dc=example,dc=com",
             &[("cn", &["jdoe", "john"])],
         );
-        let user = to_user_response(&cfg, "default", &e).unwrap();
+        let user = to_user_response(&cfg, "default", &e)?;
         assert_eq!(user.id, "cn=jdoe,ou=Users,dc=example,dc=com");
+        Ok(())
     }
 
     #[test]
-    fn test_to_user_response_additional_attribute_mapping() {
+    fn test_to_user_response_mail_attribute_mapped_to_email_by_default()
+    -> Result<(), IdentityProviderError> {
+        let cfg = LdapProvider::default();
+        let e = entry(
+            "cn=jdoe,ou=Users,dc=example,dc=com",
+            &[("cn", &["jdoe"]), ("mail", &["jdoe@example.com"])],
+        );
+        let user = to_user_response(&cfg, "default", &e)?;
+        assert_eq!(
+            user.extra.get("email"),
+            Some(&Value::String("jdoe@example.com".into()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_user_response_additional_mapping_overrides_mail_default()
+    -> Result<(), IdentityProviderError> {
+        let mut cfg = LdapProvider::default();
+        // operator remaps mail → "contact_email" instead of the default "email"
+        cfg.user_additional_attribute_mapping
+            .insert("mail".into(), "contact_email".into());
+        let e = entry(
+            "cn=jdoe,ou=Users,dc=example,dc=com",
+            &[("cn", &["jdoe"]), ("mail", &["jdoe@example.com"])],
+        );
+        let user = to_user_response(&cfg, "default", &e)?;
+        assert_eq!(
+            user.extra.get("contact_email"),
+            Some(&Value::String("jdoe@example.com".into()))
+        );
+        assert!(!user.extra.contains_key("email"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_user_response_mail_override_is_case_insensitive() -> Result<(), IdentityProviderError>
+    {
+        let mut cfg = LdapProvider::default();
+        cfg.user_additional_attribute_mapping
+            .insert("Mail".into(), "contact_email".into());
+        let e = entry(
+            "cn=jdoe,ou=Users,dc=example,dc=com",
+            &[("cn", &["jdoe"]), ("mail", &["jdoe@example.com"])],
+        );
+        let user = to_user_response(&cfg, "default", &e)?;
+        assert_eq!(
+            user.extra.get("contact_email"),
+            Some(&Value::String("jdoe@example.com".into()))
+        );
+        assert!(!user.extra.contains_key("email"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_to_user_response_additional_attribute_mapping() -> Result<(), IdentityProviderError> {
         let mut cfg = LdapProvider::default();
         cfg.user_additional_attribute_mapping
             .insert("mail".into(), "email".into());
@@ -231,15 +301,17 @@ mod tests {
             "cn=jdoe,ou=Users,dc=example,dc=com",
             &[("cn", &["jdoe"]), ("mail", &["jdoe@example.com"])],
         );
-        let user = to_user_response(&cfg, "default", &e).unwrap();
+        let user = to_user_response(&cfg, "default", &e)?;
         assert_eq!(
             user.extra.get("email"),
             Some(&Value::String("jdoe@example.com".into()))
         );
+        Ok(())
     }
 
     #[test]
-    fn test_to_user_response_never_exposes_dn_or_password_even_if_mapped() {
+    fn test_to_user_response_never_exposes_dn_or_password_even_if_mapped()
+    -> Result<(), IdentityProviderError> {
         let mut cfg = LdapProvider::default();
         cfg.user_additional_attribute_mapping
             .insert("userpassword".into(), "password".into());
@@ -249,13 +321,14 @@ mod tests {
             "cn=jdoe,ou=Users,dc=example,dc=com",
             &[("cn", &["jdoe"]), ("userpassword", &["{SSHA}notarealhash"])],
         );
-        let user = to_user_response(&cfg, "default", &e).unwrap();
+        let user = to_user_response(&cfg, "default", &e)?;
         assert!(!user.extra.contains_key("password"));
         assert!(!user.extra.contains_key("distinguished_name"));
+        Ok(())
     }
 
     #[test]
-    fn test_to_group_basic_mapping() {
+    fn test_to_group_basic_mapping() -> Result<(), IdentityProviderError> {
         let cfg = LdapProvider::default();
         let e = entry(
             "cn=admins,ou=Groups,dc=example,dc=com",
@@ -265,10 +338,11 @@ mod tests {
                 ("description", &["Admin group"]),
             ],
         );
-        let group = to_group(&cfg, "default", &e).unwrap();
+        let group = to_group(&cfg, "default", &e)?;
         assert_eq!(group.id, "admins");
         assert_eq!(group.name, "Admins");
         assert_eq!(group.domain_id, "default");
         assert_eq!(group.description, Some("Admin group".to_string()));
+        Ok(())
     }
 }
