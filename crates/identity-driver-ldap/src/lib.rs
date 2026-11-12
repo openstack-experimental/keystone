@@ -165,6 +165,7 @@ impl IdentityBackend for LdapBackend {
         _user_id: &'a str,
         _group_id: &'a str,
         _idp_id: &'a str,
+        _last_verified: Option<&'a DateTime<Utc>>,
     ) -> Result<(), IdentityProviderError> {
         Err(not_implemented("expiring group membership"))
     }
@@ -188,6 +189,7 @@ impl IdentityBackend for LdapBackend {
         _state: &ServiceState,
         _memberships: Vec<(&'a str, &'a str)>,
         _idp_id: &'a str,
+        _last_verified: Option<&'a DateTime<Utc>>,
     ) -> Result<(), IdentityProviderError> {
         Err(not_implemented("expiring group membership"))
     }

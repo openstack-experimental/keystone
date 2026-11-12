@@ -1405,6 +1405,7 @@ mod identity {
                 user_id: &'a str,
                 group_id: &'a str,
                 idp_id: &'a str,
+                last_verified: Option<&'a DateTime<Utc>>,
             ) -> Result<(), IdentityProviderError>;
 
             async fn add_users_to_groups<'a>(
@@ -1418,6 +1419,7 @@ mod identity {
                 ctx: &ExecutionContext<'a>,
                 memberships: Vec<(&'a str, &'a str)>,
                 idp_id: &'a str,
+                last_verified: Option<&'a DateTime<Utc>>,
             ) -> Result<(), IdentityProviderError>;
 
             async fn authenticate_by_password<'a>(

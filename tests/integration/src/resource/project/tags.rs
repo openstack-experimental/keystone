@@ -14,7 +14,6 @@
 //! Test project tags.
 
 use eyre::Result;
-use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 use tracing_test::traced_test;
 
 use openstack_keystone_core::auth::ExecutionContext;
@@ -360,22 +359,11 @@ async fn test_tags_removed_with_project() -> Result<()> {
         .await?;
     provider.delete_project(&ctx, &project.id).await?;
 
-    let db = state.db.connection();
-    let backend = db.get_database_backend();
-    // MySQL uses `?` placeholders, Postgres and SQLite accept `$1`.
-    let sql = match backend {
-        DatabaseBackend::MySql => "SELECT COUNT(*) AS cnt FROM project_tag WHERE project_id = ?",
-        _ => "SELECT COUNT(*) AS cnt FROM project_tag WHERE project_id = $1",
-    };
-    let row = db
-        .query_one_raw(Statement::from_sql_and_values(
-            backend,
-            sql,
-            [project.id.clone().into()],
-        ))
-        .await?
-        .expect("count row");
-    assert_eq!(row.try_get::<i64>("", "cnt")?, 0);
+    assert!(provider.get_project(&ctx, &project.id).await?.is_none());
+    assert!(matches!(
+        provider.list_project_tags(&ctx, &project.id).await,
+        Err(ResourceProviderError::ProjectNotFound(_))
+    ));
 
     Ok(())
 }

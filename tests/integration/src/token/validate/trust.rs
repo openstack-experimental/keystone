@@ -14,17 +14,15 @@
 //
 
 use eyre::Report;
-use sea_orm::{DbConn, entity::*};
 use std::sync::Arc;
 use tracing_test::traced_test;
-
-use openstack_keystone_trust_driver_sql::entity::{trust as db_trust, trust_role as db_trust_role};
 
 use openstack_keystone::keystone::Service;
 use openstack_keystone::token::{FernetToken, TokenProviderError};
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::*;
+use openstack_keystone_core_types::role::RoleRefBuilder;
 use openstack_keystone_core_types::trust::*;
 
 use super::grant_role_to_user_on_project;
@@ -33,41 +31,34 @@ use crate::common::get_state;
 use crate::token::validate::revoke_role_from_user_on_project;
 use crate::{create_domain, create_project, create_role, create_user};
 
+/// Create a trust through the trust provider.
 async fn create_trust<S: Into<String>>(
-    db: &DbConn,
+    state: &Arc<Service>,
     trust_id: S,
     trustor_id: S,
     trustee_id: S,
     project_id: S,
     role_ids: Vec<S>,
-) -> Result<(), Report> {
-    let trust_id = trust_id.into();
-    db_trust::ActiveModel {
-        id: Set(trust_id.clone()),
-        trustor_user_id: Set(trustor_id.into()),
-        trustee_user_id: Set(trustee_id.into()),
-        project_id: Set(Some(project_id.into())),
-        impersonation: Set(false),
-        deleted_at: NotSet,
-        expires_at: NotSet,
-        remaining_uses: NotSet,
-        extra: Set(Some("{}".into())),
-        expires_at_int: NotSet,
-        redelegated_trust_id: NotSet,
-        redelegation_count: NotSet,
-    }
-    .insert(db)
-    .await?;
-    for role_id in role_ids {
-        db_trust_role::ActiveModel {
-            trust_id: Set(trust_id.clone()),
-            role_id: Set(role_id.into()),
-        }
-        .insert(db)
-        .await?;
-    }
-
-    Ok(())
+) -> Result<Trust, Report> {
+    Ok(state
+        .provider
+        .get_trust_provider()
+        .create_trust(
+            &ExecutionContext::internal(state),
+            TrustCreateBuilder::default()
+                .id(trust_id.into())
+                .trustor_user_id(trustor_id.into())
+                .trustee_user_id(trustee_id.into())
+                .project_id(project_id.into())
+                .roles(
+                    role_ids
+                        .into_iter()
+                        .map(|id| RoleRefBuilder::default().id(id.into()).build())
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+                .build()?,
+        )
+        .await?)
 }
 
 async fn get_trust<U: AsRef<str>>(state: &Arc<Service>, id: U) -> Result<Option<Trust>, Report> {
@@ -91,7 +82,7 @@ async fn test_valid() -> Result<(), Report> {
     grant_role_to_user_on_project(&state, &user_a.id, &project.id, &role_a.id).await?;
 
     create_trust(
-        &state.db.connection(),
+        &state,
         "trust_a".to_string(),
         user_a.id.clone(),
         user_b.id.clone(),
@@ -209,7 +200,7 @@ async fn test_valid_redelegated() -> Result<(), Report> {
     let user_c = create_user!(state, domain.id.clone())?;
     grant_role_to_user_on_project(&state, &user_a.id, &project.id, &role_a.id).await?;
     create_trust(
-        &state.db.connection(),
+        &state,
         "trust_a_b".to_string(),
         user_a.id.clone(),
         user_c.id.clone(),
@@ -326,7 +317,7 @@ async fn test_fewer_roles() -> Result<(), Report> {
     grant_role_to_user_on_project(&state, &user_a.id, &project.id, &role_a.id).await?;
 
     create_trust(
-        &state.db.connection(),
+        &state,
         "trust_a".to_string(),
         user_a.id.clone(),
         user_b.id.clone(),
@@ -433,7 +424,7 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
     grant_role_to_user_on_project(&state, &user_a.id, &project.id, &role_x.id).await?;
 
     create_trust(
-        &state.db.connection(),
+        &state,
         "trust_a".to_string(),
         user_a.id.clone(),
         user_b.id.clone(),
@@ -563,7 +554,7 @@ async fn test_trust_populated_in_api_token_response() -> Result<(), Report> {
     .await?;
 
     create_trust(
-        &state.db.connection(),
+        &state,
         "trust_a".to_string(),
         user_a.id.clone(),
         user_b.id.clone(),

@@ -170,3 +170,64 @@ async fn test_project_domain_id() {
     // The domain's own `is_domain` entry is not a project.
     assert_eq!(None, get_project_domain_id(&db, "domain").await.unwrap());
 }
+
+#[tokio::test]
+async fn test_tags_are_deleted_with_the_project() {
+    let db = setup(&[
+        ("domain", None),
+        ("p1", Some("domain")),
+        ("p2", Some("domain")),
+    ])
+    .await;
+    // `setup` disables the foreign keys for the broken-tree cases. The tag
+    // cleanup relies solely on `ON DELETE CASCADE`, so switch them back on.
+    db.execute_unprepared("PRAGMA foreign_keys = ON")
+        .await
+        .unwrap();
+    let tags = vec!["a".to_string(), "b".to_string()];
+    crate::project_tag::insert_all(&db, "p1", &tags)
+        .await
+        .unwrap();
+    crate::project_tag::insert_all(&db, "p2", &tags)
+        .await
+        .unwrap();
+
+    crate::project::delete(&db, "p1").await.unwrap();
+
+    assert!(
+        crate::project_tag::list_by_project_id(&db, "p1")
+            .await
+            .unwrap()
+            .is_empty(),
+        "tags of the deleted project must be purged by the database"
+    );
+    assert_eq!(
+        tags,
+        crate::project_tag::list_by_project_id(&db, "p2")
+            .await
+            .unwrap(),
+        "tags of other projects must stay"
+    );
+}
+
+/// Project deletion does not delete the tags explicitly. Make sure the schema
+/// generated for every supported backend carries the `ON DELETE CASCADE`
+/// foreign key that purges them.
+#[test]
+fn test_project_tag_schema_cascades_on_project_delete() {
+    for backend in [
+        DatabaseBackend::Postgres,
+        DatabaseBackend::MySql,
+        DatabaseBackend::Sqlite,
+    ] {
+        let sql = backend
+            .build(
+                &Schema::new(backend).create_table_from_entity(crate::entity::project_tag::Entity),
+            )
+            .sql;
+        assert!(
+            sql.contains("FOREIGN KEY") && sql.contains("ON DELETE CASCADE"),
+            "{backend:?}: project_tag must cascade on project delete: {sql}"
+        );
+    }
+}
