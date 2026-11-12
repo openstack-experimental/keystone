@@ -15,13 +15,7 @@
 
 use chrono::{DateTime, Utc};
 use eyre::Report;
-use sea_orm::entity::*;
 use tracing_test::traced_test;
-
-use openstack_keystone_identity_driver_sql::entity::{
-    expiring_user_group_membership,
-    prelude::ExpiringUserGroupMembership as DbExpiringUserGroupMembership,
-};
 
 use super::*;
 use crate::common::get_state;
@@ -122,16 +116,20 @@ async fn test_list_group_users_expiring() -> Result<(), Report> {
         &fresh.id,
         &group.id,
         "idp_id",
+        None,
     )
     .await?;
-    DbExpiringUserGroupMembership::insert(expiring_user_group_membership::ActiveModel {
-        user_id: Set(expired.id.clone()),
-        group_id: Set(group.id.clone()),
-        idp_id: Set("idp_id".to_string()),
-        last_verified: Set(DateTime::<Utc>::default().naive_utc()),
-    })
-    .exec(&ExecutionContext::internal(&state).db.connection())
-    .await?;
+    state
+        .provider
+        .get_identity_provider()
+        .add_user_to_group_expiring(
+            &ExecutionContext::internal(&state),
+            &expired.id,
+            &group.id,
+            "idp_id",
+            Some(&DateTime::<Utc>::default()),
+        )
+        .await?;
 
     let mut expected = vec![direct.id.clone(), fresh.id.clone()];
     expected.sort();
@@ -181,16 +179,20 @@ async fn test_check_user_in_group_expiring() -> Result<(), Report> {
             &user.id,
             &fresh_group.id,
             "idp_id",
+            None,
         )
         .await?;
-    DbExpiringUserGroupMembership::insert(expiring_user_group_membership::ActiveModel {
-        user_id: Set(user.id.clone()),
-        group_id: Set(expired_group.id.clone()),
-        idp_id: Set("idp_id".to_string()),
-        last_verified: Set(DateTime::<Utc>::default().naive_utc()),
-    })
-    .exec(&ExecutionContext::internal(&state).db.connection())
-    .await?;
+    state
+        .provider
+        .get_identity_provider()
+        .add_user_to_group_expiring(
+            &ExecutionContext::internal(&state),
+            &user.id,
+            &expired_group.id,
+            "idp_id",
+            Some(&DateTime::<Utc>::default()),
+        )
+        .await?;
 
     assert!(is_member(&state, &user.id, &fresh_group.id).await?);
     assert!(

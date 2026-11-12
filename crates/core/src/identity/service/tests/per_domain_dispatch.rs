@@ -647,7 +647,7 @@ async fn remove_user_from_group_rejects_a_cross_backend_membership() {
 async fn add_user_to_group_expiring_rejects_a_cross_backend_membership() {
     let (provider, state) = cross_backend_fixture().await;
     let error = provider
-        .add_user_to_group_expiring(&ExecutionContext::internal(&state), "u", "g", "idp")
+        .add_user_to_group_expiring(&ExecutionContext::internal(&state), "u", "g", "idp", None)
         .await
         .expect_err("a cross-backend membership must be rejected");
     assert!(

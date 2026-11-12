@@ -95,6 +95,7 @@ impl IdentityBackend for SqlBackend {
     /// - `user_id`: The ID of the user.
     /// - `group_id`: The ID of the group.
     /// - `idp_id`: The ID of the identity provider.
+    /// - `last_verified`: Optional last verification time; defaults to now.
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
@@ -105,13 +106,14 @@ impl IdentityBackend for SqlBackend {
         user_id: &'a str,
         group_id: &'a str,
         idp_id: &'a str,
+        last_verified: Option<&'a DateTime<Utc>>,
     ) -> Result<(), IdentityProviderError> {
         Ok(user_group::add_user_to_group_expiring(
             &state.db.connection(),
             user_id,
             group_id,
             idp_id,
-            None,
+            last_verified,
         )
         .await?)
     }
@@ -143,6 +145,7 @@ impl IdentityBackend for SqlBackend {
     /// - `state`: The service state.
     /// - `memberships`: A list of user and group ID pairs.
     /// - `idp_id`: The ID of the identity provider.
+    /// - `last_verified`: Optional last verification time; defaults to now.
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
@@ -152,12 +155,13 @@ impl IdentityBackend for SqlBackend {
         state: &ServiceState,
         memberships: Vec<(&'a str, &'a str)>,
         idp_id: &'a str,
+        last_verified: Option<&'a DateTime<Utc>>,
     ) -> Result<(), IdentityProviderError> {
         Ok(user_group::add_users_to_groups_expiring(
             &state.db.connection(),
             memberships,
             idp_id,
-            None,
+            last_verified,
         )
         .await?)
     }

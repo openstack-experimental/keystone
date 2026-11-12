@@ -44,6 +44,7 @@ async fn test_add_users_to_groups_expiring() -> Result<(), Report> {
                 (user.id.as_str(), group_b.id.as_str()),
             ],
             "idp_id",
+            None,
         )
         .await?;
 
@@ -98,6 +99,7 @@ async fn test_remove_user_from_group_expiring() -> Result<(), Report> {
             &user.id,
             &group.id,
             "idp_id",
+            None,
         )
         .await?;
     state
@@ -135,6 +137,7 @@ async fn test_remove_user_from_groups_expiring() -> Result<(), Report> {
                 (user.id.as_str(), group_b.id.as_str()),
             ],
             "idp_id",
+            None,
         )
         .await?;
 

@@ -688,6 +688,7 @@ impl IdentityApi for IdentityService {
         user_id: &'a str,
         group_id: &'a str,
         idp_id: &'a str,
+        last_verified: Option<&'a DateTime<Utc>>,
     ) -> Result<(), IdentityProviderError> {
         let backend_driver = self.membership_backend(ctx, user_id, group_id).await?;
         if let Some(vsc) = ctx.ctx() {
@@ -703,14 +704,14 @@ impl IdentityApi for IdentityService {
                 ),
                 operation: async {
                     backend_driver
-                        .add_user_to_group_expiring(ctx.state(), user_id, group_id, idp_id)
+                        .add_user_to_group_expiring(ctx.state(), user_id, group_id, idp_id, last_verified)
                         .await
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
             backend_driver
-                .add_user_to_group_expiring(ctx.state(), user_id, group_id, idp_id)
+                .add_user_to_group_expiring(ctx.state(), user_id, group_id, idp_id, last_verified)
                 .await?;
             ctx.state()
                 .event_dispatcher
@@ -811,6 +812,7 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         memberships: Vec<(&'a str, &'a str)>,
         idp_id: &'a str,
+        last_verified: Option<&'a DateTime<Utc>>,
     ) -> Result<(), IdentityProviderError> {
         let (first_user_id, group_ids): (String, Vec<String>) = if memberships.is_empty() {
             (String::new(), Vec::new())
@@ -849,6 +851,7 @@ impl IdentityApi for IdentityService {
                                 .map(|(u, g)| (u.as_str(), g.as_str()))
                                 .collect(),
                             &idp_id,
+                            last_verified,
                         )
                         .await
                 },
@@ -856,7 +859,7 @@ impl IdentityApi for IdentityService {
             }?;
         } else {
             backend_driver
-                .add_users_to_groups_expiring(ctx.state(), memberships, idp_id)
+                .add_users_to_groups_expiring(ctx.state(), memberships, idp_id, last_verified)
                 .await?;
             ctx.state()
                 .event_dispatcher

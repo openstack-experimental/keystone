@@ -46,6 +46,7 @@ async fn test_expiring_groups() -> Result<()> {
             &user.id,
             &group_b.id,
             "idp_id",
+            None,
         )
         .await?;
 

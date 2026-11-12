@@ -15,13 +15,7 @@
 
 use chrono::{DateTime, Utc};
 use eyre::Report;
-use sea_orm::entity::*;
 use tracing_test::traced_test;
-
-use openstack_keystone_identity_driver_sql::entity::{
-    expiring_user_group_membership,
-    prelude::ExpiringUserGroupMembership as DbExpiringUserGroupMembership,
-};
 
 use super::*;
 use crate::common::get_state;
@@ -77,21 +71,22 @@ async fn test_expiring_groups() -> Result<(), Report> {
             &user.id,
             &group_b.id,
             "idp_id",
+            None,
         )
         .await?;
 
-    // TODO: Find a way to add expired group membership for the test
-    DbExpiringUserGroupMembership::insert_many([
-        // Add expired membership
-        expiring_user_group_membership::ActiveModel {
-            user_id: Set(user.id.clone()),
-            group_id: Set(group_c.id.clone()),
-            idp_id: Set("idp_id".to_string()),
-            last_verified: Set(DateTime::<Utc>::default().naive_utc()),
-        },
-    ])
-    .exec(&ExecutionContext::internal(&state).db.connection())
-    .await?;
+    // Add expired membership
+    state
+        .provider
+        .get_identity_provider()
+        .add_user_to_group_expiring(
+            &ExecutionContext::internal(&state),
+            &user.id,
+            &group_c.id,
+            "idp_id",
+            Some(&DateTime::<Utc>::default()),
+        )
+        .await?;
 
     let groups = list_user_groups(&state, &user.id).await?;
 
