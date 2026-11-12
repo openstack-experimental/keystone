@@ -20,6 +20,7 @@ use crate::entity::federated_identity_provider as db_federated_identity_provider
 mod create;
 mod delete;
 mod get;
+mod issuer_unique;
 mod list;
 mod update;
 

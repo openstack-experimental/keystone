@@ -305,6 +305,39 @@ impl FederationApi for FederationService {
             .await
     }
 
+    /// Resolve the identity provider trusted for an external token issuer.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `domain_id`: The domain of the request.
+    /// - `issuer`: The `iss` value of the external token.
+    ///
+    /// # Returns
+    /// - `Result<Option<IdentityProvider>, FederationProviderError>` - The
+    ///   single enabled match in the preferred scope, `None`, or
+    ///   `AmbiguousIssuer`.
+    #[tracing::instrument(name = "provider.federation.get_identity_provider_by_issuer", level = "debug", skip_all, fields(domain_id = %domain_id, issuer = ?issuer))]
+    async fn get_identity_provider_by_issuer<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+        issuer: &'a str,
+    ) -> Result<Option<IdentityProvider>, FederationProviderError> {
+        let params = IdentityProviderListParameters {
+            domain_ids: Some(std::collections::HashSet::from([
+                Some(domain_id.to_string()),
+                None,
+            ])),
+            bound_issuer: Some(issuer.to_string()),
+            ..Default::default()
+        };
+        let candidates = self
+            .backend_driver
+            .list_identity_providers(ctx.state(), &params)
+            .await?;
+        select_identity_provider_for_issuer(candidates, domain_id, issuer)
+    }
+
     /// List IDP.
     ///
     /// # Parameters
@@ -372,5 +405,182 @@ impl FederationApi for FederationService {
             provider
         };
         Ok(provider)
+    }
+}
+
+/// Pick the identity provider for `issuer` from the pre-filtered candidates.
+///
+/// The domain's own identity providers take precedence over global ones
+/// (no domain). More than one candidate within the winning scope is
+/// ambiguous and fails closed. A disabled winner yields `None` and is not
+/// replaced by a lower-precedence identity provider, so disabling a domain's
+/// IdP cannot silently fall back to a global one. Candidates of other
+/// domains, or without a matching `bound_issuer`, are ignored defensively.
+fn select_identity_provider_for_issuer(
+    candidates: Vec<IdentityProvider>,
+    domain_id: &str,
+    issuer: &str,
+) -> Result<Option<IdentityProvider>, FederationProviderError> {
+    let (mut own, mut global) = (Vec::new(), Vec::new());
+    for idp in candidates {
+        if idp.bound_issuer.as_deref() != Some(issuer) {
+            continue;
+        }
+        match idp.domain_id.as_deref() {
+            Some(d) if d == domain_id => own.push(idp),
+            None => global.push(idp),
+            Some(_) => {}
+        }
+    }
+    // Scope precedence is decided on existence, not on `enabled`: a disabled
+    // IdP of the domain must not let a global one take over.
+    let scope = if own.is_empty() { global } else { own };
+    if scope.is_empty() {
+        tracing::debug!(issuer = ?issuer, domain_id = %domain_id, "no identity provider bound to issuer");
+        return Ok(None);
+    }
+    // Retired (disabled) IdPs bound to the same issuer do not make the
+    // lookup ambiguous.
+    let mut enabled = scope.into_iter().filter(|idp| idp.enabled);
+    match (enabled.next(), enabled.next()) {
+        (Some(idp), None) => Ok(Some(idp)),
+        (None, _) => {
+            tracing::debug!(issuer = ?issuer, domain_id = %domain_id, "identity provider bound to issuer is disabled");
+            Ok(None)
+        }
+        (Some(_), Some(_)) => {
+            tracing::warn!(issuer = ?issuer, domain_id = %domain_id, "issuer matches more than one enabled identity provider");
+            Err(FederationProviderError::AmbiguousIssuer)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ISS: &str = "https://issuer.example";
+
+    fn idp(
+        id: &str,
+        domain: Option<&str>,
+        issuer: Option<&str>,
+        enabled: bool,
+    ) -> IdentityProvider {
+        IdentityProvider {
+            id: id.into(),
+            name: id.into(),
+            domain_id: domain.map(Into::into),
+            bound_issuer: issuer.map(Into::into),
+            enabled,
+            ..Default::default()
+        }
+    }
+
+    fn pick(
+        cands: Vec<IdentityProvider>,
+        domain: &str,
+    ) -> Result<Option<String>, FederationProviderError> {
+        select_identity_provider_for_issuer(cands, domain, ISS).map(|o| o.map(|i| i.id))
+    }
+
+    #[test]
+    fn no_candidates() {
+        assert_eq!(pick(vec![], "d1").unwrap(), None);
+    }
+
+    #[test]
+    fn same_issuer_in_two_domains_resolves_per_domain() {
+        let c = || {
+            vec![
+                idp("a", Some("d1"), Some(ISS), true),
+                idp("b", Some("d2"), Some(ISS), true),
+            ]
+        };
+        assert_eq!(pick(c(), "d1").unwrap(), Some("a".into()));
+        assert_eq!(pick(c(), "d2").unwrap(), Some("b".into()));
+        assert_eq!(pick(c(), "d3").unwrap(), None);
+    }
+
+    #[test]
+    fn own_domain_wins_over_global() {
+        let c = vec![
+            idp("g", None, Some(ISS), true),
+            idp("a", Some("d1"), Some(ISS), true),
+        ];
+        assert_eq!(pick(c, "d1").unwrap(), Some("a".into()));
+    }
+
+    #[test]
+    fn global_used_when_domain_has_none() {
+        let c = vec![
+            idp("g", None, Some(ISS), true),
+            idp("b", Some("d2"), Some(ISS), true),
+        ];
+        assert_eq!(pick(c, "d1").unwrap(), Some("g".into()));
+    }
+
+    #[test]
+    fn duplicate_within_domain_is_ambiguous() {
+        let c = vec![
+            idp("a", Some("d1"), Some(ISS), true),
+            idp("b", Some("d1"), Some(ISS), true),
+        ];
+        assert!(matches!(
+            pick(c, "d1"),
+            Err(FederationProviderError::AmbiguousIssuer)
+        ));
+    }
+
+    #[test]
+    fn disabled_duplicate_in_domain_is_not_ambiguous() {
+        let c = vec![
+            idp("old", Some("d1"), Some(ISS), false),
+            idp("new", Some("d1"), Some(ISS), true),
+        ];
+        assert_eq!(pick(c, "d1").unwrap(), Some("new".into()));
+    }
+
+    #[test]
+    fn duplicate_global_is_ambiguous() {
+        let c = vec![
+            idp("g1", None, Some(ISS), true),
+            idp("g2", None, Some(ISS), true),
+        ];
+        assert!(matches!(
+            pick(c, "d1"),
+            Err(FederationProviderError::AmbiguousIssuer)
+        ));
+    }
+
+    #[test]
+    fn duplicate_global_ignored_when_domain_has_single_match() {
+        let c = vec![
+            idp("g1", None, Some(ISS), true),
+            idp("g2", None, Some(ISS), true),
+            idp("a", Some("d1"), Some(ISS), true),
+        ];
+        assert_eq!(pick(c, "d1").unwrap(), Some("a".into()));
+    }
+
+    #[test]
+    fn idp_without_bound_issuer_never_matches() {
+        let c = vec![idp("a", Some("d1"), None, true), idp("g", None, None, true)];
+        assert_eq!(pick(c, "d1").unwrap(), None);
+    }
+
+    #[test]
+    fn different_issuer_never_matches() {
+        let c = vec![idp("a", Some("d1"), Some("https://other.example"), true)];
+        assert_eq!(pick(c, "d1").unwrap(), None);
+    }
+
+    #[test]
+    fn disabled_domain_idp_does_not_fall_back_to_global() {
+        let c = vec![
+            idp("g", None, Some(ISS), true),
+            idp("a", Some("d1"), Some(ISS), false),
+        ];
+        assert_eq!(pick(c, "d1").unwrap(), None);
     }
 }
