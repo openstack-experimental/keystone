@@ -42,6 +42,10 @@ fn get_list_query(
         select = select.filter(db_federated_identity_provider::Column::Name.eq(val));
     }
 
+    if let Some(val) = &params.bound_issuer {
+        select = select.filter(db_federated_identity_provider::Column::BoundIssuer.eq(val));
+    }
+
     if let Some(val) = &params.domain_ids {
         let filter = db_federated_identity_provider::Column::DomainId.is_in(val.iter().flatten());
         select = if val.contains(&None) {
@@ -144,6 +148,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_query_bound_issuer() {
+        let query = QuerySelect::query(
+            &mut get_list_query(&IdentityProviderListParameters {
+                bound_issuer: Some("https://issuer.example".into()),
+                domain_ids: Some(HashSet::from([Some("d1".into()), None])),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .to_string(PostgresQueryBuilder);
+        assert!(
+            query.contains(
+                "\"federated_identity_provider\".\"bound_issuer\" = 'https://issuer.example'"
+            ),
+            "bound_issuer filter missing in {query}"
+        );
+        assert!(
+            query.contains("\"domain_id\" IS NULL"),
+            "null-domain tier missing in {query}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_query_domain_ids() {
         let query = QuerySelect::query(
             &mut get_list_query(&IdentityProviderListParameters {
@@ -197,6 +224,7 @@ mod tests {
             &db,
             &IdentityProviderListParameters {
                 name: Some("idp_name".into()),
+                bound_issuer: None,
                 domain_ids: Some(HashSet::from([Some("did".into())])),
                 pagination: ListPagination {
                     limit: Some(1),

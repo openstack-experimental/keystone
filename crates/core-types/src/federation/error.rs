@@ -22,6 +22,12 @@ pub enum FederationProviderError {
     #[error("authentication state is not found")]
     AuthStateNotFound(String),
 
+    /// More than one enabled identity provider of the same scope matches the
+    /// issuer. The issuer is deliberately not part of the message: it is
+    /// unverified caller input.
+    #[error("issuer matches more than one identity provider")]
+    AmbiguousIssuer,
+
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),

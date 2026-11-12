@@ -21,6 +21,7 @@ use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::federation::FederationProviderError;
 use openstack_keystone_core_types::federation::*;
 
+use super::issuer_unique::ensure_issuer_unique;
 use crate::entity::{
     federated_identity_provider as db_federated_identity_provider,
     identity_provider as db_old_identity_provider,
@@ -57,6 +58,25 @@ pub async fn update<S: AsRef<str>>(
         .ok_or_else(|| {
             FederationProviderError::IdentityProviderNotFound(id.as_ref().to_string())
         })?;
+
+    // Guard only writes that can introduce a duplicate: setting the issuer or
+    // (re-)enabling. Unrelated updates must not fail on pre-existing data.
+    if idp.bound_issuer.is_some() || idp.enabled == Some(true) {
+        let final_enabled = idp.enabled.unwrap_or(current.enabled);
+        let final_issuer = match &idp.bound_issuer {
+            Some(v) => v.as_ref(),
+            None => current.bound_issuer.as_ref(),
+        };
+        if final_enabled && let Some(issuer) = final_issuer {
+            ensure_issuer_unique(
+                &txn,
+                Some(id.as_ref()),
+                current.domain_id.as_deref(),
+                issuer,
+            )
+            .await?;
+        }
+    }
 
     let mut entry: db_federated_identity_provider::ActiveModel = current.into();
     let legacy_name = idp.name.clone();
@@ -150,7 +170,10 @@ mod tests {
         // Create MockDatabase with mock query results
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([
+                // current row
                 vec![get_idp_mock("1")],
+                // bound_issuer uniqueness check: no other enabled IdP
+                vec![],
                 vec![get_idp_mock("1")],
                 vec![get_idp_mock("1")],
             ])
@@ -177,5 +200,25 @@ mod tests {
         assert_eq!(result.id, "1");
         // Note: mock returns "name" from get_idp_mock
         assert_eq!(result.name, "name");
+    }
+
+    #[tokio::test]
+    async fn test_update_issuer_conflict() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([
+                vec![get_idp_mock("1")],
+                // another enabled IdP already uses the issuer
+                vec![get_idp_mock("2")],
+            ])
+            .into_connection();
+        let req = IdentityProviderUpdate {
+            enabled: Some(true),
+            bound_issuer: Some(Some("https://issuer.example".into())),
+            ..Default::default()
+        };
+        assert!(matches!(
+            update(&db, "1", req).await,
+            Err(FederationProviderError::Conflict(_))
+        ));
     }
 }

@@ -203,17 +203,21 @@ pub struct IdentityProviderUpdate {
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProviderListParameters {
+    /// Filters the response by the exact `bound_issuer` value. IdPs without a
+    /// `bound_issuer` never match.
+    pub bound_issuer: Option<String>,
+
     /// Filters the response by a domain_id ID. It is an optional list of
     /// optional strings to represent fetching of null and non-null values
     /// in a single request.
     pub domain_ids: Option<std::collections::HashSet<Option<String>>>,
 
+    /// Filters the response by IDP name.
+    pub name: Option<String>,
+
     /// Pagination controls (limit/marker/page_reverse).
     #[builder(default)]
     pub pagination: ListPagination,
-
-    /// Filters the response by IDP name.
-    pub name: Option<String>,
 }
 
 #[cfg(test)]

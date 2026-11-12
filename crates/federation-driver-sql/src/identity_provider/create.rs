@@ -22,6 +22,7 @@ use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::federation::FederationProviderError;
 use openstack_keystone_core_types::federation::*;
 
+use super::issuer_unique::ensure_issuer_unique;
 use crate::entity::{
     federated_identity_provider as db_federated_identity_provider,
     federation_protocol as db_old_federation_protocol,
@@ -119,6 +120,12 @@ pub async fn create(
         .await
         .context("starting transaction for creating identity provider")?;
 
+    if idp.enabled
+        && let Some(issuer) = &idp.bound_issuer
+    {
+        ensure_issuer_unique(&txn, None, idp.domain_id.as_deref(), issuer).await?;
+    }
+
     let db_entry: db_federated_identity_provider::Model = entry
         .insert(&txn)
         .await
@@ -190,6 +197,8 @@ mod tests {
     #[tokio::test]
     async fn test_create() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
+            // 0. bound_issuer uniqueness check: no other enabled IdP
+            .append_query_results([Vec::<db_federated_identity_provider::Model>::new()])
             // 1. INSERT into federated_identity_provider
             .append_query_results([vec![get_idp_mock("1")]])
             // 2. INSERT into identity_provider (legacy)
@@ -236,13 +245,35 @@ mod tests {
         let sqls: Vec<&str> = stmts.iter().map(|s| s.sql.as_str()).collect();
         // BEGIN
         assert!(sqls[0].starts_with("BEGIN"));
+        // bound_issuer uniqueness check
+        assert!(sqls[1].starts_with("SELECT"));
+        assert!(sqls[1].contains("bound_issuer"));
         // 4 INSERTs return results (query), 1 INSERT returns exec result
-        assert!(sqls[1].contains("federated_identity_provider"));
-        assert!(sqls[2].contains("identity_provider"));
-        assert!(sqls[3].contains("federation_protocol"));
+        assert!(sqls[2].contains("federated_identity_provider"));
+        assert!(sqls[3].contains("identity_provider"));
         assert!(sqls[4].contains("federation_protocol"));
-        assert!(sqls[5].contains("mapping"));
+        assert!(sqls[5].contains("federation_protocol"));
+        assert!(sqls[6].contains("mapping"));
         // COMMIT
-        assert!(sqls[6].starts_with("COMMIT"));
+        assert!(sqls[7].starts_with("COMMIT"));
+    }
+
+    #[tokio::test]
+    async fn test_create_issuer_conflict() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            // another enabled IdP already uses the issuer
+            .append_query_results([vec![get_idp_mock("2")]])
+            .into_connection();
+        let req = IdentityProviderCreate {
+            name: "idp".into(),
+            domain_id: Some("foo_domain".into()),
+            enabled: true,
+            bound_issuer: Some("https://issuer.example".into()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            create(&db, req).await,
+            Err(FederationProviderError::Conflict(_))
+        ));
     }
 }

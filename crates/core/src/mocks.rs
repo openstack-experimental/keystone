@@ -1356,6 +1356,13 @@ mod federation {
                 id: &'a str,
             ) -> Result<Option<IdentityProvider>, FederationProviderError>;
 
+            async fn get_identity_provider_by_issuer<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                issuer: &'a str,
+            ) -> Result<Option<IdentityProvider>, FederationProviderError>;
+
             async fn list_identity_providers<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,

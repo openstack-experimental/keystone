@@ -124,6 +124,30 @@ pub trait FederationApi: Send + Sync {
         id: &'a str,
     ) -> Result<Option<IdentityProvider>, FederationProviderError>;
 
+    /// Resolve the identity provider trusted for an external token issuer.
+    ///
+    /// Candidates are the identity providers of `domain_id` and the global
+    /// ones (no domain) whose `bound_issuer` equals `issuer` exactly. The
+    /// domain's own match takes precedence over a global one. Identity
+    /// providers without `bound_issuer` never match.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `domain_id`: The domain of the request.
+    /// - `issuer`: The `iss` value of the external token.
+    ///
+    /// # Returns
+    /// - `Ok(Some(idp))` - exactly one enabled match in the preferred scope.
+    /// - `Ok(None)` - no match, or the matched identity provider is disabled.
+    /// - `Err(AmbiguousIssuer)` - more than one match in the preferred
+    ///   scope; the lookup fails closed.
+    async fn get_identity_provider_by_issuer<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+        issuer: &'a str,
+    ) -> Result<Option<IdentityProvider>, FederationProviderError>;
+
     /// List identity providers.
     ///
     /// # Parameters
