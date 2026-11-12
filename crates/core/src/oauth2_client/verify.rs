@@ -1367,6 +1367,7 @@ mod tests {
 
     #[test]
     fn external_profile_rejects_hs256_token() {
+        openstack_keystone_jwt_crypto::install().unwrap();
         let claims = assertion_claims(chrono::Utc::now().timestamp());
         // An attacker signs with HMAC, using public key material as the secret.
         let mut header = Header::new(Algorithm::HS256);
