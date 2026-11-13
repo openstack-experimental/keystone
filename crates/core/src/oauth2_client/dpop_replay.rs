@@ -14,21 +14,13 @@
 // Crypto inventory: none (bookkeeping of identifiers only).
 //! # DPoP proof replay cache (RFC 9449 §11.1, ADR 0043 §2)
 //!
-//! Bounded in-memory set of `(jkt, jti)` pairs, kept for as long as a proof
-//! can still pass the `iat` window. The cache never evicts a live entry to
-//! make room: once a key exceeds its share or the cache is full, new proofs
-//! are rejected instead. Otherwise an attacker could flood the cache with
-//! proofs from fresh keys, push out the entry of a captured proof and replay
-//! it.
-//!
-//! The cache is per process; see ADR 0043 "Consequences" for the cross-node
-//! limits.
-use std::collections::HashMap;
-use std::sync::{Mutex, PoisonError};
-
+//! Set of `(jkt, jti)` pairs, kept for as long as a proof can still pass the
+//! `iat` window. The bounds, the no-eviction rule and the per-process
+//! limits are those of [`ReplayCache`].
 use thiserror::Error;
 
 use super::dpop::VerifiedDpopProof;
+use super::replay::{ReplayCache, ReplayError};
 
 /// Why a proof was refused by the cache.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -46,40 +38,19 @@ pub enum DpopReplayError {
     Replayed,
 }
 
-#[derive(Default)]
-struct Inner {
-    /// Lower bound of the earliest expiry held. Nothing can be dead before
-    /// it, so a purge before then is skipped instead of scanning every entry.
-    earliest: i64,
-    /// `jkt` -> (`jti` -> unix second after which the entry is dead).
-    keys: HashMap<String, HashMap<String, i64>>,
-    total: usize,
-}
-
-impl Inner {
-    fn purge(&mut self, now: i64) {
-        if self.earliest > now {
-            return;
+impl From<ReplayError> for DpopReplayError {
+    fn from(error: ReplayError) -> Self {
+        match error {
+            ReplayError::CacheFull => Self::CacheFull,
+            ReplayError::ScopeQuotaExceeded => Self::KeyQuotaExceeded,
+            ReplayError::Replayed => Self::Replayed,
         }
-        let mut removed = 0;
-        let mut earliest = i64::MAX;
-        self.keys.retain(|_, jtis| {
-            let before = jtis.len();
-            jtis.retain(|_, expires| *expires > now);
-            removed += before - jtis.len();
-            earliest = jtis.values().fold(earliest, |acc, e| acc.min(*e));
-            !jtis.is_empty()
-        });
-        self.total -= removed;
-        self.earliest = earliest;
     }
 }
 
 /// Replay cache for DPoP proofs.
 pub struct DpopReplayCache {
-    inner: Mutex<Inner>,
-    max_per_key: usize,
-    max_total: usize,
+    cache: ReplayCache,
     /// Seconds an entry outlives its `iat`: the verifier's `max_skew_secs`.
     window_secs: i64,
 }
@@ -94,10 +65,8 @@ impl DpopReplayCache {
     /// `max_total` bound the live entries.
     pub fn new(window_secs: u64, max_per_key: usize, max_total: usize) -> Self {
         Self {
-            inner: Mutex::new(Inner::default()),
+            cache: ReplayCache::new(max_per_key, max_total),
             window_secs: i64::try_from(window_secs).unwrap_or(i64::MAX / 4),
-            max_per_key,
-            max_total,
         }
     }
 
@@ -112,67 +81,24 @@ impl DpopReplayCache {
         now: i64,
     ) -> Result<(), DpopReplayError> {
         let expires = proof.iat.saturating_add(self.window_secs).saturating_add(1);
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-
-        // Free dead entries only when a bound is about to be hit; the common
-        // path stays O(1).
-        if inner.total >= self.max_total
-            || inner
-                .keys
-                .get(&proof.jkt)
-                .is_some_and(|jtis| jtis.len() >= self.max_per_key)
-        {
-            inner.purge(now);
-        }
-
-        // An expired entry for the same `jti` is overwritten, so it neither
-        // grows the key nor the cache.
-        let mut overwrites = false;
-        if let Some(jtis) = inner.keys.get(&proof.jkt) {
-            match jtis.get(&proof.jti) {
-                Some(e) if *e > now => return Err(DpopReplayError::Replayed),
-                Some(_) => overwrites = true,
-                None => {}
-            }
-            if !overwrites && jtis.len() >= self.max_per_key {
-                return Err(DpopReplayError::KeyQuotaExceeded);
-            }
-        }
-        if !overwrites && inner.total >= self.max_total {
-            return Err(DpopReplayError::CacheFull);
-        }
-
-        inner
-            .keys
-            .entry(proof.jkt.clone())
-            .or_default()
-            .insert(proof.jti.clone(), expires);
-        if !overwrites {
-            inner.total += 1;
-        }
-        inner.earliest = inner.earliest.min(expires);
-        Ok(())
+        Ok(self
+            .cache
+            .check_and_insert(&proof.jkt, &proof.jti, expires, now)?)
     }
 
     /// Drop expired entries; meant for a periodic background task.
     pub fn purge_expired(&self, now: i64) {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .purge(now);
+        self.cache.purge_expired(now);
     }
 
     /// Number of entries currently held (live or not yet purged).
     pub fn len(&self) -> usize {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .total
+        self.cache.len()
     }
 
     /// Whether the cache holds no entry.
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.cache.is_empty()
     }
 }
 

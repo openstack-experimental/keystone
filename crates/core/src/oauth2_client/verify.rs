@@ -275,7 +275,7 @@ const NATIVE_REQUIRED_CLAIMS: &[&str] = &["exp", "iat", "nbf", "iss", "aud", "su
 const EXTERNAL_REQUIRED_CLAIMS: &[&str] = &["exp", "iss", "aud", "sub"];
 const ASSERTION_REQUIRED_CLAIMS: &[&str] = &["exp", "iat", "iss", "aud", "sub", "jti"];
 const PROFILE_STRING_CLAIMS: &[&str] = &["iss", "sub", "jti"];
-const PROFILE_CLOCK_SKEW: Duration = Duration::from_secs(60);
+pub(crate) const PROFILE_CLOCK_SKEW: Duration = Duration::from_secs(60);
 const EXTERNAL_MAX_AGE: Duration = Duration::from_secs(300);
 /// Algorithms an external profile allows unless the caller narrows or widens
 /// the list with [`SubjectTokenValidationProfile::with_allowed_algorithms`].
