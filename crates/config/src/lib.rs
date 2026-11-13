@@ -172,6 +172,7 @@ pub struct Config {
     pub assignment: AssignmentProvider,
 
     /// Authentication configuration.
+    #[validate(nested)]
     pub auth: AuthProvider,
 
     /// Catalog provider configuration.
@@ -396,6 +397,14 @@ impl Config {
             .validate_dpop(cfg.mapping.cluster_salt.is_some())
             .map_err(Report::msg)
             .wrap_err("validating [oauth2] DPoP configuration")?;
+        cfg.oauth2
+            .validate_assertion_replay()
+            .map_err(Report::msg)
+            .wrap_err("validating [oauth2] assertion replay configuration")?;
+        cfg.auth
+            .validate_totp_replay()
+            .map_err(Report::msg)
+            .wrap_err("validating [auth] TOTP replay configuration")?;
         Ok(cfg)
     }
 

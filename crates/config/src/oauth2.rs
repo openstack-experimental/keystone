@@ -381,6 +381,36 @@ pub struct Oauth2Provider {
     #[serde(default = "default_dpop_replay_cache_max_entries_per_key")]
     #[validate(range(min = 1))]
     pub dpop_replay_cache_max_entries_per_key: u32,
+
+    /// Maximum number of live entries of the external assertion replay cache
+    /// (ADR 0044 §2) of the `local` store. When it is full new assertions are
+    /// rejected rather than evicting older entries.
+    #[serde(default = "default_assertion_replay_cache_max_entries")]
+    #[validate(range(min = 1))]
+    pub assertion_replay_cache_max_entries: u32,
+
+    /// Maximum number of live assertion replay entries held for one domain.
+    #[serde(default = "default_assertion_replay_cache_max_entries_per_domain")]
+    #[validate(range(min = 1))]
+    pub assertion_replay_cache_max_entries_per_domain: u32,
+
+    /// Maximum number of live assertion replay entries held for one issuer of
+    /// one domain.
+    #[serde(default = "default_assertion_replay_cache_max_entries_per_issuer")]
+    #[validate(range(min = 1))]
+    pub assertion_replay_cache_max_entries_per_issuer: u32,
+}
+
+fn default_assertion_replay_cache_max_entries() -> u32 {
+    100_000
+}
+
+fn default_assertion_replay_cache_max_entries_per_domain() -> u32 {
+    10_000
+}
+
+fn default_assertion_replay_cache_max_entries_per_issuer() -> u32 {
+    10_000
 }
 
 fn default_dpop_proof_lifetime_seconds() -> u32 {
@@ -547,6 +577,11 @@ impl Default for Oauth2Provider {
             dpop_nonce_lifetime_seconds: default_dpop_nonce_lifetime_seconds(),
             dpop_replay_cache_max_entries: default_dpop_replay_cache_max_entries(),
             dpop_replay_cache_max_entries_per_key: default_dpop_replay_cache_max_entries_per_key(),
+            assertion_replay_cache_max_entries: default_assertion_replay_cache_max_entries(),
+            assertion_replay_cache_max_entries_per_domain:
+                default_assertion_replay_cache_max_entries_per_domain(),
+            assertion_replay_cache_max_entries_per_issuer:
+                default_assertion_replay_cache_max_entries_per_issuer(),
         }
     }
 }
@@ -586,6 +621,30 @@ impl Oauth2Provider {
             return Err(
                 "[oauth2] dpop_replay_cache_max_entries_per_key must not exceed \
                  dpop_replay_cache_max_entries"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Check that the per-scope assertion replay bounds do not exceed their
+    /// totals (ADR 0044 §2): issuer within domain, domain within total.
+    pub fn validate_assertion_replay(&self) -> Result<(), String> {
+        if self.assertion_replay_cache_max_entries_per_domain
+            > self.assertion_replay_cache_max_entries
+        {
+            return Err(
+                "[oauth2] assertion_replay_cache_max_entries_per_domain must not \
+                 exceed assertion_replay_cache_max_entries"
+                    .to_string(),
+            );
+        }
+        if self.assertion_replay_cache_max_entries_per_issuer
+            > self.assertion_replay_cache_max_entries_per_domain
+        {
+            return Err(
+                "[oauth2] assertion_replay_cache_max_entries_per_issuer must not \
+                 exceed assertion_replay_cache_max_entries_per_domain"
                     .to_string(),
             );
         }
@@ -725,6 +784,34 @@ mod tests {
             ..Default::default()
         };
         assert!(cfg.validate_dpop(false).is_err());
+    }
+
+    #[test]
+    fn test_validate_assertion_replay_bounds() {
+        assert!(
+            Oauth2Provider::default()
+                .validate_assertion_replay()
+                .is_ok()
+        );
+        let per_domain = Oauth2Provider {
+            assertion_replay_cache_max_entries: 10,
+            assertion_replay_cache_max_entries_per_domain: 11,
+            assertion_replay_cache_max_entries_per_issuer: 5,
+            ..Default::default()
+        };
+        assert!(per_domain.validate_assertion_replay().is_err());
+        let per_issuer = Oauth2Provider {
+            assertion_replay_cache_max_entries: 10,
+            assertion_replay_cache_max_entries_per_domain: 5,
+            assertion_replay_cache_max_entries_per_issuer: 6,
+            ..Default::default()
+        };
+        assert!(per_issuer.validate_assertion_replay().is_err());
+        let zero = Oauth2Provider {
+            assertion_replay_cache_max_entries: 0,
+            ..Default::default()
+        };
+        assert!(zero.validate().is_err());
     }
 
     #[test]
