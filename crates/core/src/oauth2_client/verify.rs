@@ -64,6 +64,17 @@ pub enum TokenVerificationError {
         expected: Algorithm,
     },
 
+    /// The token's `alg` header is not one of the algorithms the validation
+    /// profile allows. Rejected before key lookup, like
+    /// [`Self::AlgorithmMismatch`].
+    #[error("token alg {actual:?} is not in the allowed algorithms {allowed:?}")]
+    AlgorithmNotAllowed {
+        /// The algorithm the token header claims.
+        actual: Algorithm,
+        /// The algorithms the profile allows.
+        allowed: Vec<Algorithm>,
+    },
+
     /// Delegated auth (`auth_method != "plain"`) must be project-scoped
     /// (security.md I5); this token is scoped otherwise.
     #[error(
@@ -257,6 +268,7 @@ pub struct SubjectTokenValidationProfile {
     max_token_age: Option<Duration>,
     max_token_lifetime: Option<Duration>,
     clock_skew: Duration,
+    allowed_algorithms: Vec<Algorithm>,
 }
 
 const NATIVE_REQUIRED_CLAIMS: &[&str] = &["exp", "iat", "nbf", "iss", "aud", "sub", "jti"];
@@ -265,6 +277,19 @@ const ASSERTION_REQUIRED_CLAIMS: &[&str] = &["exp", "iat", "iss", "aud", "sub", 
 const PROFILE_STRING_CLAIMS: &[&str] = &["iss", "sub", "jti"];
 const PROFILE_CLOCK_SKEW: Duration = Duration::from_secs(60);
 const EXTERNAL_MAX_AGE: Duration = Duration::from_secs(300);
+/// Algorithms an external profile allows unless the caller narrows or widens
+/// the list with [`SubjectTokenValidationProfile::with_allowed_algorithms`].
+const DEFAULT_EXTERNAL_ALGORITHMS: [Algorithm; 2] = [Algorithm::RS256, Algorithm::ES256];
+
+/// Whether `algorithm` is a symmetric (HMAC) algorithm. A profile never
+/// allows one: the verifier only holds public keys, so an HMAC "signature"
+/// could be forged with the public key as the secret.
+fn is_symmetric(algorithm: Algorithm) -> bool {
+    matches!(
+        algorithm,
+        Algorithm::HS256 | Algorithm::HS384 | Algorithm::HS512
+    )
+}
 
 fn owned_claims(claims: &[&str]) -> Vec<String> {
     claims.iter().map(|claim| (*claim).to_string()).collect()
@@ -276,6 +301,7 @@ impl SubjectTokenValidationProfile {
         audience_constraint: AudienceConstraint,
         required_claims: &[&str],
         limits: Option<Duration>,
+        allowed_algorithms: &[Algorithm],
     ) -> Self {
         Self {
             expected_issuers: expected_issuers.to_vec(),
@@ -285,15 +311,34 @@ impl SubjectTokenValidationProfile {
             max_token_age: limits,
             max_token_lifetime: limits,
             clock_skew: PROFILE_CLOCK_SKEW,
+            allowed_algorithms: allowed_algorithms.to_vec(),
         }
+    }
+
+    /// Replace the algorithms the profile accepts in the JWT `alg` header.
+    ///
+    /// Native profiles accept exactly their configured signing algorithm and
+    /// external profiles default to RS256 and ES256. Use this to apply the
+    /// list configured for an identity provider. An empty list or one that
+    /// contains an HMAC algorithm makes verification fail with
+    /// [`TokenVerificationError::InvalidProfile`].
+    #[must_use]
+    pub fn with_allowed_algorithms(mut self, allowed_algorithms: &[Algorithm]) -> Self {
+        self.allowed_algorithms = allowed_algorithms.to_vec();
+        self
     }
 
     /// The existing Keystone-native OpenStack access-token profile.
     ///
     /// It preserves acceptance of the control-plane audience and, when
     /// supplied, a token narrowed to this service type. The 60-second skew
-    /// matches the verifier's previous `jsonwebtoken` default.
-    pub fn keystone_native(expected_issuers: &[String], service_type: Option<&str>) -> Self {
+    /// matches the verifier's previous `jsonwebtoken` default. Only the
+    /// operator-configured `signing_algorithm` is accepted.
+    pub fn keystone_native(
+        expected_issuers: &[String],
+        service_type: Option<&str>,
+        signing_algorithm: SigningAlgorithm,
+    ) -> Self {
         let mut accepted_audiences = vec![OPENSTACK_APIS_AUDIENCE.to_string()];
         if let Some(service_type) = service_type {
             accepted_audiences.push(openstack_service_audience(service_type));
@@ -304,6 +349,7 @@ impl SubjectTokenValidationProfile {
             AudienceConstraint::AnyOf(accepted_audiences),
             NATIVE_REQUIRED_CLAIMS,
             None,
+            &[jwt_algorithm(signing_algorithm)],
         )
     }
 
@@ -312,12 +358,16 @@ impl SubjectTokenValidationProfile {
     /// re-exchanging Keystone-minted tokens; ordinary resource-server
     /// verification should use [`Self::keystone_native`] to enforce its
     /// service audience.
-    pub fn keystone_native_subject_token(expected_issuers: &[String]) -> Self {
+    pub fn keystone_native_subject_token(
+        expected_issuers: &[String],
+        signing_algorithm: SigningAlgorithm,
+    ) -> Self {
         Self::new(
             expected_issuers,
             AudienceConstraint::AnyOpenStack,
             NATIVE_REQUIRED_CLAIMS,
             None,
+            &[jwt_algorithm(signing_algorithm)],
         )
     }
 
@@ -336,6 +386,7 @@ impl SubjectTokenValidationProfile {
             AudienceConstraint::Exact(token_endpoint_audience.to_string()),
             EXTERNAL_REQUIRED_CLAIMS,
             Some(EXTERNAL_MAX_AGE),
+            &DEFAULT_EXTERNAL_ALGORITHMS,
         )
     }
 
@@ -351,6 +402,7 @@ impl SubjectTokenValidationProfile {
             AudienceConstraint::Exact(token_endpoint_audience.to_string()),
             ASSERTION_REQUIRED_CLAIMS,
             Some(EXTERNAL_MAX_AGE),
+            &DEFAULT_EXTERNAL_ALGORITHMS,
         )
     }
 }
@@ -442,11 +494,49 @@ fn resolve_decoding_key(
         });
     }
 
-    let kid = header.kid.ok_or(TokenVerificationError::MissingKeyId)?;
+    Ok((expected_alg, decoding_key_for(header.kid, jwks)?))
+}
+
+/// Look up the key a token header names by `kid` in `jwks`.
+fn decoding_key_for(
+    kid: Option<String>,
+    jwks: &JwkSet,
+) -> Result<DecodingKey, TokenVerificationError> {
+    let kid = kid.ok_or(TokenVerificationError::MissingKeyId)?;
     let jwk = jwks
         .find(&kid)
         .ok_or_else(|| TokenVerificationError::UnknownKeyId(kid.clone()))?;
-    Ok((expected_alg, DecodingKey::from_jwk(jwk)?))
+    Ok(DecodingKey::from_jwk(jwk)?)
+}
+
+/// Resolve the decoding key for `token` from `jwks`, after checking the header
+/// `alg` against the profile's allowed algorithms.
+///
+/// The check runs before any key lookup, so a token naming `HS256` (or an
+/// algorithm the profile does not list) never reaches signature verification.
+/// A profile with exactly one algorithm reports a mismatch with
+/// [`TokenVerificationError::AlgorithmMismatch`], as the native profiles
+/// always have.
+fn resolve_profile_decoding_key(
+    token: &str,
+    jwks: &JwkSet,
+    allowed_algorithms: &[Algorithm],
+) -> Result<(Algorithm, DecodingKey), TokenVerificationError> {
+    let header = decode_header(token)?;
+    if !allowed_algorithms.contains(&header.alg) {
+        return Err(match allowed_algorithms {
+            [expected] => TokenVerificationError::AlgorithmMismatch {
+                actual: header.alg,
+                expected: *expected,
+            },
+            _ => TokenVerificationError::AlgorithmNotAllowed {
+                actual: header.alg,
+                allowed: allowed_algorithms.to_vec(),
+            },
+        });
+    }
+
+    Ok((header.alg, decoding_key_for(header.kid, jwks)?))
 }
 
 /// Reject an `iss` that is not in the caller's explicit allowlist.
@@ -464,9 +554,9 @@ fn ensure_trusted_issuer(
 /// Verify a signed JWT against a selected subject-token validation profile.
 ///
 /// The supplied JWKS must belong to the expected issuer. This function
-/// validates the configured algorithm, signature, required claims, issuer,
-/// audience, registered time claims, and any profile age/lifetime limits. It
-/// does not perform JTI replay-cache or revocation checks.
+/// validates the profile's allowed algorithms, signature, required claims,
+/// issuer, audience, registered time claims, and any profile age/lifetime
+/// limits. It does not perform JTI replay-cache or revocation checks.
 ///
 /// # Errors
 /// Returns [`TokenVerificationError`] when the profile is incomplete or the
@@ -474,7 +564,6 @@ fn ensure_trusted_issuer(
 pub fn verify_subject_token_jwt<T>(
     token: &str,
     jwks: &JwkSet,
-    expected_algorithm: SigningAlgorithm,
     profile: &SubjectTokenValidationProfile,
 ) -> Result<T, TokenVerificationError>
 where
@@ -489,6 +578,8 @@ where
     });
     if profile.expected_issuers.is_empty()
         || profile.expected_issuers.iter().any(String::is_empty)
+        || profile.allowed_algorithms.is_empty()
+        || profile.allowed_algorithms.iter().copied().any(is_symmetric)
         || missing_mandatory_claim
         || match &profile.audience_constraint {
             AudienceConstraint::AnyOf(audiences) => {
@@ -501,8 +592,9 @@ where
         return Err(TokenVerificationError::InvalidProfile);
     }
 
-    let (expected_alg, decoding_key) = resolve_decoding_key(token, jwks, expected_algorithm)?;
-    let mut validation = Validation::new(expected_alg);
+    let (alg, decoding_key) =
+        resolve_profile_decoding_key(token, jwks, &profile.allowed_algorithms)?;
+    let mut validation = Validation::new(alg);
     validation.set_required_spec_claims(&profile.required_claims);
     match &profile.audience_constraint {
         AudienceConstraint::AnyOf(audiences) => validation.set_audience(audiences),
@@ -656,8 +748,12 @@ pub fn verify_openstack_access_token(
     service_type: Option<&str>,
     revoked_jtis: &HashSet<String>,
 ) -> Result<OpenStackAccessTokenClaims, TokenVerificationError> {
-    let profile = SubjectTokenValidationProfile::keystone_native(expected_issuers, service_type);
-    verify_openstack_access_token_inner(token, jwks, expected_algorithm, &profile, revoked_jtis)
+    let profile = SubjectTokenValidationProfile::keystone_native(
+        expected_issuers,
+        service_type,
+        expected_algorithm,
+    );
+    verify_openstack_access_token_inner(token, jwks, &profile, revoked_jtis)
 }
 
 /// Verify an [`OpenStackAccessTokenClaims`] access token that this
@@ -675,8 +771,11 @@ pub fn verify_openstack_subject_token(
     expected_issuers: &[String],
     revoked_jtis: &HashSet<String>,
 ) -> Result<OpenStackAccessTokenClaims, TokenVerificationError> {
-    let profile = SubjectTokenValidationProfile::keystone_native_subject_token(expected_issuers);
-    verify_openstack_access_token_inner(token, jwks, expected_algorithm, &profile, revoked_jtis)
+    let profile = SubjectTokenValidationProfile::keystone_native_subject_token(
+        expected_issuers,
+        expected_algorithm,
+    );
+    verify_openstack_access_token_inner(token, jwks, &profile, revoked_jtis)
 }
 
 /// Apply the selected native-token profile, then enforce access-token-specific
@@ -684,12 +783,10 @@ pub fn verify_openstack_subject_token(
 fn verify_openstack_access_token_inner(
     token: &str,
     jwks: &JwkSet,
-    expected_algorithm: SigningAlgorithm,
     profile: &SubjectTokenValidationProfile,
     revoked_jtis: &HashSet<String>,
 ) -> Result<OpenStackAccessTokenClaims, TokenVerificationError> {
-    let claims: OpenStackAccessTokenClaims =
-        verify_subject_token_jwt(token, jwks, expected_algorithm, profile)?;
+    let claims: OpenStackAccessTokenClaims = verify_subject_token_jwt(token, jwks, profile)?;
 
     if claims.token_use != "access" {
         return Err(TokenVerificationError::WrongTokenUse(claims.token_use));
@@ -1141,13 +1238,189 @@ mod tests {
         profile: &SubjectTokenValidationProfile,
     ) -> Result<serde_json::Value, TokenVerificationError> {
         let (token, jwks, _) = sign(claims);
-        verify_subject_token_jwt(&token, &jwks, SigningAlgorithm::Es256, profile)
+        verify_subject_token_jwt(&token, &jwks, profile)
+    }
+
+    /// `iss`/`sub`/`aud` of [`assertion_claims`], as an external profile.
+    fn external_profile() -> SubjectTokenValidationProfile {
+        SubjectTokenValidationProfile::external_assertion(
+            &["https://issuer.example".to_string()],
+            "https://keystone.example/v4/oauth2/token",
+        )
+    }
+
+    /// Sign `claims` with `algorithm` and return `(token, jwks)`. PS256 uses a
+    /// fresh RSA key; EdDSA uses the Ed25519 key of RFC 8037 Appendix A.
+    fn sign_with_algorithm(
+        algorithm: Algorithm,
+        claims: &impl serde::Serialize,
+    ) -> (String, JwkSet) {
+        openstack_keystone_jwt_crypto::install().unwrap();
+        match algorithm {
+            Algorithm::PS256 => {
+                let material = generate_keypair(SigningAlgorithm::Rs256).unwrap();
+                let mut header = Header::new(Algorithm::PS256);
+                header.kid = Some(material.kid.clone());
+                let token = encode(&header, claims, &to_encoding_key(&material).unwrap()).unwrap();
+                let jwks = crate::oauth2_key::jwks::active_keys_to_jwk_set(
+                    &openstack_keystone_key_repository::asymmetric::ActiveKeys {
+                        primary: material,
+                        previous: None,
+                    },
+                )
+                .unwrap();
+                (token, jwks)
+            }
+            Algorithm::EdDSA => {
+                // RFC 8037 Appendix A.1 test key.
+                let seed = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode("nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A")
+                    .unwrap();
+                // PKCS#8 v2 wrapper of the seed and public key, the form the
+                // crypto backend loads.
+                let public = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode("11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo")
+                    .unwrap();
+                let mut der = Vec::from([
+                    0x30, 0x53, 0x02, 0x01, 0x01, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04,
+                    0x22, 0x04, 0x20,
+                ]);
+                der.extend_from_slice(&seed);
+                der.extend_from_slice(&[0xa1, 0x23, 0x03, 0x21, 0x00]);
+                der.extend_from_slice(&public);
+                let mut header = Header::new(Algorithm::EdDSA);
+                header.kid = Some("ed-test".to_string());
+                let token = encode(&header, claims, &EncodingKey::from_ed_der(&der)).unwrap();
+                let jwks: JwkSet = serde_json::from_value(serde_json::json!({
+                    "keys": [{
+                        "kty": "OKP",
+                        "crv": "Ed25519",
+                        "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+                        "kid": "ed-test",
+                        "alg": "EdDSA",
+                        "use": "sig"
+                    }]
+                }))
+                .unwrap();
+                (token, jwks)
+            }
+            other => panic!("unsupported test algorithm {other:?}"),
+        }
+    }
+
+    #[test]
+    fn external_profile_defaults_to_rs256_and_es256() {
+        let claims = assertion_claims(chrono::Utc::now().timestamp());
+        // ES256 is signed by `sign`; PS256 is outside the default list.
+        assert!(verify_assertion(&claims, &external_profile()).is_ok());
+
+        let (token, jwks) = sign_with_algorithm(Algorithm::PS256, &claims);
+        assert!(matches!(
+            verify_subject_token_jwt::<serde_json::Value>(&token, &jwks, &external_profile()),
+            Err(TokenVerificationError::AlgorithmNotAllowed {
+                actual: Algorithm::PS256,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn external_profile_accepts_configured_ps256() {
+        let claims = assertion_claims(chrono::Utc::now().timestamp());
+        let profile = external_profile().with_allowed_algorithms(&[Algorithm::PS256]);
+        let (token, jwks) = sign_with_algorithm(Algorithm::PS256, &claims);
+        assert!(matches!(
+            verify_subject_token_jwt::<serde_json::Value>(&token, &jwks, &profile),
+            Ok(verified) if verified == claims
+        ));
+    }
+
+    #[test]
+    fn external_profile_accepts_configured_eddsa() {
+        let claims = assertion_claims(chrono::Utc::now().timestamp());
+        let profile = external_profile().with_allowed_algorithms(&[
+            Algorithm::RS256,
+            Algorithm::ES256,
+            Algorithm::EdDSA,
+        ]);
+        let (token, jwks) = sign_with_algorithm(Algorithm::EdDSA, &claims);
+        assert!(matches!(
+            verify_subject_token_jwt::<serde_json::Value>(&token, &jwks, &profile),
+            Ok(verified) if verified == claims
+        ));
+    }
+
+    #[test]
+    fn external_profile_rejects_algorithm_outside_configured_list() {
+        let claims = assertion_claims(chrono::Utc::now().timestamp());
+        let profile =
+            external_profile().with_allowed_algorithms(&[Algorithm::PS256, Algorithm::EdDSA]);
+        // `sign` produces an ES256 token.
+        assert!(matches!(
+            verify_assertion(&claims, &profile),
+            Err(TokenVerificationError::AlgorithmNotAllowed {
+                actual: Algorithm::ES256,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn external_profile_rejects_hs256_token() {
+        openstack_keystone_jwt_crypto::install().unwrap();
+        let claims = assertion_claims(chrono::Utc::now().timestamp());
+        // An attacker signs with HMAC, using public key material as the secret.
+        let mut header = Header::new(Algorithm::HS256);
+        header.kid = Some("any".to_string());
+        let token = encode(&header, &claims, &EncodingKey::from_secret(b"public-key")).unwrap();
+        let (_, jwks, _) = sign(&claims);
+
+        assert!(matches!(
+            verify_subject_token_jwt::<serde_json::Value>(&token, &jwks, &external_profile()),
+            Err(TokenVerificationError::AlgorithmNotAllowed {
+                actual: Algorithm::HS256,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn external_profile_rejects_alg_none_token() {
+        let claims = assertion_claims(chrono::Utc::now().timestamp());
+        let (_, jwks, _) = sign(&claims);
+        let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let header = engine.encode(br#"{"alg":"none","typ":"JWT","kid":"any"}"#);
+        let payload = engine.encode(serde_json::to_vec(&claims).unwrap());
+        let token = format!("{header}.{payload}.");
+
+        assert!(matches!(
+            verify_subject_token_jwt::<serde_json::Value>(&token, &jwks, &external_profile()),
+            Err(TokenVerificationError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn profile_never_allows_hmac_or_an_empty_list() {
+        let claims = assertion_claims(chrono::Utc::now().timestamp());
+        for algorithms in [
+            &[][..],
+            &[Algorithm::HS256][..],
+            &[Algorithm::ES256, Algorithm::HS512][..],
+        ] {
+            let profile = external_profile().with_allowed_algorithms(algorithms);
+            assert!(matches!(
+                verify_assertion(&claims, &profile),
+                Err(TokenVerificationError::InvalidProfile)
+            ));
+        }
     }
 
     #[test]
     fn keystone_native_subject_profile_accepts_narrowed_audiences() {
-        let profile =
-            SubjectTokenValidationProfile::keystone_native_subject_token(&[ISSUER.to_string()]);
+        let profile = SubjectTokenValidationProfile::keystone_native_subject_token(
+            &[ISSUER.to_string()],
+            SigningAlgorithm::Es256,
+        );
         let now = chrono::Utc::now().timestamp();
         let claims = serde_json::json!({
             "iss": ISSUER,
@@ -1253,7 +1526,8 @@ mod tests {
         let profile = SubjectTokenValidationProfile::external_assertion(
             &["https://issuer.example".to_string()],
             "https://keystone.example/v4/oauth2/token",
-        );
+        )
+        .with_allowed_algorithms(&[Algorithm::RS256]);
         let claims = assertion_claims(chrono::Utc::now().timestamp());
         let (token, jwks, _) = sign(&claims);
 
@@ -1265,23 +1539,17 @@ mod tests {
         let replacement = if signature.starts_with('A') { 'B' } else { 'A' };
         let tampered = format!("{header}.{payload}.{replacement}{}", &signature[1..]);
 
+        let es256_profile = SubjectTokenValidationProfile::external_assertion(
+            &["https://issuer.example".to_string()],
+            "https://keystone.example/v4/oauth2/token",
+        );
         assert!(matches!(
-            verify_subject_token_jwt::<serde_json::Value>(
-                &tampered,
-                &jwks,
-                SigningAlgorithm::Es256,
-                &profile,
-            ),
+            verify_subject_token_jwt::<serde_json::Value>(&tampered, &jwks, &es256_profile),
             Err(TokenVerificationError::Malformed(_))
         ));
 
         assert!(matches!(
-            verify_subject_token_jwt::<serde_json::Value>(
-                &token,
-                &jwks,
-                SigningAlgorithm::Rs256,
-                &profile,
-            ),
+            verify_subject_token_jwt::<serde_json::Value>(&token, &jwks, &profile,),
             Err(TokenVerificationError::AlgorithmMismatch { .. })
         ));
     }
@@ -1445,12 +1713,7 @@ mod tests {
                 .required_claims
                 .retain(|claim| claim != missing_claim);
             assert!(matches!(
-                verify_subject_token_jwt::<serde_json::Value>(
-                    &token,
-                    &jwks,
-                    SigningAlgorithm::Es256,
-                    &invalid_profile,
-                ),
+                verify_subject_token_jwt::<serde_json::Value>(&token, &jwks, &invalid_profile,),
                 Err(TokenVerificationError::InvalidProfile)
             ));
         }
