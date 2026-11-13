@@ -347,6 +347,10 @@ impl StorageApi for Storage {
     async fn keyspace_exists(&self, keyspace: &str) -> Result<bool, ApiStoreError> {
         Ok(self.state_machine_store.keyspace_exists(keyspace))
     }
+    async fn list_keyspaces(&self, prefix: &str) -> Result<Vec<String>, ApiStoreError> {
+        Ok(self.state_machine_store.list_keyspaces(prefix))
+    }
+
     async fn node_id(&self) -> u64 {
         self.node_id
     }

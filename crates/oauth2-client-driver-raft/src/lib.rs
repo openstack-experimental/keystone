@@ -25,28 +25,9 @@ use openstack_keystone_core::oauth2_client::backend::Oauth2ClientBackend;
 use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core_types::oauth2_client::*;
 use openstack_keystone_distributed_storage::{
-    ApiStoreError, Metadata, StorageApi, StoreDataEnvelope, StoreError, StoreResponse,
+    Metadata, StorageApi, StoreDataEnvelope, StoreError, require_no_conflict,
     store_command::Mutation,
 };
-
-/// Bridges two different backend behaviors for the same semantic event: the
-/// real Raft-backed [`StorageApi`] converts the first `Violation` on a
-/// `transaction` call into an immediate `Err(ApiStoreError::Conflict)`;
-/// `MockStorage`, used by this crate's own unit tests, instead returns every
-/// violation as data on an `Ok` response's `violations` field. Both call
-/// sites need conflict detection to behave identically against either
-/// backend (mirrors `scim-driver-raft`'s helper of the same name).
-fn require_no_conflict(
-    result: Result<StoreResponse, ApiStoreError>,
-    conflict: impl FnOnce() -> StoreError,
-) -> Result<StoreResponse, StoreError> {
-    match result {
-        Ok(response) if response.violations.is_empty() => Ok(response),
-        Ok(_) => Err(conflict()),
-        Err(ApiStoreError::Conflict { .. }) => Err(conflict()),
-        Err(e) => Err(e.into()),
-    }
-}
 
 /// Global `client_id` index value payload: resolves to the owning
 /// `(domain_id, provider_id)` coordinate. Stored as a

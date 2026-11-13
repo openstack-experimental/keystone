@@ -216,6 +216,16 @@ impl StorageApi for MockStorage {
         Ok(lock(&self.data)?.contains_key(keyspace))
     }
 
+    async fn list_keyspaces(&self, prefix: &str) -> Result<Vec<String>, ApiStoreError> {
+        let mut names: Vec<String> = lock(&self.data)?
+            .keys()
+            .filter(|k| k.starts_with(prefix))
+            .cloned()
+            .collect();
+        names.sort();
+        Ok(names)
+    }
+
     async fn node_id(&self) -> u64 {
         *self.node_id.lock().unwrap_or_else(|p| p.into_inner())
     }
@@ -333,6 +343,9 @@ impl StorageApi for MockStorage {
 
     async fn transaction(&self, mutations: Vec<Mutation>) -> Result<StoreResponse, ApiStoreError> {
         let mut violations: Vec<Violation> = Vec::new();
+        let has_non_drop = mutations
+            .iter()
+            .any(|m| !matches!(m, Mutation::DropKeyspace { .. }));
 
         let mut data = lock(&self.data)?;
         let mut metadata_map = lock(&self.metadata)?;
@@ -429,6 +442,36 @@ impl StorageApi for MockStorage {
 
                 Mutation::SetIndex { key } => {
                     indexes.insert(key, ());
+                }
+
+                Mutation::DropKeyspace { keyspace } => {
+                    let mixed = has_non_drop;
+                    if mixed {
+                        violations.push(Violation {
+                            r#type: "KEYSPACE_DROP_REFUSED".to_string(),
+                            subject: keyspace,
+                            description: "DropKeyspace must not share a transaction with \
+                                 other mutations"
+                                .to_string(),
+                        });
+                    } else if crate::store::state_machine::keyspace_drop_allowed(&keyspace) {
+                        if let Some(removed) = data.remove(&keyspace) {
+                            // Mock metadata is flat: keep entries whose key
+                            // also lives in another keyspace.
+                            for key in removed.keys() {
+                                if !data.values().any(|ks| ks.contains_key(key)) {
+                                    metadata_map.remove(key);
+                                }
+                            }
+                        }
+                    } else {
+                        violations.push(Violation {
+                            r#type: "KEYSPACE_DROP_REFUSED".to_string(),
+                            subject: keyspace,
+                            description: "keyspace is not on the replicated-drop allow-list"
+                                .to_string(),
+                        });
+                    }
                 }
             }
         }

@@ -269,6 +269,16 @@ pub enum MutationInner {
         /// UUID v4 identifier from `CreatePendingRotation`.
         rotation_id: String,
     },
+
+    /// Drop a whole allow-listed keyspace and its data on every node.
+    ///
+    /// See [`Mutation::DropKeyspace`]. Applied after the batch of the entry
+    /// commits; refused with a violation unless the name passes
+    /// `keyspace_drop_allowed`.
+    DropKeyspace {
+        /// The keyspace to drop.
+        keyspace: String,
+    },
 }
 
 impl MutationInner {
@@ -319,6 +329,7 @@ impl MutationInner {
                 cipher: value,
             },
             Mutation::SetIndex { key } => MutationInner::SetIndex { key },
+            Mutation::DropKeyspace { keyspace } => MutationInner::DropKeyspace { keyspace },
         })
     }
 }

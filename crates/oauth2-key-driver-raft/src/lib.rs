@@ -29,7 +29,8 @@ use openstack_keystone_core_types::oauth2_key::{
     PendingRotationInfo,
 };
 use openstack_keystone_distributed_storage::{
-    ApiStoreError as StoreError, Metadata, StorageApi, StoreDataEnvelope, store_command::Mutation,
+    ApiStoreError as StoreError, Metadata, StorageApi, StoreDataEnvelope, require_no_conflict,
+    store_command::Mutation,
 };
 use openstack_keystone_key_repository::asymmetric::{
     ActiveKeys, AsymmetricKeyRepository, AsymmetricKeySource, KeyMaterial, KeyRole,
@@ -786,24 +787,16 @@ impl RaftOauth2KeyBackend {
                     storage.transaction(vec![mutation]).await
                 }
             };
-            match result {
-                // The real storage surfaces a CAS miss as `Err(Conflict)`;
-                // the mock returns it as `violations` on an `Ok` response.
-                Ok(response) if response.violations.is_empty() => return Ok(()),
-                // Only a CAS/create-if-absent miss is retried; any other
-                // violation is a real failure, not contention.
-                Ok(response) => {
-                    if let Some(v) = response
-                        .violations
-                        .iter()
-                        .find(|v| !v.r#type.eq_ignore_ascii_case("CONFLICT"))
-                    {
-                        return Err(persist(StoreError::Conflict {
-                            subject: v.subject.clone(),
-                            description: v.description.clone(),
-                        }));
-                    }
-                }
+            // Only a CAS/create-if-absent miss is retried; any other
+            // violation or error is a real failure, not contention. The
+            // helper maps both the real store's `Err(Conflict)` and the
+            // mock's violations-as-data to the same conflict.
+            let contended = || StoreError::Conflict {
+                subject: key.clone(),
+                description: "JTI revocation list contended".to_string(),
+            };
+            match require_no_conflict(result, contended) {
+                Ok(_) => return Ok(()),
                 Err(StoreError::Conflict { .. }) => {}
                 Err(e) => return Err(persist(e)),
             }
@@ -2318,6 +2311,10 @@ mod tests {
 
         async fn drop_keyspace(&self, keyspace: &str) -> Result<(), StoreError> {
             self.inner.drop_keyspace(keyspace).await
+        }
+
+        async fn list_keyspaces(&self, prefix: &str) -> Result<Vec<String>, StoreError> {
+            self.inner.list_keyspaces(prefix).await
         }
 
         async fn node_id(&self) -> u64 {

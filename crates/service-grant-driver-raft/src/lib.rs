@@ -36,7 +36,7 @@ use openstack_keystone_core::service_grant::ServiceGrantProviderError;
 use openstack_keystone_core::service_grant::backend::ServiceGrantBackend;
 use openstack_keystone_core_types::service_grant::*;
 use openstack_keystone_distributed_storage::{
-    ApiStoreError, Metadata, StorageApi, StoreDataEnvelope, StoreError, StoreResponse,
+    Metadata, StorageApi, StoreDataEnvelope, StoreError, require_no_conflict,
     store_command::Mutation,
 };
 
@@ -45,21 +45,6 @@ const ID_IDX: &str = "service_grant:id_idx:v1:";
 const GRANTOR_IDX: &str = "service_grant:grantor_idx:v1:";
 const GRANTEE_IDX: &str = "service_grant:grantee_idx:v1:";
 const PROJECT_IDX: &str = "service_grant:project_idx:v1:";
-
-/// Bridges the real storage (first violation is an `Err(Conflict)`) and
-/// `MockStorage` (violations returned as data); mirrors the helper of the
-/// other Raft drivers.
-fn require_no_conflict(
-    result: Result<StoreResponse, ApiStoreError>,
-    conflict: impl FnOnce() -> StoreError,
-) -> Result<StoreResponse, StoreError> {
-    match result {
-        Ok(response) if response.violations.is_empty() => Ok(response),
-        Ok(_) => Err(conflict()),
-        Err(ApiStoreError::Conflict { .. }) => Err(conflict()),
-        Err(e) => Err(e.into()),
-    }
-}
 
 /// A `(domain_id, id)` coordinate recovered from an index key.
 type Coordinate = (String, String);

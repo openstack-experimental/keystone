@@ -731,6 +731,10 @@ mod tests {
             self.inner.drop_keyspace(keyspace).await
         }
 
+        async fn list_keyspaces(&self, prefix: &str) -> Result<Vec<String>, ApiStoreError> {
+            self.inner.list_keyspaces(prefix).await
+        }
+
         async fn node_id(&self) -> u64 {
             self.inner.node_id().await
         }

@@ -231,6 +231,13 @@ fn mutation_inner_layouts() {
         &MutationInner::SetIndex { key: vec![1] },
         "81a8536574496e646578919101",
     );
+    assert_wire(
+        "MutationInner::DropKeyspace",
+        &MutationInner::DropKeyspace {
+            keyspace: "ks".into(),
+        },
+        "81ac44726f704b6579737061636591a26b73",
+    );
 }
 
 /// The signed JSON of an audit record is a serialization of the struct, so

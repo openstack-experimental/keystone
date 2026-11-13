@@ -79,6 +79,7 @@ mod wire_format_tests;
 pub use openstack_keystone_storage_api::{
     DataTier, Metadata, Mutation, Node, ReadConsistency, StorageApi, StorageReadiness,
     StoreDataEnvelope, StoreError as ApiStoreError, StoreResponse, Violation,
+    is_conflict_violation, require_no_conflict,
 };
 
 pub use error::StoreError;

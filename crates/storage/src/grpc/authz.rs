@@ -287,7 +287,11 @@ pub fn ensure_data_command(cmd: &StoreCommand) -> Result<(), Status> {
                     | MutationInner::Remove { .. }
                     | MutationInner::RemoveIndex { .. }
                     | MutationInner::CreateIfAbsent { .. }
-                    | MutationInner::SetIndex { .. } => {}
+                    | MutationInner::SetIndex { .. }
+                    // Proposed by the leader's cleanup task; a request
+                    // forwarded after a leader change arrives here. The
+                    // state machine enforces the prefix allow-list.
+                    | MutationInner::DropKeyspace { .. } => {}
                     _ => {
                         return Err(Status::permission_denied(
                             "mutation is not permitted on the data-plane command RPC",
@@ -609,6 +613,17 @@ mod tests {
                 tier: 1,
             },
         ]);
+        assert!(ensure_data_command(&ok).is_ok());
+    }
+
+    #[test]
+    fn command_filter_allows_keyspace_drop() {
+        // The state machine enforces the prefix allow-list; the data-plane
+        // filter must let a forwarded cleanup proposal through after a
+        // leader change.
+        let ok = StoreCommand::Transaction(vec![MutationInner::DropKeyspace {
+            keyspace: "single_use_totp_1".into(),
+        }]);
         assert!(ensure_data_command(&ok).is_ok());
     }
 
