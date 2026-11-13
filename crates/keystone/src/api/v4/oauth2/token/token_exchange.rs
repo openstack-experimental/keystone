@@ -1342,4 +1342,23 @@ mod tests {
         assert!(subject_token_carries_cnf(&jwt("not json")));
         assert!(subject_token_carries_cnf(&jwt("[1]")));
     }
+
+    #[tokio::test]
+    async fn test_exchange_error_variants() {
+        use openstack_keystone_core::oauth2_client::TokenExchangeError;
+
+        let client_side = [
+            TokenExchangeError::NotAUserPrincipal,
+            TokenExchangeError::NoAuthorization,
+            TokenExchangeError::NoDelegationProject,
+            TokenExchangeError::CrossDomainSubjectToken,
+            TokenExchangeError::UnsupportedDelegation("ec2"),
+        ];
+        for error in client_side {
+            let label = format!("{error:?}");
+            let mapped = super::exchange_error(error);
+            assert_eq!(mapped.status(), StatusCode::BAD_REQUEST, "{label}");
+            assert_eq!(mapped.error_code(), "invalid_request", "{label}");
+        }
+    }
 }
