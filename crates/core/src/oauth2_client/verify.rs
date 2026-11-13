@@ -49,6 +49,19 @@ pub enum TokenVerificationError {
     #[error("subject-token validation profile must specify issuers and audiences")]
     InvalidProfile,
 
+    /// The profile's list of allowed algorithms is empty or names an algorithm
+    /// that is not RS*, PS*, ES* or EdDSA. This is a fault of the profile, not
+    /// of the token; for a token with a disallowed `alg` see
+    /// [`Self::AlgorithmNotAllowed`].
+    #[error(
+        "profile allowed algorithms {allowed:?} must be non-empty and limited to \
+         RS*, PS*, ES* or EdDSA"
+    )]
+    InvalidAlgorithmList {
+        /// The algorithm list the profile carries.
+        allowed: Vec<Algorithm>,
+    },
+
     /// The token's `aud` does not satisfy the profile's audience constraint.
     #[error("token audience is not accepted by this profile")]
     InvalidAudience,
@@ -332,7 +345,7 @@ impl SubjectTokenValidationProfile {
     /// external profiles default to RS256 and ES256. Use this to apply the
     /// list configured for an identity provider. An empty list, or one that
     /// names anything but an RS*, PS*, ES* or EdDSA algorithm, makes
-    /// verification fail with [`TokenVerificationError::InvalidProfile`].
+    /// verification fail with [`TokenVerificationError::InvalidAlgorithmList`].
     #[must_use]
     pub fn with_allowed_algorithms(mut self, allowed_algorithms: &[Algorithm]) -> Self {
         self.allowed_algorithms = allowed_algorithms.to_vec();
@@ -589,12 +602,6 @@ where
     });
     if profile.expected_issuers.is_empty()
         || profile.expected_issuers.iter().any(String::is_empty)
-        || profile.allowed_algorithms.is_empty()
-        || !profile
-            .allowed_algorithms
-            .iter()
-            .copied()
-            .all(is_asymmetric)
         || missing_mandatory_claim
         || match &profile.audience_constraint {
             AudienceConstraint::AnyOf(audiences) => {
@@ -605,6 +612,17 @@ where
         }
     {
         return Err(TokenVerificationError::InvalidProfile);
+    }
+    if profile.allowed_algorithms.is_empty()
+        || !profile
+            .allowed_algorithms
+            .iter()
+            .copied()
+            .all(is_asymmetric)
+    {
+        return Err(TokenVerificationError::InvalidAlgorithmList {
+            allowed: profile.allowed_algorithms.clone(),
+        });
     }
 
     let (alg, decoding_key) =
@@ -1426,7 +1444,8 @@ mod tests {
             let profile = external_profile().with_allowed_algorithms(algorithms);
             assert!(matches!(
                 verify_assertion(&claims, &profile),
-                Err(TokenVerificationError::InvalidProfile)
+                Err(TokenVerificationError::InvalidAlgorithmList { allowed })
+                    if allowed == algorithms
             ));
         }
     }
