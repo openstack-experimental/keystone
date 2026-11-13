@@ -43,6 +43,18 @@ pub enum StoreError {
         description: String,
     },
 
+    /// The state machine refused the write for a reason other than a
+    /// conflict with existing state (rate limit, quarantine, reserved or
+    /// non-droppable keyspace, ...). Kept apart from [`Self::Conflict`] so a
+    /// caller that treats a conflict as "already exists" (ADR 0044) is not
+    /// told so by an unrelated refusal.
+    #[error("write rejected ({violation_type}): {subject} — {description}")]
+    Rejected {
+        violation_type: String,
+        subject: String,
+        description: String,
+    },
+
     /// Cryptographic error (AES-GCM, nonce management, DEK).
     #[error(transparent)]
     Crypto {
@@ -257,12 +269,23 @@ impl From<StoreError> for crate::ApiStoreError {
                 subject,
                 description,
             },
+            StoreError::Rejected {
+                violation_type,
+                subject,
+                description,
+            } => Self::Rejected {
+                violation_type,
+                subject,
+                description,
+            },
             StoreError::KeyPresent => Self::KeyPresent,
-            StoreError::Quarantined(partition) => Self::Conflict {
+            StoreError::Quarantined(partition) => Self::Rejected {
+                violation_type: "QUARANTINED".to_string(),
                 subject: partition,
                 description: "partition quarantined due to repeated GCM tag failures".to_string(),
             },
-            StoreError::WriteRateExceeded(key, version) => Self::Conflict {
+            StoreError::WriteRateExceeded(key, version) => Self::Rejected {
+                violation_type: "WRITE_RATE_EXCEEDED".to_string(),
                 subject: key,
                 description: format!(
                     "write rate exceeded at version {version}; DEK rotation required"
@@ -270,6 +293,28 @@ impl From<StoreError> for crate::ApiStoreError {
             },
             StoreError::Unavailable(m) => Self::Unavailable(m),
             _ => Self::Other(Box::new(e)),
+        }
+    }
+}
+
+impl StoreError {
+    /// Maps the first violation of a committed write to an error.
+    ///
+    /// Only the `CONFLICT` type (revision mismatch, key already exists) is a
+    /// [`Self::Conflict`]; every other type is [`Self::Rejected`] and keeps
+    /// its type.
+    pub(crate) fn from_violation(v: &crate::protobuf::api::response::Violation) -> Self {
+        if v.r#type.eq_ignore_ascii_case("CONFLICT") {
+            Self::Conflict {
+                subject: v.subject.clone(),
+                description: v.description.clone(),
+            }
+        } else {
+            Self::Rejected {
+                violation_type: v.r#type.clone(),
+                subject: v.subject.clone(),
+                description: v.description.clone(),
+            }
         }
     }
 }

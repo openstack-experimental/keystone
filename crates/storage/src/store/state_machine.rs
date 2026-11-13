@@ -56,6 +56,7 @@ use crate::store_command::*;
 use crate::types::Metadata;
 
 mod dek;
+mod keyspace_drop;
 mod quarantine;
 mod raft_sm;
 mod restore;
@@ -64,6 +65,7 @@ mod snapshot;
 mod snapshot_file;
 mod status;
 
+pub(crate) use self::keyspace_drop::keyspace_drop_allowed;
 pub(crate) use self::restore::MAX_LIVE_RESTORE_SIZE;
 pub(crate) use self::rotation::{
     DEK_REVOKED_PENDING_PREFIX, DEK_REVOKED_PREFIX, META_DEK_CURRENT, unix_now,
@@ -71,6 +73,7 @@ pub(crate) use self::rotation::{
 pub use self::rotation::{PENDING_ROTATION_TTL_SECS, ReencryptReport, load_pending_rotations};
 pub use self::status::EncryptionStatus;
 
+use self::keyspace_drop::KEYSPACE_DROP_REFUSED;
 use self::quarantine::*;
 use self::restore::*;
 use self::rotation::*;

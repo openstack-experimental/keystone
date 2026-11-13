@@ -25,32 +25,9 @@ use openstack_keystone_core::scim_resource::backend::ScimResourceBackend;
 use openstack_keystone_core::scim_resource::error::ScimResourceProviderError;
 use openstack_keystone_core_types::scim::*;
 use openstack_keystone_distributed_storage::{
-    ApiStoreError, Metadata, StorageApi, StoreDataEnvelope, StoreError, StoreResponse,
+    ApiStoreError, Metadata, StorageApi, StoreDataEnvelope, StoreError, require_no_conflict,
     store_command::Mutation,
 };
-
-/// Bridges two different backend behaviors for the same semantic event.
-/// The real Raft-backed [`StorageApi`] impl (`Storage::write_command_to_
-/// storage`) converts the *first*
-/// [`Violation`](openstack_keystone_distributed_storage::Violation)
-/// on a `transaction`/`set_value` call into an immediate `Err(ApiStoreError::
-/// Conflict)`; `MockStorage`, used by this crate's own unit tests, instead
-/// returns every violation as data on an `Ok` response's `violations` field.
-/// Both call sites here need conflict detection to work identically against
-/// either backend, so this normalizes them into a single `Err(conflict())`
-/// on either shape, `Ok(response)` otherwise. Any other error passes through
-/// via the ordinary `StoreError::StorageApi` conversion.
-fn require_no_conflict(
-    result: Result<StoreResponse, ApiStoreError>,
-    conflict: impl FnOnce() -> StoreError,
-) -> Result<StoreResponse, StoreError> {
-    match result {
-        Ok(response) if response.violations.is_empty() => Ok(response),
-        Ok(_) => Err(conflict()),
-        Err(ApiStoreError::Conflict { .. }) => Err(conflict()),
-        Err(e) => Err(e.into()),
-    }
-}
 
 /// Raft Database SCIM realm backend.
 ///
@@ -1128,6 +1105,10 @@ mod tests {
 
         async fn drop_keyspace(&self, keyspace: &str) -> Result<(), ApiStoreError> {
             self.inner.drop_keyspace(keyspace).await
+        }
+
+        async fn list_keyspaces(&self, prefix: &str) -> Result<Vec<String>, ApiStoreError> {
+            self.inner.list_keyspaces(prefix).await
         }
 
         async fn node_id(&self) -> u64 {

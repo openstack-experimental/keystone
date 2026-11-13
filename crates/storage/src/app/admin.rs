@@ -55,10 +55,7 @@ impl Storage {
                     let resp = resp.into_inner();
                     // Check for violations
                     if let Some(v) = resp.violations.first() {
-                        return Err(StoreError::Conflict {
-                            subject: v.subject.clone(),
-                            description: v.description.clone(),
-                        });
+                        return Err(StoreError::from_violation(v));
                     }
                     // Wrap the deserialized wire response in the zeroizing
                     // type so it's scrubbed on drop for the rest of its
@@ -522,10 +519,7 @@ impl Storage {
                 let rsp = rsp.data;
                 // Check for violations (e.g., CAS conflicts)
                 if let Some(v) = rsp.violations.first() {
-                    return Err(StoreError::Conflict {
-                        subject: v.subject.clone(),
-                        description: v.description.clone(),
-                    });
+                    return Err(StoreError::from_violation(v));
                 }
                 Ok(rsp)
             }

@@ -133,6 +133,21 @@ pub enum StoreError {
     #[error("deserialization error")]
     Deserialize(#[from] rmp_serde::decode::Error),
 
+    /// The write was refused for a reason other than a conflict with
+    /// existing state (`WRITE_RATE_EXCEEDED`, `QUARANTINED`,
+    /// `RESERVED_KEYSPACE`, `KEYSPACE_DROP_REFUSED`, ...). Not a
+    /// [`Self::Conflict`]: a caller that reads a conflict as "already
+    /// exists" must not read this as one.
+    #[error("write rejected ({violation_type}): {subject} — {description}")]
+    Rejected {
+        /// The violation type reported by the state machine.
+        violation_type: String,
+        /// The resource or key the refusal refers to.
+        subject: String,
+        /// Human-readable description.
+        description: String,
+    },
+
     /// Key is already present in the store while the call expects it to be
     /// unset.
     #[error("key is already set")]
@@ -167,6 +182,49 @@ impl StoreError {
         E: Into<Box<dyn std::error::Error + Send + Sync + 'static>>,
     {
         Self::Other(err.into())
+    }
+}
+
+/// Returns `true` if a violation type means "the key or revision already
+/// conflicts" (ADR 0044 §3). Only this type is a conflict; every other type is
+/// a refusal that must not be read as one.
+pub fn is_conflict_violation(violation: &Violation) -> bool {
+    violation.r#type.eq_ignore_ascii_case("CONFLICT")
+}
+
+/// Normalizes the two shapes in which a storage reports a failed write into
+/// one: the Raft-backed store returns the first violation as an immediate
+/// `Err`, while a mock returns violations as data on an `Ok` response.
+///
+/// - no violation: `Ok(response)`;
+/// - a conflict (`CONFLICT` violation or `Err(Conflict)`): `Err(conflict())`;
+/// - any other violation: `Err(`[`StoreError::Rejected`]`)` converted into
+///   `E`, keeping its type, never a conflict;
+/// - any other error: passed through converted into `E`.
+pub fn require_no_conflict<E>(
+    result: Result<StoreResponse, StoreError>,
+    conflict: impl FnOnce() -> E,
+) -> Result<StoreResponse, E>
+where
+    E: From<StoreError>,
+{
+    match result {
+        Ok(response) => match response
+            .violations
+            .iter()
+            .find(|v| !is_conflict_violation(v))
+            .or(response.violations.first())
+        {
+            None => Ok(response),
+            Some(v) if is_conflict_violation(v) => Err(conflict()),
+            Some(v) => Err(E::from(StoreError::Rejected {
+                violation_type: v.r#type.clone(),
+                subject: v.subject.clone(),
+                description: v.description.clone(),
+            })),
+        },
+        Err(StoreError::Conflict { .. }) => Err(conflict()),
+        Err(e) => Err(E::from(e)),
     }
 }
 
@@ -400,6 +458,18 @@ pub enum Mutation {
         /// The index key.
         key: Vec<u8>,
     },
+
+    /// Drop a whole keyspace, with its data, on every node.
+    ///
+    /// Replicated through Raft, unlike [`StorageApi::drop_keyspace`]. Only a
+    /// keyspace whose name matches an allow-listed prefix registered in the
+    /// storage crate (`single_use_{use_case}_{bucket}`) may be dropped; any
+    /// other name is refused with a `KEYSPACE_DROP_REFUSED` violation. A
+    /// missing keyspace is a no-op, so the mutation is idempotent.
+    DropKeyspace {
+        /// The keyspace to drop.
+        keyspace: String,
+    },
 }
 
 impl Mutation {
@@ -423,6 +493,13 @@ impl Mutation {
             keyspace: keyspace.map(Into::into).unwrap_or("data".into()),
             metadata,
         })
+    }
+
+    /// Create a mutation dropping the whole keyspace on every node.
+    pub fn drop_keyspace<S: Into<String>>(keyspace: S) -> Self {
+        Self::DropKeyspace {
+            keyspace: keyspace.into(),
+        }
     }
 
     /// Create a remove mutation for the given key.
@@ -558,6 +635,15 @@ pub trait StorageApi: Send + Sync {
     /// of empty partitions.
     async fn keyspace_exists(&self, keyspace: &str) -> Result<bool, StoreError>;
 
+    /// List the names of the existing keyspaces that start with `prefix`,
+    /// sorted.
+    ///
+    /// Reads this node's local state and never creates a keyspace. Callers
+    /// that sweep time-bucketed keyspaces (ADR 0044 cleanup) use it to
+    /// discover buckets instead of probing computed names, so a bucket missed
+    /// during an outage or a leader change is found on the next sweep.
+    async fn list_keyspaces(&self, prefix: &str) -> Result<Vec<String>, StoreError>;
+
     /// Returns this node's own Raft node id.
     ///
     /// Combine with [`Self::current_leader`] (`current_leader().await ==
@@ -651,4 +737,86 @@ pub trait StorageApi: Send + Sync {
 
     /// Mutation transaction.
     async fn transaction(&self, mutations: Vec<Mutation>) -> Result<StoreResponse, StoreError>;
+}
+
+#[cfg(test)]
+mod require_no_conflict_tests {
+    use super::*;
+
+    fn violation(kind: &str) -> Violation {
+        Violation {
+            r#type: kind.to_string(),
+            subject: "k".to_string(),
+            description: "d".to_string(),
+        }
+    }
+
+    fn run(result: Result<StoreResponse, StoreError>) -> Result<StoreResponse, StoreError> {
+        require_no_conflict(result, || StoreError::KeyPresent)
+    }
+
+    #[test]
+    fn clean_response_passes() {
+        assert!(run(Ok(StoreResponse::default())).is_ok());
+    }
+
+    #[test]
+    fn conflict_violation_as_data_is_a_conflict() {
+        for kind in ["CONFLICT", "conflict"] {
+            let res = StoreResponse {
+                violations: vec![violation(kind)],
+                ..Default::default()
+            };
+            assert!(
+                matches!(run(Ok(res)), Err(StoreError::KeyPresent)),
+                "{kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn conflict_error_is_a_conflict() {
+        let err = StoreError::Conflict {
+            subject: "k".into(),
+            description: "d".into(),
+        };
+        assert!(matches!(run(Err(err)), Err(StoreError::KeyPresent)));
+    }
+
+    #[test]
+    fn other_violation_is_rejected_not_a_conflict() {
+        for kind in [
+            "WRITE_RATE_EXCEEDED",
+            "QUARANTINED",
+            "KEYSPACE_DROP_REFUSED",
+        ] {
+            let res = StoreResponse {
+                violations: vec![violation(kind)],
+                ..Default::default()
+            };
+            match run(Ok(res)) {
+                Err(StoreError::Rejected { violation_type, .. }) => {
+                    assert_eq!(kind, violation_type)
+                }
+                other => panic!("{kind}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn rejected_and_other_errors_pass_through() {
+        let rejected = StoreError::Rejected {
+            violation_type: "QUARANTINED".into(),
+            subject: "k".into(),
+            description: "d".into(),
+        };
+        assert!(matches!(
+            run(Err(rejected)),
+            Err(StoreError::Rejected { .. })
+        ));
+        assert!(matches!(
+            run(Err(StoreError::ConfigMissing)),
+            Err(StoreError::ConfigMissing)
+        ));
+    }
 }

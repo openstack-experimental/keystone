@@ -62,3 +62,4 @@ mod quarantine;
 mod races;
 mod restore;
 mod rotation;
+mod single_use;

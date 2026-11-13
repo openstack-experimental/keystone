@@ -153,4 +153,11 @@ fn mutation_layouts() {
         &Mutation::SetIndex { key: vec![1] },
         "81a8536574496e646578919101",
     );
+    assert_wire(
+        "Mutation::DropKeyspace",
+        &Mutation::DropKeyspace {
+            keyspace: "ks".into(),
+        },
+        "81ac44726f704b6579737061636591a26b73",
+    );
 }

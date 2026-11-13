@@ -77,6 +77,9 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             // See `PendingRotationMutation`: deferred the same way as
             // `pending_dek_swap` above.
             let mut pending_rotation_mutation: Option<PendingRotationMutation> = None;
+            // Keyspaces named by `DropKeyspace`; dropped after the batch
+            // commits, once the lifecycle read guard is released.
+            let mut pending_keyspace_drops: Vec<String> = Vec::new();
 
             let response = if let Some(store_req) = entry.app_data {
                 match StoreCommand::unpack(&store_req)? {
@@ -131,6 +134,17 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                     }
                     StoreCommand::Transaction(mutations) => {
                         let mut violations: Vec<Violation> = Vec::new();
+                        // The drop runs after the batch commits, so it cannot
+                        // keep its position among other mutations. It is
+                        // accepted only in a transaction of drops, which also
+                        // makes a replay of the entry after a crash
+                        // idempotent.
+                        let mixed_drop = mutations
+                            .iter()
+                            .any(|m| matches!(m, MutationInner::DropKeyspace { .. }))
+                            && mutations
+                                .iter()
+                                .any(|m| !matches!(m, MutationInner::DropKeyspace { .. }));
                         for mutation in mutations {
                             match mutation {
                                 MutationInner::Remove {
@@ -848,6 +862,28 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         }
                                     }
                                 }
+                                MutationInner::DropKeyspace { keyspace } => {
+                                    if mixed_drop {
+                                        violations.push(Violation {
+                                            r#type: KEYSPACE_DROP_REFUSED.to_string(),
+                                            subject: keyspace,
+                                            description: "DropKeyspace must not share a \
+                                                 transaction with other mutations"
+                                                .to_string(),
+                                        });
+                                    } else if keyspace_drop_allowed(&keyspace) {
+                                        pending_keyspace_drops.push(keyspace);
+                                    } else {
+                                        violations.push(Violation {
+                                            r#type: KEYSPACE_DROP_REFUSED.to_string(),
+                                            subject: keyspace.clone(),
+                                            description: format!(
+                                                "keyspace '{keyspace}' is not on the \
+                                                 replicated-drop allow-list"
+                                            ),
+                                        });
+                                    }
+                                }
                                 MutationInner::AbortPendingRotation { rotation_id } => {
                                     let now = std::time::SystemTime::now()
                                         .duration_since(std::time::UNIX_EPOCH)
@@ -922,6 +958,16 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                             .remove(&id);
                     }
                     None => {}
+                }
+
+                if !pending_keyspace_drops.is_empty() {
+                    // The write side of the lifecycle lock is needed.
+                    drop(lifecycle_guard.take());
+                    for name in &pending_keyspace_drops {
+                        self.drop_keyspace_replicated(name)
+                            .map_err(|e| io::Error::other(e.to_string()))?;
+                        tracing::info!(keyspace = %name, "keyspace dropped via Raft");
+                    }
                 }
 
                 // Swap the active DEK epoch after a successful InstallDek
