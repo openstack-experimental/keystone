@@ -156,3 +156,4 @@ ______________________________________________________________________
     - [OAuth2 Provider Session Management](adr/0041-oauth2-session-management.md)
     - [Provider Event Delivery and Delete Cascades](adr/0042-event-delivery-and-cascades.md)
     - [OAuth2 Sender-Constrained Tokens with DPoP](adr/0043-oauth2-dpop.md)
+    - [Single-Use Credential Registry](adr/0044-single-use-credential-registry.md)
