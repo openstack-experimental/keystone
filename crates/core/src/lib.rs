@@ -127,6 +127,7 @@ pub mod role;
 pub mod scim_realm;
 pub mod scim_resource;
 pub mod service_grant;
+pub mod single_use;
 pub mod spiffe_key;
 pub mod token;
 pub mod trust;
