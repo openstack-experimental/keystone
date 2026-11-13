@@ -189,6 +189,19 @@ async fn test_token_exchange_full_flow_issues_app_cred_delegated_claims() -> Res
 
     let (vsc, delegation, credential_expiration) =
         validate_subject_token(&state, &subject_token).await?;
+    let iat = chrono::Utc::now().timestamp();
+    let default_exp = iat + 900;
+    assert!(
+        vsc.inner()
+            .expires_at()
+            .is_some_and(|subject_exp| subject_exp.timestamp() > default_exp),
+        "validated subject token must outlive the configured default"
+    );
+    assert!(
+        credential_expiration
+            .is_some_and(|credential_exp| credential_exp.timestamp() > default_exp),
+        "application credential must outlive the configured default"
+    );
     let issuer = format!("https://ks.example/v4/oauth2/{}", domain.id);
     let claims = build_token_exchange_claims(
         &client,
@@ -197,12 +210,14 @@ async fn test_token_exchange_full_flow_issues_app_cred_delegated_claims() -> Res
         credential_expiration,
         &issuer,
         Uuid::new_v4().to_string(),
-        chrono::Utc::now().timestamp(),
-        chrono::Utc::now().timestamp() + 900,
+        iat,
+        default_exp,
         Audience::control_plane(),
     )?;
 
     assert_eq!(claims.aud, Audience::control_plane());
+    assert_eq!(claims.iat, iat);
+    assert_eq!(claims.exp, default_exp);
     assert!(claims.amr.contains(&"application_credential".to_string()));
 
     Ok(())
@@ -229,8 +244,8 @@ async fn test_token_exchange_caps_expiry_at_short_lived_app_credential() -> Resu
         credential_expiration,
         &issuer,
         Uuid::new_v4().to_string(),
-        chrono::Utc::now().timestamp(),
-        chrono::Utc::now().timestamp() + 900,
+        now,
+        now + 900,
         Audience::control_plane(),
     )?;
 
