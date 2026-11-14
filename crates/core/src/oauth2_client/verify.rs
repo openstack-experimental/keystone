@@ -49,6 +49,19 @@ pub enum TokenVerificationError {
     #[error("subject-token validation profile must specify issuers and audiences")]
     InvalidProfile,
 
+    /// The profile's list of allowed algorithms is empty or names an algorithm
+    /// that is not RS*, PS*, ES* or EdDSA. This is a fault of the profile, not
+    /// of the token; for a token with a disallowed `alg` see
+    /// [`Self::AlgorithmNotAllowed`].
+    #[error(
+        "profile allowed algorithms {allowed:?} must be non-empty and limited to \
+         RS*, PS*, ES* or EdDSA"
+    )]
+    InvalidAlgorithmList {
+        /// The algorithm list the profile carries.
+        allowed: Vec<Algorithm>,
+    },
+
     /// The token's `aud` does not satisfy the profile's audience constraint.
     #[error("token audience is not accepted by this profile")]
     InvalidAudience,
@@ -281,13 +294,24 @@ const EXTERNAL_MAX_AGE: Duration = Duration::from_secs(300);
 /// the list with [`SubjectTokenValidationProfile::with_allowed_algorithms`].
 const DEFAULT_EXTERNAL_ALGORITHMS: [Algorithm; 2] = [Algorithm::RS256, Algorithm::ES256];
 
-/// Whether `algorithm` is a symmetric (HMAC) algorithm. A profile never
-/// allows one: the verifier only holds public keys, so an HMAC "signature"
-/// could be forged with the public key as the secret.
-fn is_symmetric(algorithm: Algorithm) -> bool {
+/// Whether `algorithm` is a public-key signature algorithm (RS*, PS*, ES* or
+/// EdDSA). A profile allows nothing else: the verifier only holds public keys,
+/// so an HMAC "signature" could be forged with the public key as the secret.
+///
+/// The list is positive on purpose. An algorithm that `jsonwebtoken` adds later
+/// is refused until it is listed here, instead of slipping past a denylist.
+fn is_asymmetric(algorithm: Algorithm) -> bool {
     matches!(
         algorithm,
-        Algorithm::HS256 | Algorithm::HS384 | Algorithm::HS512
+        Algorithm::RS256
+            | Algorithm::RS384
+            | Algorithm::RS512
+            | Algorithm::PS256
+            | Algorithm::PS384
+            | Algorithm::PS512
+            | Algorithm::ES256
+            | Algorithm::ES384
+            | Algorithm::EdDSA
     )
 }
 
@@ -319,9 +343,9 @@ impl SubjectTokenValidationProfile {
     ///
     /// Native profiles accept exactly their configured signing algorithm and
     /// external profiles default to RS256 and ES256. Use this to apply the
-    /// list configured for an identity provider. An empty list or one that
-    /// contains an HMAC algorithm makes verification fail with
-    /// [`TokenVerificationError::InvalidProfile`].
+    /// list configured for an identity provider. An empty list, or one that
+    /// names anything but an RS*, PS*, ES* or EdDSA algorithm, makes
+    /// verification fail with [`TokenVerificationError::InvalidAlgorithmList`].
     #[must_use]
     pub fn with_allowed_algorithms(mut self, allowed_algorithms: &[Algorithm]) -> Self {
         self.allowed_algorithms = allowed_algorithms.to_vec();
@@ -578,8 +602,6 @@ where
     });
     if profile.expected_issuers.is_empty()
         || profile.expected_issuers.iter().any(String::is_empty)
-        || profile.allowed_algorithms.is_empty()
-        || profile.allowed_algorithms.iter().copied().any(is_symmetric)
         || missing_mandatory_claim
         || match &profile.audience_constraint {
             AudienceConstraint::AnyOf(audiences) => {
@@ -590,6 +612,17 @@ where
         }
     {
         return Err(TokenVerificationError::InvalidProfile);
+    }
+    if profile.allowed_algorithms.is_empty()
+        || !profile
+            .allowed_algorithms
+            .iter()
+            .copied()
+            .all(is_asymmetric)
+    {
+        return Err(TokenVerificationError::InvalidAlgorithmList {
+            allowed: profile.allowed_algorithms.clone(),
+        });
     }
 
     let (alg, decoding_key) =
@@ -1400,19 +1433,87 @@ mod tests {
     }
 
     #[test]
-    fn profile_never_allows_hmac_or_an_empty_list() {
+    fn profile_allows_only_public_key_algorithms_and_not_an_empty_list() {
         let claims = assertion_claims(chrono::Utc::now().timestamp());
         for algorithms in [
             &[][..],
             &[Algorithm::HS256][..],
+            &[Algorithm::HS384][..],
             &[Algorithm::ES256, Algorithm::HS512][..],
         ] {
             let profile = external_profile().with_allowed_algorithms(algorithms);
             assert!(matches!(
                 verify_assertion(&claims, &profile),
-                Err(TokenVerificationError::InvalidProfile)
+                Err(TokenVerificationError::InvalidAlgorithmList { allowed })
+                    if allowed == algorithms
             ));
         }
+    }
+
+    /// A key pair of `key_algorithm`, its JWKS, and the pair's `kid`.
+    fn key_and_jwks(key_algorithm: SigningAlgorithm) -> (EncodingKey, JwkSet, String) {
+        openstack_keystone_jwt_crypto::install().unwrap();
+        let material = generate_keypair(key_algorithm).unwrap();
+        let encoding_key = to_encoding_key(&material).unwrap();
+        let jwks = crate::oauth2_key::jwks::active_keys_to_jwk_set(
+            &openstack_keystone_key_repository::asymmetric::ActiveKeys {
+                primary: material.clone(),
+                previous: None,
+            },
+        )
+        .unwrap();
+        (encoding_key, jwks, material.kid)
+    }
+
+    /// The crypto backend refuses a key of the wrong family for the token's
+    /// `alg`, which surfaces as `InvalidKeyFormat`.
+    fn assert_invalid_key_format(result: Result<serde_json::Value, TokenVerificationError>) {
+        assert!(
+            matches!(
+                &result,
+                Err(TokenVerificationError::Malformed(error))
+                    if matches!(
+                        error.kind(),
+                        jsonwebtoken::errors::ErrorKind::InvalidKeyFormat
+                    )
+            ),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    /// The header `alg` is on the profile's list, but the JWKS entry the `kid`
+    /// selects is an RSA key: the token must not verify.
+    #[test]
+    fn external_profile_rejects_es256_token_against_an_rsa_only_jwks() {
+        let claims = assertion_claims(chrono::Utc::now().timestamp());
+        let (ec_signing_key, _, _) = key_and_jwks(SigningAlgorithm::Es256);
+        let (_, rsa_jwks, rsa_kid) = key_and_jwks(SigningAlgorithm::Rs256);
+        let mut header = Header::new(Algorithm::ES256);
+        header.kid = Some(rsa_kid);
+        let token = encode(&header, &claims, &ec_signing_key).unwrap();
+
+        assert_invalid_key_format(verify_subject_token_jwt::<serde_json::Value>(
+            &token,
+            &rsa_jwks,
+            &external_profile(),
+        ));
+    }
+
+    /// The mirror case: an RS256 token whose `kid` selects an EC key.
+    #[test]
+    fn external_profile_rejects_rs256_token_against_an_ec_only_jwks() {
+        let claims = assertion_claims(chrono::Utc::now().timestamp());
+        let (rsa_signing_key, _, _) = key_and_jwks(SigningAlgorithm::Rs256);
+        let (_, ec_jwks, ec_kid) = key_and_jwks(SigningAlgorithm::Es256);
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some(ec_kid);
+        let token = encode(&header, &claims, &rsa_signing_key).unwrap();
+
+        assert_invalid_key_format(verify_subject_token_jwt::<serde_json::Value>(
+            &token,
+            &ec_jwks,
+            &external_profile(),
+        ));
     }
 
     #[test]
