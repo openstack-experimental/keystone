@@ -11,60 +11,31 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Test identity provider creation.
+//! Test identity provider API.
 
-use eyre::Result;
-use tracing_test::traced_test;
+mod create;
+mod delete;
+mod get;
+mod issuer;
+mod list;
+mod update;
 
 use openstack_keystone_core_types::federation::IdentityProviderCreate;
 
-use crate::common::get_state;
-use crate::create_domain;
-use crate::federation::create_identity_provider;
+pub(super) fn unique() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
 
-/// Every identity provider creation also upserts a shared, table-global
-/// `mapping` row (id `dummy`) used by the legacy v3 federation protocol
-/// entries, via `INSERT ... ON CONFLICT (id) DO NOTHING`. The row is
-/// created by the first identity provider and every subsequent one must
-/// hit -- and tolerate -- that conflict instead of surfacing it as a
-/// creation failure.
-///
-/// Regression test for a bug where `on_conflict(..).do_nothing_on(..)`
-/// combined with sea-orm's `RETURNING`-based insert path turned "no rows
-/// returned because of the conflict" into a hard `DbErr::RecordNotInserted`,
-/// making every identity provider creation after the first one fail with a
-/// 500. Fixed by using `on_conflict_do_nothing_on`, whose `TryInsert::exec`
-/// maps that outcome to `TryInsertResult::Conflicted` instead of an error.
-#[traced_test]
-#[tokio::test]
-async fn test_create_second_identity_provider_does_not_fail_on_shared_legacy_row() -> Result<()> {
-    let (state, _tmp) = get_state().await?;
-    let domain = create_domain!(state)?;
-
-    let first = create_identity_provider(
-        &state,
-        IdentityProviderCreate {
-            name: uuid::Uuid::new_v4().simple().to_string(),
-            domain_id: Some(domain.id.clone()),
-            ..Default::default()
-        },
-    )
-    .await?;
-    assert!(!first.id.is_empty());
-
-    // This is the call that used to 500 once the "dummy" mapping row
-    // already existed from the first creation above.
-    let second = create_identity_provider(
-        &state,
-        IdentityProviderCreate {
-            name: uuid::Uuid::new_v4().simple().to_string(),
-            domain_id: Some(domain.id.clone()),
-            ..Default::default()
-        },
-    )
-    .await?;
-    assert!(!second.id.is_empty());
-    assert_ne!(first.id, second.id);
-
-    Ok(())
+pub(super) fn idp(
+    domain_id: Option<&str>,
+    issuer: Option<&str>,
+    enabled: bool,
+) -> IdentityProviderCreate {
+    IdentityProviderCreate {
+        name: unique(),
+        domain_id: domain_id.map(Into::into),
+        bound_issuer: issuer.map(Into::into),
+        enabled,
+        ..Default::default()
+    }
 }
