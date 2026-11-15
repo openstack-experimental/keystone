@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::assignment::RoleAssignmentListParametersBuilder;
@@ -168,6 +168,23 @@ fn resolve_role_ids(
     Ok(roles.into_iter().collect())
 }
 
+fn deadline_after(
+    now: DateTime<Utc>,
+    secs: u64,
+    what: &str,
+) -> Result<DateTime<Utc>, ServiceGrantProviderError> {
+    (secs > 0)
+        .then_some(secs)
+        .and_then(|s| i64::try_from(s).ok())
+        .and_then(Duration::try_seconds)
+        .and_then(|lifetime| now.checked_add_signed(lifetime))
+        .ok_or_else(|| {
+            ServiceGrantProviderError::provider(format!(
+                "{what} must be positive and within the supported range"
+            ))
+        })
+}
+
 /// Attempts at disabling a grant that is concurrently being updated.
 const DISABLE_ATTEMPTS: usize = 3;
 
@@ -311,22 +328,35 @@ impl ServiceGrantApi for ServiceGrantService {
         let role_ids = resolve_role_ids(data.role_ids, &effective, &policy.max_role_ids)?;
 
         let now = Utc::now();
-        let max_lifetime = policy
+        let (max_grants_per_project, access_token_lifetime_seconds) = {
+            let config = state.config_manager.config.read().await;
+            (
+                config.delegation.max_grants_per_project,
+                u64::from(config.oauth2.access_token_lifetime_minutes) * 60,
+            )
+        };
+        let max_expires_at = policy
             .max_grant_lifetime
-            .map(|secs| Duration::seconds(i64::try_from(secs).unwrap_or(i64::MAX)));
-        let expires_at = match (data.expires_at, max_lifetime) {
+            .map(|secs| deadline_after(now, secs, "max_grant_lifetime"))
+            .transpose()?;
+        let expires_at = match (data.expires_at, max_expires_at) {
             (Some(exp), _) if exp <= now => {
                 return Err(ServiceGrantProviderError::Validation(
                     "expires_at must be in the future".to_string(),
                 ));
             }
-            (Some(exp), Some(max)) if exp > now + max => {
+            (Some(exp), Some(max)) if exp > max => {
                 return Err(ServiceGrantProviderError::Validation(
                     "expires_at is beyond the service's max_grant_lifetime".to_string(),
                 ));
             }
-            (None, Some(max)) => Some(now + max),
-            (exp, _) => exp,
+            (None, Some(max)) => Some(max),
+            (Some(exp), _) => Some(exp),
+            (None, None) => Some(deadline_after(
+                now,
+                access_token_lifetime_seconds,
+                "oauth2.access_token_lifetime_minutes",
+            )?),
         };
 
         // Count caps (ADR 0036 §4.2). Best effort: two concurrent creations
@@ -343,20 +373,13 @@ impl ServiceGrantApi for ServiceGrantService {
                 )));
             }
         }
-        let backstop = state
-            .config_manager
-            .config
-            .read()
-            .await
-            .delegation
-            .max_grants_per_project;
         let count = self
             .backend_driver
             .count_service_grants(state, &project.id, None)
             .await?;
-        if count as u64 >= backstop {
+        if count as u64 >= max_grants_per_project {
             return Err(ServiceGrantProviderError::QuotaExceeded(format!(
-                "the project reached the limit of {backstop} service grants"
+                "the project reached the limit of {max_grants_per_project} service grants"
             )));
         }
 
@@ -653,12 +676,13 @@ mod tests {
     async fn test_create_defaults_to_effective_roles_within_ceiling() {
         let policy = DelegationPolicy {
             max_role_ids: vec!["member".into(), "reader".into()],
-            max_grant_lifetime: Some(3600),
+            max_grant_lifetime: Some(120),
             ..grants_policy()
         };
         let state = state(Some(client("d1", policy)), &["admin", "member", "reader"]).await;
         let auth = vsc(AuthenticationContext::Password);
         let ctx = ExecutionContext::from_auth(&state, &auth);
+        let started = Utc::now();
         let grant = service(0)
             .create_service_grant(&ctx, create(None))
             .await
@@ -669,8 +693,87 @@ mod tests {
         assert_eq!(grant.grantee.client_id(), "c1");
         assert_eq!(grant.target.project_id(), "p1");
         assert!(grant.enabled);
-        // The lifetime ceiling becomes the default expiry.
-        assert!(grant.expires_at.is_some());
+        // The client's lifetime ceiling takes precedence over the OAuth2 default.
+        let expires_at = grant.expires_at.unwrap();
+        assert!(expires_at >= started + Duration::seconds(119));
+        assert!(expires_at <= Utc::now() + Duration::seconds(120));
+    }
+
+    #[tokio::test]
+    async fn test_create_uses_oauth2_default_when_client_has_no_lifetime() {
+        let state = state(Some(client("d1", grants_policy())), &["member"]).await;
+        let auth = vsc(AuthenticationContext::Password);
+        let ctx = ExecutionContext::from_auth(&state, &auth);
+        let started = Utc::now();
+        let expected = u64::from(
+            openstack_keystone_config::Oauth2Provider::default().access_token_lifetime_minutes,
+        ) * 60;
+        let grant = service(0)
+            .create_service_grant(&ctx, create(None))
+            .await
+            .unwrap();
+        let expires_at = grant.expires_at.unwrap();
+        assert!(expires_at >= started + Duration::seconds(expected as i64 - 1));
+        assert!(expires_at <= Utc::now() + Duration::seconds(expected as i64));
+    }
+
+    #[tokio::test]
+    async fn test_create_uses_configured_oauth2_access_token_lifetime() {
+        let state = state(Some(client("d1", grants_policy())), &["member"]).await;
+        state
+            .config_manager
+            .config
+            .write()
+            .await
+            .oauth2
+            .access_token_lifetime_minutes = 2;
+        let auth = vsc(AuthenticationContext::Password);
+        let ctx = ExecutionContext::from_auth(&state, &auth);
+        let started = Utc::now();
+        let grant = service(0)
+            .create_service_grant(&ctx, create(None))
+            .await
+            .unwrap();
+        let expires_at = grant.expires_at.unwrap();
+        assert!(expires_at >= started + Duration::seconds(119));
+        assert!(expires_at <= Utc::now() + Duration::seconds(120));
+    }
+
+    #[tokio::test]
+    async fn test_create_preserves_explicit_expiry_without_client_lifetime() {
+        let state = state(Some(client("d1", grants_policy())), &["member"]).await;
+        let auth = vsc(AuthenticationContext::Password);
+        let ctx = ExecutionContext::from_auth(&state, &auth);
+        let requested_expiry = Utc::now() + Duration::hours(2);
+        let grant = service(0)
+            .create_service_grant(
+                &ctx,
+                ServiceGrantCreate {
+                    expires_at: Some(requested_expiry),
+                    ..create(None)
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(grant.expires_at, Some(requested_expiry));
+    }
+
+    /// A lifetime outside chrono's range is returned as an error instead of
+    /// panicking while calculating its deadline.
+    #[tokio::test]
+    async fn test_create_out_of_range_client_lifetime_does_not_panic() {
+        let auth = vsc(AuthenticationContext::Password);
+
+        let policy = DelegationPolicy {
+            max_grant_lifetime: Some(u64::MAX),
+            ..grants_policy()
+        };
+        let client_state = state(Some(client("d1", policy)), &["member"]).await;
+        let ctx = ExecutionContext::from_auth(&client_state, &auth);
+        assert!(matches!(
+            service(0).create_service_grant(&ctx, create(None)).await,
+            Err(ServiceGrantProviderError::Provider(_))
+        ));
     }
 
     /// A grant on a project of another domain lives in the project's
@@ -913,5 +1016,42 @@ mod tests {
         );
         assert!(resolve_role_ids(None, &effective, &["z".into()]).is_err());
         assert!(resolve_role_ids(Some(vec!["z".into()]), &effective, &[]).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_zero_client_lifetime_is_rejected() {
+        let policy = DelegationPolicy {
+            max_grant_lifetime: Some(0),
+            ..grants_policy()
+        };
+        let state = state(Some(client("d1", policy)), &["member"]).await;
+        let auth = vsc(AuthenticationContext::Password);
+        let ctx = ExecutionContext::from_auth(&state, &auth);
+        assert!(
+            service(0)
+                .create_service_grant(&ctx, create(None))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_zero_access_token_lifetime_is_rejected() {
+        let state = state(Some(client("d1", grants_policy())), &["member"]).await;
+        state
+            .config_manager
+            .config
+            .write()
+            .await
+            .oauth2
+            .access_token_lifetime_minutes = 0;
+        let auth = vsc(AuthenticationContext::Password);
+        let ctx = ExecutionContext::from_auth(&state, &auth);
+        assert!(
+            service(0)
+                .create_service_grant(&ctx, create(None))
+                .await
+                .is_err()
+        );
     }
 }
