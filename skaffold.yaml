@@ -511,6 +511,28 @@ profiles:
       - *dex
       - *spiffe
 
+  # Exercise the issuer fixtures while external token exchange (#1018) is
+  # still in development. Enable with either the local or github-ci profile.
+  - name: keycloak-exchange-fixture
+    patches:
+      - op: add
+        path: /verify/-
+        value:
+          name: "test-token-exchange-keycloak"
+          container:
+            image: "keystone-rs"
+            name: "test-token-exchange-keycloak"
+            command: ["/tests/test-token-exchange-keycloak", "--nocapture"]
+            env:
+              - name: "KEYSTONE_URL"
+                value: "http://keystone-rs:8080"
+              - name: "KEYCLOAK_URL"
+                value: "http://keycloak:8080"
+              - name: "KEYCLOAK_PASSWORD"
+                value: "admin"
+          executionMode:
+            kubernetesCluster: {}
+
   - name: local
     build:
       insecureRegistries:
