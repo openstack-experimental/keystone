@@ -28,6 +28,49 @@ help this project come to fruition.
 
 ## Setup
 
+### Nix (optional)
+
+With [Nix](https://nixos.org/download/) (flakes enabled) the dev shell
+provides the prerequisites above: Rust toolchain, `protoc`,
+`cargo-nextest`, `pre-commit`, `committed`, SPIRE and OPA.
+
+```console
+nix develop
+```
+
+With [direnv](https://direnv.net/) run `direnv allow` once to load it
+automatically. Docker/podman and skaffold are not included.
+
+The flake also builds the binaries and runs the checks hermetically
+(via [crane](https://crane.dev/)):
+
+```console
+nix build .#keystone          # keystone and keystone-manage, no LTO
+nix build .#keystone-release  # same, thin LTO as in release builds
+nix flake check               # fmt, clippy, unit tests, cargo-deny
+```
+
+`nix flake check` compiles the whole workspace in the dev profile in
+addition to the release dependencies of the packages, so a cold run is
+slow. Tests needing live services (`test_api`, `test_integration`,
+`test_federation`) are linted by clippy but not run by it.
+
+The `test_api` suite runs hermetically in a NixOS VM (SPIRE, keystone
+with the in-process regorus policy engine, no OPA daemon; Linux with KVM
+only). It is heavy, so it is not part of `nix flake check`:
+
+```console
+nix build .#vm-api-test
+```
+
+The VM keystone config in `nix/vm-api-test.nix` mirrors
+`tools/start-api.sh`; keep the two in sync. Run
+`tools/check-nix-config-sync.sh` to compare their config sections.
+
+CI (`.github/workflows/nix.yml`) only evaluates the flake
+(`nix flake check --no-build`), checks Nix formatting and runs the sync
+script; it does not build anything.
+
 ### Pre-commit hooks
 
 Install the pre-commit hooks after cloning:
