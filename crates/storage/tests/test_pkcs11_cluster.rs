@@ -127,6 +127,10 @@ fn provision_token(module: &PathBuf) {
             session.init_pin(&AuthPin::new(USER_PIN.into())),
             "init user pin",
         );
+        drop(session);
+        // `cryptoki` does not finalize on drop; do it explicitly so the next
+        // `C_Initialize` doesn't hit CKR_CRYPTOKI_ALREADY_INITIALIZED.
+        ok(pkcs11.finalize(), "finalize");
     }
 
     // Provision the AES key itself, as an operator's out-of-band ceremony

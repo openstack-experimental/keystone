@@ -95,6 +95,25 @@ pub struct Pkcs11Kek {
     /// `CKG_GENERATE_RANDOM`) instead of supplying one. See
     /// [`Pkcs11Kek::with_token_generated_iv`].
     token_generated_iv: bool,
+    /// Must stay the last field: struct fields drop in declaration order, so
+    /// the session is closed before `C_Finalize` runs.
+    _finalizer: Finalizer,
+}
+
+/// Calls `C_Finalize` when the last user of the module context goes away.
+///
+/// `cryptoki` does not finalize on drop and merely relies on `dlclose`
+/// resetting the module, which is not guaranteed (the library may stay
+/// resident). Without an explicit `C_Finalize` a later `C_Initialize` in the
+/// same process fails with `CKR_CRYPTOKI_ALREADY_INITIALIZED`.
+struct Finalizer(Pkcs11);
+
+impl Drop for Finalizer {
+    fn drop(&mut self) {
+        if let Err(e) = self.0.clone().finalize() {
+            tracing::warn!("PKCS#11 C_Finalize failed: {e}");
+        }
+    }
 }
 
 impl Pkcs11Kek {
@@ -134,6 +153,7 @@ impl Pkcs11Kek {
             session: Mutex::new(session),
             key,
             token_generated_iv: false,
+            _finalizer: Finalizer(pkcs11),
         })
     }
 
