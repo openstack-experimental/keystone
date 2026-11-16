@@ -193,7 +193,9 @@ jobs:
   k3s-test:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    # Pinned: on ubuntu-26.04 (kernel 7.0 azure) gosu and the CNPG instance
+    # manager hang, so postgres never comes up. See diagnostics step below.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write # Required to push to GHCR
@@ -369,6 +371,75 @@ jobs:
         if: failure()
         run: kubectl logs statefulset/keystone-rs -c keystone
 
+      - name: Dump keycloak logs
+        if: failure()
+        run: kubectl logs pod/keycloak-0
+
+      - name: Dump postgres logs
+        if: failure()
+        run: kubectl logs deploy/postgres
+
+      - name: Dump postgres endpoints
+        if: failure()
+        run: kubectl get endpoints postgres -o yaml
+
+      - name: Dump postgres svc
+        if: failure()
+        run: kubectl describe svc/postgres
+
+      - name: Dump node and network diagnostics
+        if: failure()
+        run: |
+          set +e
+          uname -r
+          iptables -V
+          docker version --format '{{.Server.Version}}'
+          kubectl get pods -A -o wide
+          echo "== journalctl k3s"
+          sudo journalctl -u k3s --no-pager | tail -200
+          echo "== containerd.log"
+          sudo tail -200 /var/lib/rancher/k3s/agent/containerd/containerd.log
+          echo "== iptables FORWARD/DOCKER"
+          sudo iptables-save | grep -E 'FORWARD|KUBE-FORWARD|DOCKER' | head -50
+          echo "== nft ruleset (head)"
+          sudo nft list ruleset 2>&1 | head -100
+          echo "== apparmor / LSM"
+          cat /sys/kernel/security/lsm
+          sudo aa-status 2>&1 | head -30
+          sudo dmesg | grep -iE 'apparmor|audit.*DENIED' | tail -30
+          kubectl exec deploy/postgres -- cat /proc/1/attr/current
+          echo "== postgres process state"
+          kubectl exec deploy/postgres -- grep -E 'open files|processes' /proc/1/limits
+          echo "== cnpg initdb pod"
+          kubectl describe pod -l job-name=keystone-db-1-initdb | tail -40
+          kubectl logs -l job-name=keystone-db-1-initdb --all-containers --tail=100
+          kubectl logs -n cnpg deploy/cloudnative-pg --tail=50
+          echo "== host processes (cnpg / postgres)"
+          ps -eo pid,ppid,stat,pcpu,user,args | grep -E 'instance|initdb|postgres|gosu' | grep -v grep | head -20
+          PID=$(pgrep -o -f 'manager instance|bin/manager')
+          echo "manager pid: $PID"
+          [ -n "$PID" ] && sudo grep -E 'State|Threads|Seccomp|NoNewPrivs' /proc/$PID/status
+          for t in /proc/$PID/task/*; do echo "$t: syscall=$(sudo cat $t/syscall) wchan=$(sudo cat $t/wchan)"; done
+          sudo ls -l /proc/$PID/fd | head -30
+          echo "== inside cnpg initdb pod"
+          IP=$(kubectl get pod -l job-name=keystone-db-1-initdb -o name | head -1)
+          kubectl exec "$IP" -c initdb -- ps -eo pid,stat,wchan:20,args
+          kubectl exec "$IP" -c initdb -- psql -h /controller/run -U postgres -c "select pid,backend_type,state,wait_event_type,wait_event,left(query,80) from pg_stat_activity"
+          kubectl exec "$IP" -c initdb -- tail -30 /controller/log/postgres.csv
+          kubectl exec "$IP" -c initdb -- ls -la /controller/run
+          kubectl exec deploy/postgres -- sh -c 'ps aux; echo; ls -la /var/lib/postgresql/data | head -20; echo; pg_isready -h 127.0.0.1 -p 5432; ss -ltn 2>/dev/null || cat /proc/net/tcp'
+          echo "== postgres logs via crictl"
+          sudo k3s crictl ps -a --name postgres
+          for c in $(sudo k3s crictl ps -a --name postgres -q); do sudo k3s crictl logs "$c" 2>&1 | tail -50; done
+          echo "== connectivity test (service, pod IP, localhost)"
+          PGIP=$(kubectl get pod -l app=postgres -o jsonpath='{.items[0].status.podIP}')
+          kubectl run nc-diag --restart=Never --image=busybox -- sh -c "echo svc; nc -zv -w 5 postgres 5432; echo podip; nc -zv -w 5 $PGIP 5432"
+          sleep 15
+          kubectl logs nc-diag
+          kubectl delete pod nc-diag --wait=false
+          echo "== host to pod IP"
+          nc -zv -w 5 "$PGIP" 5432
+
       - name: Dump bootstrap job
         if: failure()
         run: kubectl get job keystone-bootstrap -o yaml
@@ -399,7 +470,9 @@ jobs:
   k3s-raft-pkcs11:
     needs: changes
     if: needs.changes.outputs.raft_kek == 'true' && github.event_name != 'merge_group'
-    runs-on: ubuntu-latest
+    # Pinned: on ubuntu-26.04 (kernel 7.0 azure) gosu and the CNPG instance
+    # manager hang, so postgres never comes up. See diagnostics step below.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -464,6 +537,7 @@ jobs:
         run: |
           kubectl -n keystone-raft-test logs statefulset/keystone-rs --all-containers --tail=500 || true
           kubectl -n keystone-raft-test logs statefulset/keystone-rs --all-containers --previous --tail=500 || true
+          kubectl -n keystone-raft-test logs statefulset/keycloak --all-containers --previous --tail=500 || true
 
       - name: Dump bootstrap job
         if: failure()

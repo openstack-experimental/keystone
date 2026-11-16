@@ -8,3 +8,4 @@ resources:
 
 patchesStrategicMerge:
   - keycloak-replica-patch.yaml
+  - postgres-nonroot-patch.yaml

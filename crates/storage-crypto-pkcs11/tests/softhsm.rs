@@ -106,6 +106,7 @@ impl TestToken {
                 "init user pin",
             );
         }
+        ok(pkcs11.finalize(), "finalize");
         Self { module }
     }
 
@@ -311,7 +312,9 @@ fn test_open_slot_by_label_matches_slot_by_id() {
             pkcs11
                 .initialize(CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK))
                 .expect("initialize for slot lookup");
-            pkcs11.get_slots_with_token().expect("slots")[0].id()
+            let id = pkcs11.get_slots_with_token().expect("slots")[0].id();
+            pkcs11.finalize().expect("finalize slot lookup");
+            id
         };
 
         let kek_by_id = Pkcs11Kek::open(Pkcs11KekParams {
