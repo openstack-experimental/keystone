@@ -79,6 +79,12 @@ who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-run"
 delta = "1.11.0 -> 1.12.0"
 
+[[audits.pulldown-cmark]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "0.13.4 -> 0.13.6"
+notes = "New parameter added to existing code, no new unsafe code."
+
 [[audits.quinn-udp]]
 who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-deploy"

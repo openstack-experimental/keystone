@@ -71,7 +71,7 @@ feature-depth = 1
 # output a note when they are encountered.
 ignore = [
     { id = "RUSTSEC-2023-0071", reason = "rsa have still not released update"},
-    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.x via elliptic-curve/rsa has no patch; see supply-chain/vex"},
+    #{ id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.x via elliptic-curve/rsa has no patch; see supply-chain/vex"},
     # zstd/zstd-safe advisories: drop once wasmtime moves to zstd >=0.14.3 / zstd-safe >=8.2.0
     { id = "RUSTSEC-2026-0398", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
     { id = "RUSTSEC-2026-0391", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
@@ -85,7 +85,11 @@ ignore = [
     { id = "RUSTSEC-2026-0403", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
     { id = "RUSTSEC-2026-0404", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
     { id = "RUSTSEC-2026-0405", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
-    { id = "RUSTSEC-2026-0406", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" }
+    { id = "RUSTSEC-2026-0406", reason = "zstd via wasmtime-internal-cache, which only uses encode_all/decode_all; affected API/feature not used" },
+    { id = "RUSTSEC-2026-0459", reason = "sqlite is only recommended for testing" },
+    { id = "RUSTSEC-2026-0543", reason = "Chrono-tz is unmaintained, but lot of deps still use it"},
+    { id = "RUSTSEC-2026-0555", reason = "Chrono-tz is unmaintained, but lot of deps still use it"},
+    { id = "RUSTSEC-2026-0559", reason = "Chrono-tz is unmaintained, but lot of deps still use it"},
     #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
     #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
     #{ crate = "a-crate-that-is-yanked@0.1.1", reason = "you can specify why you are ignoring the yanked crate" },
