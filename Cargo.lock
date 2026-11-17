@@ -3985,17 +3985,17 @@ dependencies = [
 
 [[package]]
 name = "jsonwebtoken"
-version = "11.1.0"
+version = "12.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e75fe14a82d81e5f5af639997db37d8b96045938a7ac6ab18cdbe1c7467e05e1"
+checksum = "f347a975eb5fa8f5c4eadce6c1152c11c326cf32cf839fb64ff12d5cb8f4ce8b"
 dependencies = [
- "base64 0.22.1",
- "getrandom 0.2.17",
+ "base64 0.23.1",
+ "getrandom 0.4.3",
  "js-sys",
- "pem 3.0.6",
+ "pem",
  "serde",
  "serde_json",
- "signature 2.2.0",
+ "signature 3.0.0",
  "simple_asn1",
  "zeroize",
 ]
@@ -4973,7 +4973,7 @@ dependencies = [
  "openstack-keystone-trust-driver-sql",
  "openstack-keystone-webauthn",
  "oslo-config",
- "pem 4.0.0",
+ "pem",
  "rand 0.10.3",
  "rcgen",
  "reqwest",
@@ -5578,7 +5578,7 @@ dependencies = [
  "nix",
  "notify",
  "openstack-keystone-jwt-crypto",
- "pem 4.0.0",
+ "pem",
  "scopeguard",
  "secrecy",
  "serde",
@@ -6812,16 +6812,6 @@ checksum = "f3420ea4424090cbd75a688996f696a807c68d6744b4863591b86435dc3078e9"
 
 [[package]]
 name = "pem"
-version = "3.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
-dependencies = [
- "base64 0.22.1",
- "serde_core",
-]
-
-[[package]]
-name = "pem"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d354a98a3d1251555de99e8fdd8afda05573c31b82f59063a7b0a29b5527f120"
@@ -7677,7 +7667,7 @@ version = "0.14.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8774e05a7d0de114588e6a28fe7e71694b82614ed569d86d8b389dfbc98b8ad8"
 dependencies = [
- "pem 4.0.0",
+ "pem",
  "ring",
  "rustls-pki-types",
  "time",
