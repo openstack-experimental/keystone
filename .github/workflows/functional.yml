@@ -193,9 +193,7 @@ jobs:
   k3s-test:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    # Pinned: on ubuntu-26.04 (kernel 7.0 azure) gosu and the CNPG instance
-    # manager hang, so postgres never comes up. See diagnostics step below.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write # Required to push to GHCR
@@ -213,6 +211,16 @@ jobs:
           # Configure Docker to trust the local registry without HTTPS
           echo '{"insecure-registries":["localhost:5000"]}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
+
+      - name: Relax AppArmor unconfined restriction
+        run: |
+          # Ubuntu 26.04 kernels (>= 7.0.0-41) stack container AppArmor
+          # profiles as "<profile>//&unconfined" and the default containerd
+          # profile denies signals to the stacked peer. Go programs that drop
+          # privileges (gosu in the postgres image, CNPG instance manager)
+          # then spin forever. See moby/moby#54099 and
+          # containerd/containerd#14485.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0 || true
 
       - name: Install K3s
         run: |
@@ -298,14 +306,24 @@ jobs:
           # forward the service's port 80 (privileged, hence sudo) and map the
           # name to the loopback address.
           echo "127.0.0.1 keystone-rs.local" | sudo tee -a /etc/hosts
-          sudo -E kubectl port-forward svc/keystone-rs 80:80 > /dev/null 2>&1 &
+          # `sudo -E` is rejected by sudo-rs (Ubuntu 26.04), so pass the
+          # kubeconfig explicitly.
+          sudo env KUBECONFIG="$KUBECONFIG" "$(command -v kubectl)" \
+            port-forward svc/keystone-rs 80:80 > /tmp/port-forward.log 2>&1 &
           PORT_FORWARD_PID=$!
+          READY=0
           for i in $(seq 1 60); do
             if curl -s http://keystone-rs.local/health/ > /dev/null 2>&1; then
+              READY=1
               break
             fi
             sleep 2
           done
+          if [ "$READY" != 1 ]; then
+            echo "keystone-rs.local did not become reachable"
+            cat /tmp/port-forward.log
+            exit 1
+          fi
 
           mkdir -p tests/loadtest/reports
           (cd tests/loadtest && ./target/release/load_test \
@@ -470,9 +488,7 @@ jobs:
   k3s-raft-pkcs11:
     needs: changes
     if: needs.changes.outputs.raft_kek == 'true' && github.event_name != 'merge_group'
-    # Pinned: on ubuntu-26.04 (kernel 7.0 azure) gosu and the CNPG instance
-    # manager hang, so postgres never comes up. See diagnostics step below.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read
@@ -488,6 +504,13 @@ jobs:
         run: |
           echo '{"insecure-registries":["localhost:5000"]}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
+
+      # Ubuntu 26.04 kernels stack container AppArmor profiles and drop
+      # signals between a container's own processes, which hangs Go programs
+      # dropping privileges (gosu, CNPG). See moby/moby#54099.
+      - name: Relax AppArmor unconfined restriction
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0 || true
 
       - name: Install K3s
         run: |
