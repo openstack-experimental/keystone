@@ -16,7 +16,6 @@ use std::fmt;
 use openraft::EntryPayload;
 use openraft::alias::LogIdOf;
 use openraft::entry::RaftEntry;
-use openraft::entry::RaftPayload;
 
 use crate::TypeConfig;
 use crate::pb::api::CommandRequest;
@@ -28,24 +27,9 @@ impl fmt::Display for pb::raft::Entry {
     }
 }
 
-impl RaftPayload<crate::types::NodeId, pb::raft::Node> for pb::raft::Entry {
-    fn get_membership(&self) -> Option<crate::types::Membership> {
-        // NOTE: Converting the membership is fallible. This interface does not
-        // allow us to handle it properly, so the conversion error is
-        // treated as `None`.
-        self.membership
-            .clone()
-            .map(TryInto::try_into)
-            .transpose()
-            .unwrap_or(None)
-    }
-}
-
 impl RaftEntry for pb::raft::Entry {
     type CommittedLeaderId = u64;
-    type D = CommandRequest;
-    type Node = pb::raft::Node;
-    type NodeId = u64;
+    type Payload = EntryPayload<CommandRequest, crate::types::Membership>;
 
     fn log_id_parts(&self) -> (&u64, u64) {
         (&self.term, self.index)
@@ -53,7 +37,7 @@ impl RaftEntry for pb::raft::Entry {
 
     fn new(
         log_id: LogIdOf<TypeConfig>,
-        payload: EntryPayload<CommandRequest, u64, pb::raft::Node>,
+        payload: EntryPayload<CommandRequest, crate::types::Membership>,
     ) -> Self {
         let mut app_data = None;
         let mut membership = None;
@@ -68,6 +52,28 @@ impl RaftEntry for pb::raft::Entry {
             index: log_id.index,
             app_data,
             membership,
+        }
+    }
+
+    fn get_membership(&self) -> Option<crate::types::Membership> {
+        // NOTE: Converting the membership is fallible. This interface does not
+        // allow us to handle it properly, so the conversion error is
+        // treated as `None`.
+        match self
+            .membership
+            .clone()
+            .map(crate::types::Membership::try_from)
+            .transpose()
+        {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!(
+                    index = self.index,
+                    term = self.term,
+                    "log entry carries an invalid membership: {e}"
+                );
+                None
+            }
         }
     }
 

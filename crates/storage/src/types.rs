@@ -57,7 +57,7 @@ pub type AppendEntriesRequest = openraft::raft::AppendEntriesRequest<TypeConfig>
 pub type AppendEntriesResponse = openraft::raft::AppendEntriesResponse<TypeConfig>;
 pub type SnapshotResponse = openraft::raft::SnapshotResponse<TypeConfig>;
 pub type ClientWriteResponse = openraft::raft::ClientWriteResponse<TypeConfig>;
-pub type StreamAppendResult = openraft::raft::StreamAppendResult<TypeConfig>;
+pub type AppendResult = openraft::raft::AppendResult<TypeConfig>;
 
 /// Fjall-backed persistence for the nonce counter manager.
 ///

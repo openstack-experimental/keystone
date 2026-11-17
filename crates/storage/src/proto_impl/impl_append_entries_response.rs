@@ -11,11 +11,11 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use openraft::raft::StreamAppendError;
+use openraft::raft::AppendError;
 
 use crate::pb;
 use crate::types::AppendEntriesResponse;
-use crate::types::StreamAppendResult;
+use crate::types::AppendResult;
 
 impl From<pb::raft::AppendEntriesResponse> for AppendEntriesResponse {
     fn from(r: pb::raft::AppendEntriesResponse) -> Self {
@@ -62,8 +62,8 @@ impl From<AppendEntriesResponse> for pb::raft::AppendEntriesResponse {
     }
 }
 
-impl From<StreamAppendResult> for pb::raft::AppendEntriesResponse {
-    fn from(result: StreamAppendResult) -> Self {
+impl From<AppendResult> for pb::raft::AppendEntriesResponse {
+    fn from(result: AppendResult) -> Self {
         match result {
             Ok(Some(log_id)) => pb::raft::AppendEntriesResponse {
                 rejected_by: None,
@@ -75,12 +75,12 @@ impl From<StreamAppendResult> for pb::raft::AppendEntriesResponse {
                 conflict: false,
                 last_log_id: None,
             },
-            Err(StreamAppendError::Conflict(log_id)) => pb::raft::AppendEntriesResponse {
+            Err(AppendError::Conflict { log_id, .. }) => pb::raft::AppendEntriesResponse {
                 rejected_by: None,
                 conflict: true,
                 last_log_id: Some(log_id.into()),
             },
-            Err(StreamAppendError::HigherVote(vote)) => pb::raft::AppendEntriesResponse {
+            Err(AppendError::HigherVote(vote)) => pb::raft::AppendEntriesResponse {
                 rejected_by: Some(vote),
                 conflict: false,
                 last_log_id: None,

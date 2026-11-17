@@ -198,8 +198,8 @@ pub fn is_conflict_violation(violation: &Violation) -> bool {
 ///
 /// - no violation: `Ok(response)`;
 /// - a conflict (`CONFLICT` violation or `Err(Conflict)`): `Err(conflict())`;
-/// - any other violation: `Err(`[`StoreError::Rejected`]`)` converted into
-///   `E`, keeping its type, never a conflict;
+/// - any other violation: `Err(`[`StoreError::Rejected`]`)` converted into `E`,
+///   keeping its type, never a conflict;
 /// - any other error: passed through converted into `E`.
 pub fn require_no_conflict<E>(
     result: Result<StoreResponse, StoreError>,

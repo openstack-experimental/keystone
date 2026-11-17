@@ -97,8 +97,8 @@ async fn test_drop_keyspace_is_replicated_and_allow_listed_inner() -> Result<()>
     }
     assert!(leader.get_by_key(b"keep", None).await?.is_some());
 
-    // A drop sharing a transaction with other mutations is refused and rolls the
-    // whole batch back.
+    // A drop sharing a transaction with other mutations is refused and rolls
+    // the whole batch back.
     let mixed = leader
         .transaction(vec![
             create("single_use_assertion_100", "k3")?,

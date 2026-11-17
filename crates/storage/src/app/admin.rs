@@ -426,6 +426,7 @@ impl Storage {
             Err(RaftError::APIError(ClientWriteError::ForwardToLeader(ForwardToLeader {
                 leader_id: Some(leader_id),
                 leader_node: Some(leader_node),
+                reason: ForwardReason::NotLeader,
             }))) => {
                 self.report_quarantine_with_forwarding(
                     node_id,
@@ -435,6 +436,13 @@ impl Storage {
                 )
                 .await
             }
+            // Leader unknown, or leadership is being transferred: the hinted
+            // node may not be leader yet, so let the caller re-resolve.
+            Err(RaftError::APIError(ClientWriteError::ForwardToLeader(_))) => Err(
+                StoreError::Unavailable(openstack_keystone_common::StorageUnavailable::new(
+                    "leader unknown or leadership transfer in progress",
+                )),
+            ),
             Err(other) => Err(other)?,
         }
     }
@@ -526,10 +534,18 @@ impl Storage {
             Err(RaftError::APIError(ClientWriteError::ForwardToLeader(ForwardToLeader {
                 leader_id: Some(leader_id),
                 leader_node: Some(leader_node),
+                reason: ForwardReason::NotLeader,
             }))) => {
                 self.command_with_forwarding(command, leader_id, leader_node.rpc_addr)
                     .await
             }
+            // Leader unknown, or leadership is being transferred: the hinted
+            // node may not be leader yet, so let the caller re-resolve.
+            Err(RaftError::APIError(ClientWriteError::ForwardToLeader(_))) => Err(
+                StoreError::Unavailable(openstack_keystone_common::StorageUnavailable::new(
+                    "leader unknown or leadership transfer in progress",
+                )),
+            ),
             Err(other) => Err(other)?,
         }
     }

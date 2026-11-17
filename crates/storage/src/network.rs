@@ -32,7 +32,7 @@ use openraft::error::{NetworkError, ReplicationClosed, Unreachable};
 use openraft::network::{
     Backoff, NetBackoff, NetSnapshot, NetStreamAppend, NetTransferLeader, NetVote, RPCOption,
 };
-use openraft::raft::{StreamAppendError, StreamAppendResult, TransferLeaderRequest};
+use openraft::raft::{AppendError, AppendResult, TransferLeaderRequest};
 use openraft::{AnyError, OptionalSend, RaftNetworkFactory};
 use secrecy::ExposeSecret;
 use spiffe::{X509Source, X509SourceBuilder};
@@ -410,9 +410,9 @@ impl NetworkConnection {
     /// required `last_log_id` carrying the conflict log id.
     fn pb_to_stream_result(
         resp: pb::raft::AppendEntriesResponse,
-    ) -> Result<StreamAppendResult<TypeConfig>, RPCError> {
+    ) -> Result<AppendResult<TypeConfig>, RPCError> {
         if let Some(higher_vote) = resp.rejected_by {
-            return Ok(Err(StreamAppendError::HigherVote(higher_vote)));
+            return Ok(Err(AppendError::HigherVote(higher_vote)));
         }
 
         if resp.conflict {
@@ -421,7 +421,10 @@ impl NetworkConnection {
                     "Missing `last_log_id` in conflict stream-append response",
                 )))
             })?;
-            return Ok(Err(StreamAppendError::Conflict(conflict_log_id.into())));
+            return Ok(Err(AppendError::Conflict {
+                log_id: conflict_log_id.into(),
+                hint: None,
+            }));
         }
 
         Ok(Ok(resp.last_log_id.map(Into::into)))
@@ -433,10 +436,7 @@ impl NetStreamAppend<TypeConfig> for NetworkConnection {
         &'s mut self,
         input: S,
         _option: RPCOption,
-    ) -> BoxFuture<
-        's,
-        Result<BoxStream<'s, Result<StreamAppendResult<TypeConfig>, RPCError>>, RPCError>,
-    >
+    ) -> BoxFuture<'s, Result<BoxStream<'s, Result<AppendResult<TypeConfig>, RPCError>>, RPCError>>
     where
         S: Stream<Item = AppendEntriesRequest> + OptionalSend + Unpin + 'static,
     {
