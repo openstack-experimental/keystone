@@ -903,7 +903,7 @@ mod tests {
     #[test]
     fn verify_jwt_rejects_symmetric_hs256() {
         openstack_keystone_jwt_crypto::install().unwrap();
-        let key = EncodingKey::from_secret(b"symmetric-secret");
+        let key = EncodingKey::from_secret(b"symmetric-secret").unwrap();
         let exp = (Utc::now() + TimeDelta::hours(1)).timestamp();
         let claims = json!({"sub": "user", "exp": exp});
         let token = encode(&JwtHeader::default(), &claims, &key).unwrap();
@@ -1935,7 +1935,7 @@ mod tests {
         mock_idp(&server, &base_url, &jwks_body());
 
         openstack_keystone_jwt_crypto::install().unwrap();
-        let key = EncodingKey::from_secret(TEST_JWK_N.as_bytes());
+        let key = EncodingKey::from_secret(TEST_JWK_N.as_bytes()).unwrap();
         let claims = valid_claims(&base_url, "my-client", None);
         let token = encode(&JwtHeader::default(), &claims, &key).unwrap();
 

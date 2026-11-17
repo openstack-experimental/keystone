@@ -132,8 +132,8 @@ fn hmac_roundtrip() {
     for alg in [Algorithm::HS256, Algorithm::HS384, Algorithm::HS512] {
         roundtrip(
             alg,
-            &EncodingKey::from_secret(b"secret"),
-            &DecodingKey::from_secret(b"secret"),
+            &EncodingKey::from_secret(b"secret").unwrap(),
+            &DecodingKey::from_secret(b"secret").unwrap(),
         );
     }
 }

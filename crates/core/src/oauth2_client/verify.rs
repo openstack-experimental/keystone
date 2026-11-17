@@ -1372,7 +1372,12 @@ mod tests {
         // An attacker signs with HMAC, using public key material as the secret.
         let mut header = Header::new(Algorithm::HS256);
         header.kid = Some("any".to_string());
-        let token = encode(&header, &claims, &EncodingKey::from_secret(b"public-key")).unwrap();
+        let token = encode(
+            &header,
+            &claims,
+            &EncodingKey::from_secret(b"public-key").unwrap(),
+        )
+        .unwrap();
         let (_, jwks, _) = sign(&claims);
 
         assert!(matches!(

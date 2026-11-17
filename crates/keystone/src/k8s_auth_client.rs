@@ -242,7 +242,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
         jsonwebtoken::encode(
             &jsonwebtoken::Header::default(),
             &claims,
-            &jsonwebtoken::EncodingKey::from_secret("secret".as_ref()),
+            &jsonwebtoken::EncodingKey::from_secret("secret".as_ref()).expect("hmac key"),
         )
         .expect("encode token")
     }
