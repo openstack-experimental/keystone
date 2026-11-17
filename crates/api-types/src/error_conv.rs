@@ -89,6 +89,9 @@ impl IntoResponse for KeystoneApiError {
             KeystoneApiError::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
             KeystoneApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             KeystoneApiError::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
+            KeystoneApiError::OAuth2InvalidRequest(_) => StatusCode::BAD_REQUEST,
+            KeystoneApiError::OAuth2UnsupportedGrantType(_) => StatusCode::BAD_REQUEST,
+            KeystoneApiError::OAuth2InvalidClient(_) => StatusCode::UNAUTHORIZED,
             _ => StatusCode::BAD_REQUEST,
         };
 

@@ -77,6 +77,15 @@ where
     }
 }
 
+pub(crate) fn deserialize_optional_secret<'de, D>(
+    deserializer: D,
+) -> Result<Option<SecretString>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(|opt| opt.map(SecretString::from))
+}
+
 pub(crate) fn serialize_nested_optional_secret<S>(
     secret: &Option<Option<SecretString>>,
     serializer: S,

@@ -96,7 +96,7 @@ pub(super) async fn create(
 /// Inner auth flow that returns the `ValidatedSecurityContext` alongside the
 /// HTTP response so the outer handler can build the audit `Initiator`.
 #[allow(clippy::too_many_arguments)]
-async fn create_inner(
+pub(crate) async fn create_inner(
     state: &ServiceState,
     query: CreateTokenParameters,
     req: AuthRequest,

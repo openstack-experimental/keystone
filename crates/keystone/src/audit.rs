@@ -101,6 +101,9 @@ pub fn error_variant_name(error: &KeystoneApiError) -> String {
         KeystoneApiError::TooManyRequests { .. } => "TooManyRequests".to_string(),
         KeystoneApiError::ServiceUnavailable(_) => "ServiceUnavailable".to_string(),
         KeystoneApiError::QuotaExceeded(_) => "QuotaExceeded".to_string(),
+        KeystoneApiError::OAuth2InvalidRequest(_) => "OAuth2InvalidRequest".to_string(),
+        KeystoneApiError::OAuth2UnsupportedGrantType(_) => "OAuth2UnsupportedGrantType".to_string(),
+        KeystoneApiError::OAuth2InvalidClient(_) => "OAuth2InvalidClient".to_string(),
     }
 }
 
