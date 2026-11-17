@@ -3953,9 +3953,9 @@ dependencies = [
 
 [[package]]
 name = "json-patch"
-version = "4.2.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7421438de105a0827e44fadd05377727847d717c80ce29a229f85fd04c427b72"
+checksum = "aa295c8f71b9bad32d060e0e145f96dcba0cc6c6171e129646140d1c96b05617"
 dependencies = [
  "jsonptr",
  "serde",
@@ -3975,9 +3975,9 @@ dependencies = [
 
 [[package]]
 name = "jsonptr"
-version = "0.7.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5a3cc660ba5d72bce0b3bb295bf20847ccbb40fd423f3f05b61273672e561fe"
+checksum = "72c22d99362c7aac7d77efab6b49c2181674b165d7e6e7c755b3432ded64bf51"
 dependencies = [
  "serde",
  "serde_json",
@@ -6033,14 +6033,14 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-auth-applicationcredential"
-version = "0.22.7"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6f121ce60aa728e0be6723b0449ac4607282af866c7e20edd17b51288b2b0d9"
+checksum = "5d0bc0bdbdc8cdca0cfc917dac69f366d41e2d8fdf8408b891579cfd250814d2"
 dependencies = [
  "async-trait",
  "bytes",
  "inventory",
- "openstack-sdk-auth-core",
+ "openstack-sdk-auth-core 0.23.0",
  "reqwest",
  "secrecy",
  "serde",
@@ -6057,6 +6057,29 @@ name = "openstack-sdk-auth-core"
 version = "0.22.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c94187439dcb784b405bce4f5361cfd7102ba34489aa824b6f80ac13d010040"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "derive_builder",
+ "dyn-clone",
+ "http",
+ "inventory",
+ "reqwest",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "openstack-sdk-auth-core"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5625e791f5b11845921895dce807783e0b0e6ac0736591a14462297d0be01b97"
 dependencies = [
  "async-trait",
  "bytes",
@@ -6084,7 +6107,7 @@ checksum = "1e51ef2bbb6fd7f9f5c033bd27c1baa148e16afb6412ddd8c7d54c8d1d4a2bd7"
 dependencies = [
  "async-trait",
  "inventory",
- "openstack-sdk-auth-core",
+ "openstack-sdk-auth-core 0.22.7",
  "reqwest",
  "secrecy",
  "serde",
@@ -6098,13 +6121,13 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-auth-oidcclientcredentials"
-version = "0.22.7"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51a4a0d5428379dc049326c78ca27be0db941535d20fba8eb149def045aeea28"
+checksum = "cf6e19cb934bcfa444ea1f878386c855b794d967178a8989526c82554c7c7ee2"
 dependencies = [
  "async-trait",
  "inventory",
- "openstack-sdk-auth-core",
+ "openstack-sdk-auth-core 0.23.0",
  "reqwest",
  "secrecy",
  "serde",
@@ -6117,14 +6140,14 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-auth-password"
-version = "0.22.7"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0402132fb27b1ee339aa0a01071808c2e03dad6421c258d45f23c6aa9da75eb2"
+checksum = "4c7b707fa51dd4749498352fb35c45cc232d7e98fb91a7268a495d685f84d7e9"
 dependencies = [
  "async-trait",
  "bytes",
  "inventory",
- "openstack-sdk-auth-core",
+ "openstack-sdk-auth-core 0.23.0",
  "reqwest",
  "secrecy",
  "serde",
@@ -6139,14 +6162,14 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-auth-receipt"
-version = "0.22.7"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28fe60f5fdbb1b861066e368832943485f8a699521750f433503bd5c1fe634f9"
+checksum = "ec3841faace6d1adaa28813d0b508b733d5d9fb5fc42bd004198dadb084500be"
 dependencies = [
  "async-trait",
  "bytes",
  "inventory",
- "openstack-sdk-auth-core",
+ "openstack-sdk-auth-core 0.23.0",
  "openstack-sdk-auth-password",
  "openstack-sdk-auth-token",
  "openstack-sdk-auth-totp",
@@ -6163,14 +6186,14 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-auth-token"
-version = "0.22.7"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b230f8050818762d7b760920ef607af112063f2a17d351184a573eb659ae402"
+checksum = "3508d317cd3225885941b2f67df88d2a5a66155432a6c54286ab32be9b786235"
 dependencies = [
  "async-trait",
  "bytes",
  "inventory",
- "openstack-sdk-auth-core",
+ "openstack-sdk-auth-core 0.23.0",
  "reqwest",
  "secrecy",
  "serde",
@@ -6184,14 +6207,14 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-auth-totp"
-version = "0.22.7"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9be4e66dde81e525cc766783fdff9c36e3eae57dba3aa1d9b23b3c083a26ec94"
+checksum = "bc8390ecb61973644a63c6b6f3dd977819255667406404d77547ff42ecf420d9"
 dependencies = [
  "async-trait",
  "bytes",
  "inventory",
- "openstack-sdk-auth-core",
+ "openstack-sdk-auth-core 0.23.0",
  "reqwest",
  "secrecy",
  "serde",
@@ -6205,14 +6228,14 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-auth-websso"
-version = "0.22.7"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e905c15b0086424ce52a193f66d992cd1bcc59007258f86432b32a13dfa71a2"
+checksum = "4c756d73c4e2cacaeea559b18f0fa3d402f0b5a9f82ac1c54e6a6a2af7d99b18"
 dependencies = [
  "async-trait",
  "dialoguer",
  "inventory",
- "openstack-sdk-auth-core",
+ "openstack-sdk-auth-core 0.23.0",
  "openstack-sdk-websso-host",
  "reqwest",
  "secrecy",
@@ -6224,9 +6247,9 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-block-storage"
-version = "0.22.8"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "806153f3fe1723d413c774ce50fa523ad163a5b38f6cefd97b6a0c8bec85cb6a"
+checksum = "4056f6263735704240e65fec3ba21486571b3707cebd4a08b45b1f3a522eedf1"
 dependencies = [
  "derive_builder",
  "http",
@@ -6238,9 +6261,9 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-compute"
-version = "0.22.8"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5954201970fc8f1ff3fe94cac6286f2956c1815a70f8d0dd9ace9ac42ccf359e"
+checksum = "5be997b148483c3a07652e19f8d731aad73399cf7467494f205ca469754968cd"
 dependencies = [
  "derive_builder",
  "http",
@@ -6252,9 +6275,9 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-container-infrastructure-management"
-version = "0.22.8"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31a25178b49f927b651877f231f8705d2165b29c439a4dc8b1d734558a9cf04d"
+checksum = "a1a1a70a49eb300a101990d0489eb292375295c448e3043d27870cf06a49cbd0"
 dependencies = [
  "derive_builder",
  "http",
@@ -6266,9 +6289,9 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-dns"
-version = "0.22.8"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fb3aea1df1b33882251a42152f7702d25695218d46312469ee379f3c17f2aab"
+checksum = "fbfe230eadd265ebf919aa2bf2929f3122e7c60f05cd2eee0ae7a080913b368b"
 dependencies = [
  "derive_builder",
  "http",
@@ -6280,9 +6303,9 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-identity"
-version = "0.22.8"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3b95eb0966198cd52484b26296c56f1cdadc07492c2ad56c779060ac60e600d"
+checksum = "6e7fcfaad2e98c9cfa7b5a2881eddc87c1e4e015fdb650506941144c3171431a"
 dependencies = [
  "derive_builder",
  "http",
@@ -6295,9 +6318,9 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-image"
-version = "0.22.8"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39a07de20120dd3096c0774b2e5c9114ec6c9843212d8fbe0429538beee14919"
+checksum = "522ee7d6d1fe3523f3dd30388b121411e3b4d5d3b6143159cb5e03eb05f0e2ef"
 dependencies = [
  "derive_builder",
  "http",
@@ -6310,9 +6333,9 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-load-balancer"
-version = "0.22.8"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56109ec7ad0f826b06f7c255582631da0c469cae0ce00e20a4784c036ae07bb5"
+checksum = "72143ad2b9c22e6ff79076c1114fee03739f19cdfcfe1d9560577e4061f52f0c"
 dependencies = [
  "derive_builder",
  "http",
@@ -6324,9 +6347,9 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-network"
-version = "0.22.8"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc8b55f1b35fe7606e66dc495d8fba8d85f85b7fe27c1f836d7cf81ae6e9a8d4"
+checksum = "c49d53300272f660e0ba86d2ada5922d6da84284222f05d60a9b56d710eaec86"
 dependencies = [
  "derive_builder",
  "http",
@@ -6338,9 +6361,9 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-object-store"
-version = "0.22.8"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2f56d7dbdc79719c4bab6f732eab5bd2d5b202f177cfa82e639d08b59b3aa38"
+checksum = "6ee566d6c6110963748e5005f4bd250030a3d78d8751cd7a1c9ee9ba8ee6b21a"
 dependencies = [
  "async-trait",
  "derive_builder",
@@ -6354,9 +6377,9 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-placement"
-version = "0.22.8"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ee6bee5f706580d300cb9c6f8b81acf9e8a023401fe72cde83921dc442465df"
+checksum = "9e7e6f8e1c22f54196c8a19204857306f22e4a61c49f13bf9547e8d4667aca97"
 dependencies = [
  "derive_builder",
  "http",
@@ -6368,9 +6391,9 @@ dependencies = [
 
 [[package]]
 name = "openstack-sdk-websso-host"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc8d3d4479e4126d55e2f7a9fd69ad0794e3f5c2fdcbcf4b2f42f1d6f2b97df1"
+checksum = "924e3d52c7fcbdc07035005a780295f1b729c32e94cdecc7b59f14452cc64a19"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -6389,9 +6412,9 @@ dependencies = [
 
 [[package]]
 name = "openstack_sdk"
-version = "0.22.8"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b79c184aada9dc3f918d73e8ac627c5e272c7b3a5844016eee4682ab040220a5"
+checksum = "7b1ca15a79d960e2003d8480df543dbe0b9a4ac1472d027f9271b1b32906dcb4"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -6403,7 +6426,7 @@ dependencies = [
  "http",
  "inventory",
  "openstack-sdk-auth-applicationcredential",
- "openstack-sdk-auth-core",
+ "openstack-sdk-auth-core 0.23.0",
  "openstack-sdk-auth-oidcaccesstoken",
  "openstack-sdk-auth-oidcclientcredentials",
  "openstack-sdk-auth-password",
@@ -6422,7 +6445,8 @@ dependencies = [
  "openstack-sdk-object-store",
  "openstack-sdk-placement",
  "openstack_sdk_core",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
+ "petgraph 0.8.3",
  "reqwest",
  "secrecy",
  "serde",
@@ -6436,9 +6460,9 @@ dependencies = [
 
 [[package]]
 name = "openstack_sdk_core"
-version = "0.22.8"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67b2774ac66073de4e422afc562cc2a50e42029c0d7ce1ad64b2cee537d1519d"
+checksum = "1f9860e83d5d58e26072fa736ff8cdf730c7d48ce2d2534df6cd796e99128671"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -6453,7 +6477,7 @@ dependencies = [
  "futures-util",
  "http",
  "itertools 0.15.0",
- "openstack-sdk-auth-core",
+ "openstack-sdk-auth-core 0.23.0",
  "postcard",
  "regex",
  "reqwest",
@@ -6863,6 +6887,7 @@ dependencies = [
  "fixedbitset 0.5.7",
  "hashbrown 0.15.5",
  "indexmap 2.14.2",
+ "serde",
 ]
 
 [[package]]
