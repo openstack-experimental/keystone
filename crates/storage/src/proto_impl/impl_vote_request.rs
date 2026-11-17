@@ -19,6 +19,7 @@ impl From<VoteRequest> for pb::raft::VoteRequest {
         pb::raft::VoteRequest {
             vote: Some(vote_req.vote),
             last_log_id: vote_req.last_log_id.map(|log_id| log_id.into()),
+            leadership_transfer_from: vote_req.leadership_transfer_from,
         }
     }
 }
@@ -30,6 +31,29 @@ impl TryFrom<pb::raft::VoteRequest> for VoteRequest {
             .vote
             .ok_or_else(|| StoreError::RaftMissingParameter("VoteResponse.Vote".into()))?;
         let last_log_id = proto_vote_req.last_log_id.map(|log_id| log_id.into());
-        Ok(VoteRequest::new(vote, last_log_id))
+        let mut req = VoteRequest::new(vote, last_log_id);
+        req.leadership_transfer_from = proto_vote_req.leadership_transfer_from;
+        Ok(req)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leadership_transfer_from_round_trips() {
+        let vote = pb::raft::Vote::default();
+        let mut req = VoteRequest::new(vote, None);
+        req.leadership_transfer_from = Some(vote);
+
+        let decoded = VoteRequest::try_from(pb::raft::VoteRequest::from(req))
+            .unwrap_or_else(|_| VoteRequest::new(vote, None));
+        assert_eq!(decoded.leadership_transfer_from, Some(vote));
+
+        let plain =
+            VoteRequest::try_from(pb::raft::VoteRequest::from(VoteRequest::new(vote, None)))
+                .unwrap_or_else(|_| unreachable!());
+        assert_eq!(plain.leadership_transfer_from, None);
     }
 }

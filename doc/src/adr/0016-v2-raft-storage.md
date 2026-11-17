@@ -100,8 +100,7 @@ a second operator with the `storage-operator` role must confirm within 5 minutes
 via a separate `ConfirmRotateDekRequest` RPC. Dual-control events are recorded
 in the audit log with both operator identities.
 
-**Supply Chain:** Dependencies are locked to exact versions in `Cargo.lock`
-(`openraft` is additionally pinned with `=` in the workspace `Cargo.toml`). New
+**Supply Chain:** Dependencies are locked to exact versions in `Cargo.lock`. New
 releases of the security-relevant crates must pass a manual security review
 before upgrading. A contingency plan (fork, vendor, or replace) is maintained
 for each core dependency. The controls enforced in CI are `cargo-deny`
@@ -125,13 +124,6 @@ PKCS#11/TPM addendum, the HSM/TPM client libraries `cryptoki`
 unwrapped DEK transiently during `wrap_dek`/`unwrap_dek`. Versions are whatever
 `Cargo.lock` resolves; bumps are reviewed, not frozen to the versions named in
 earlier revisions of this ADR.
-
-**Pre-release consensus dependency (accepted risk):** `openraft` is pinned to
-the `0.10.0-alpha` line, whose API is still changing between alphas (for example
-`SnapshotMeta.snapshot_id` was removed). This is accepted explicitly: the pin is
-exact (`=`), upgrades between alphas are manual and reviewed, and the project
-moves to the stable `0.10` release when it ships. `fjall` is covered by the same
-pinning and review policy.
 
 ---
 

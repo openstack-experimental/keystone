@@ -249,6 +249,14 @@ impl From<StoreError> for std::io::Error {
     }
 }
 
+impl From<openraft::errors::NodeNotFound<NodeId>> for StoreError {
+    fn from(source: openraft::errors::NodeNotFound<NodeId>) -> Self {
+        Self::RaftMembership {
+            source: openraft::errors::MembershipError::NodeNotFound(source),
+        }
+    }
+}
+
 impl From<openraft::ConfigError> for StoreError {
     fn from(value: openraft::ConfigError) -> Self {
         Self::RaftConfig {

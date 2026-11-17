@@ -62,6 +62,9 @@ message LogId {
 message VoteRequest {
   Vote vote = 1;
   LogId last_log_id = 2;
+  // Vote of the leader handing over leadership; set for a leadership
+  // transfer so the target can skip pre-vote and leader-lease checks.
+  Vote leadership_transfer_from = 3;
 }
 
 // VoteResponse represents the response to a vote request.

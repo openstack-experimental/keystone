@@ -37,7 +37,7 @@ use openstack_keystone_storage_crypto::{DekEpoch, EnvKek, KekProvider, NonceMana
 
 use crate::protobuf as pb;
 use openraft::ReadPolicy;
-use openraft::errors::{ForwardToLeader, LinearizableReadError, RaftError};
+use openraft::errors::{ForwardReason, ForwardToLeader, LinearizableReadError, RaftError};
 use openraft::type_config::TypeConfigExt;
 use tonic::Code;
 use tonic::service::Routes;
@@ -229,6 +229,7 @@ impl Storage {
                     ForwardToLeader {
                         leader_id: Some(id),
                         leader_node: Some(node),
+                        reason: ForwardReason::NotLeader,
                     },
                 ))) => {
                     return Ok(EnsureLinearizableOutcome::Forward(id, node.rpc_addr));

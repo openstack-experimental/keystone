@@ -22,7 +22,7 @@
 //! ([`forward_to_leader_status`]) and the client retries against the leader.
 
 use openraft::ServerState;
-use openraft::errors::ForwardToLeader;
+use openraft::errors::{ForwardReason, ForwardToLeader};
 
 use super::*;
 use crate::grpc::storage_service::forward_to_leader_status;
@@ -49,7 +49,13 @@ pub(super) fn raft_write_status(
         RaftError::APIError(ClientWriteError::ForwardToLeader(ForwardToLeader {
             leader_id,
             leader_node,
-        })) => leader_redirect(leader_id, leader_node.as_ref()),
+            reason,
+        })) => match reason {
+            ForwardReason::NotLeader => leader_redirect(leader_id, leader_node.as_ref()),
+            // The hinted node is only a transfer target (or the lease
+            // expired); it may not lead yet, so do not hand it out.
+            _ => leader_redirect(None, None),
+        },
         other => Status::internal(format!("{context}: {other}")),
     }
 }
@@ -119,6 +125,7 @@ mod tests {
                 node_id: 2,
                 rpc_addr: "n2:8300".into(),
             }),
+            reason: Default::default(),
         }));
         let status = raft_write_status("Raft write failed", err);
         assert_eq!(status.code(), tonic::Code::Unavailable);

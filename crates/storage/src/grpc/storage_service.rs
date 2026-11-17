@@ -24,7 +24,7 @@ use std::sync::{Arc, RwLock};
 use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
 use openraft::ReadPolicy;
 use openraft::async_runtime::WatchReceiver;
-use openraft::errors::{ForwardToLeader, RaftError};
+use openraft::errors::{ForwardReason, ForwardToLeader, RaftError};
 use openstack_keystone_storage_crypto::DekEpoch;
 use tonic::metadata::MetadataValue;
 use tonic::{Request, Response, Status};
@@ -504,6 +504,7 @@ impl StorageService for StorageServiceImpl {
             Err(RaftError::APIError(ClientWriteError::ForwardToLeader(ForwardToLeader {
                 leader_id: Some(leader_id),
                 leader_node: Some(leader_node),
+                reason: ForwardReason::NotLeader,
             }))) => Err(forward_to_leader_status(leader_id, &leader_node.rpc_addr)),
             Err(RaftError::APIError(ClientWriteError::ForwardToLeader(_))) => {
                 Err(Status::unavailable("not the leader; leader unknown"))

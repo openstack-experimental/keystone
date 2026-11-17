@@ -239,7 +239,14 @@ pub fn register_gauges(
     gauge(
         "keystone_raft_membership_learners",
         "Number of learners in the effective Raft membership.",
-        |m, _| m.membership_config.membership().learner_ids().count() as u64,
+        |m, _| {
+            m.membership_config
+                .membership()
+                .nodes()
+                .count()
+                .saturating_sub(m.membership_config.membership().voter_ids().count())
+                as u64
+        },
     );
     gauge(
         "keystone_raft_apply_lag",

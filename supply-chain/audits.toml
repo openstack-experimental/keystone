@@ -64,10 +64,40 @@ who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-deploy"
 delta = "2.24.0 -> 3.0.1"
 
+[[audits.openraft]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "0.10.0-alpha.34 -> 0.10.0-alpha.37"
+notes = "Interface and docs polishing, code reorganization. No new unsafe code."
+
+[[audits.openraft]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "0.10.0-alpha.37 -> 0.10.0"
+notes = "Interface stabilization, documentation updates. No new logic, no new unsafe code."
+
 [[audits.openraft-macros]]
 who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-deploy"
 delta = "0.10.0-alpha.34 -> 0.10.0-alpha.37"
+
+[[audits.openraft-macros]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "0.10.0-alpha.37 -> 0.10.0"
+notes = "No changes beyond updating dependency"
+
+[[audits.openraft-rt]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "0.10.0-alpha.37 -> 0.10.0"
+notes = "Interface stabilization, document updates. No new unsafe code."
+
+[[audits.openraft-rt-tokio]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "0.10.0-alpha.37 -> 0.10.0"
+notes = "No new unsafe logic, only nominal changes"
 
 [[audits.opentelemetry-http]]
 who = "Artem Goncharov <artem.goncharov@gmail.com>"
@@ -84,6 +114,12 @@ who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-deploy"
 delta = "0.5.14 -> 0.5.15"
 notes = "Diff reviewed with AI assistance: manifest/MSRV/version bumps and safe-code changes only; no unsafe, build.rs or new dependency capabilities."
+
+[[audits.quorum-set]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+version = "0.6.2"
+notes = "No unsafe code. The project itself is mostly representing traits and models, no own runtime."
 
 [[audits.rand_xorshift]]
 who = "Artem Goncharov <artem.goncharov@gmail.com>"
