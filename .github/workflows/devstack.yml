@@ -1,5 +1,5 @@
 ---
-name: Devstack with rust Keystone
+name: Devstack with IAM
 
 on:
   workflow_dispatch:

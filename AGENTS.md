@@ -14,8 +14,8 @@ You are a coding agent working on the OpenStack Keystone Rust implementation.
 - Follow Domain-Driven Design: domains (identity, catalog, role, etc.) are in
   separate crates
 - Policy files follow convention: `policy/<domain>/<resource>/<action>.rego`
-- When checking code, always run `cargo check --message-format=short` or pipe the
-  output to only show errors, e.g., `cargo check 2>&1 | grep -i "error"`.
+- When checking code, always run `cargo check --message-format=short` or pipe
+  the output to only show errors, e.g., `cargo check 2>&1 | grep -i "error"`.
 
 ## Workspace Structure
 
@@ -50,8 +50,8 @@ You are a coding agent working on the OpenStack Keystone Rust implementation.
 - **Cryptography**: when adding, moving or removing a cryptographic primitive,
   update its row in `doc/src/contributor/crypto-inventory.md` and the
   `// Crypto inventory: <ID>` comment below the license header, in the same
-  change. Route primitives that can run on the FIPS module through the
-  crate's backend seam (`storage-crypto`, `cadf`, `tls-provider`)
+  change. Route primitives that can run on the FIPS module through the crate's
+  backend seam (`storage-crypto`, `cadf`, `tls-provider`)
 - **Error handling**: Use `thiserror` for error types, propagate with
   `Result<T, E>`
 - **Async**: Heavily async codebase, built on `tokio`
@@ -74,11 +74,10 @@ Backend traits in `crates/core/src/backend.rs` follow CRUD naming:
 - CRUD handlers require >=3 tests: valid auth + positive/negative policy,
   invalid auth
 - Policy enforcement via OPA Rego in `policy/` directory
-- If a module's `tests` submodule grows past ~2000 lines, split it into
-  `<module>/tests.rs` and declare it with
-  `#[cfg(test)] #[path = "<module>/tests.rs"] mod tests;` in the parent file.
-  Keeps large test suites from inflating the code file every read/edit
-  touches (e.g. `crates/core/src/auth.rs`).
+- If a module grows past ~2000 lines, split tests into `<module>/tests.rs` and
+  declare it with `#[cfg(test)] #[path = "<module>/tests.rs"] mod tests;` in the
+  parent file. Keeps large test suites from inflating the code file every
+  read/edit touches (e.g. `crates/core/src/auth.rs`).
 
 ## Running `test_api` (live-server API tests)
 
@@ -115,71 +114,68 @@ Backend traits in `crates/core/src/backend.rs` follow CRUD naming:
 ## Running loadtests locally (`tests/loadtest`)
 
 - `tools/run-loadtest-local.sh [goose args...]` sets up postgres (docker),
-  SPIRE, an embedded-OPA rust `keystone`, bootstraps the admin user, seeds
-  data, builds `tests/loadtest`, and runs it against `http://localhost:8080`.
-  Extra args are forwarded to `load_test`, e.g.:
+  SPIRE, an embedded-OPA rust `keystone`, bootstraps the admin user, seeds data,
+  builds `tests/loadtest`, and runs it against `http://localhost:8080`. Extra
+  args are forwarded to `load_test`, e.g.:
   `tools/run-loadtest-local.sh --users 20 --increase-rate 4 --run-time 30s --report-file reports/run.md`.
-  `tools/teardown-loadtest.sh` tears everything down; the runner calls it
-  itself at the start of every run, so a stale environment from an
-  interrupted run is cleaned up automatically.
-- Requires a working `docker` CLI (postgres container). On a podman-only
-  host, alias `docker` to `podman` and use fully-qualified image refs
+  `tools/teardown-loadtest.sh` tears everything down; the runner calls it itself
+  at the start of every run, so a stale environment from an interrupted run is
+  cleaned up automatically.
+- Requires a working `docker` CLI (postgres container). On a podman-only host,
+  alias `docker` to `podman` and use fully-qualified image refs
   (`docker.io/postgres:17`) — an unqualified `postgres:17` fails to resolve
   without configured unqualified-search registries.
 - `tests/loadtest` is excluded from the main workspace (`exclude` in root
   `Cargo.toml`) — it's a standalone crate. Build it with
-  `cd tests/loadtest && cargo build`, never `cargo build -p load_test` from
-  the repo root.
-- **Never pipe the runner through `tail`** — same root cause as the
-  `test_api` warning above: the script backgrounds SPIRE/OPA/keystone
-  daemons that inherit the pipe's write fd and never let it close, so the
-  whole thing looks hung even after the actual test finished. Run it via
-  `nohup ... > /tmp/out.log 2>&1 &` and read the file, or poll with
-  `kill -0 <pid>` in a loop.
-- `keystone-manage db up` alone is **not** enough against a fresh postgres —
-  it only applies versioned migrations for the drivers that ship them
-  (credential, federation, k8s-auth, token-restriction, webauthn). Identity,
-  role, assignment, resource, catalog etc. use entity-based schema creation
-  via `keystone-manage db sync` instead. Run both, `sync` before `up`.
+  `cd tests/loadtest && cargo build`, never `cargo build -p load_test` from the
+  repo root.
+- **Never pipe the runner through `tail`** — same root cause as the `test_api`
+  warning above: the script backgrounds SPIRE/OPA/keystone daemons that inherit
+  the pipe's write fd and never let it close, so the whole thing looks hung even
+  after the actual test finished. Run it via `nohup ... > /tmp/out.log 2>&1 &`
+  and read the file, or poll with `kill -0 <pid>` in a loop.
+- `keystone-manage db up` alone is **not** enough against a fresh postgres — it
+  only applies versioned migrations for the drivers that ship them (credential,
+  federation, k8s-auth, token-restriction, webauthn). Identity, role,
+  assignment, resource, catalog etc. use entity-based schema creation via
+  `keystone-manage db sync` instead. Run both, `sync` before `up`.
 - `openstack_sdk`'s auth-cache (`$HOME/.osc/`, enabled by default, keyed by
-  cloud-config hash) survives across server restarts. Since each run
-  bootstraps a brand-new admin user, a stale cache entry would make the SDK
-  replay a token for a user id that no longer exists in the fresh DB —
-  surfaces as widespread, seemingly random 401/500s that have nothing to do
-  with the actual server. The runner works around this by pointing
-  `load_test` at an isolated `$HOME` (under `STATE_DIR`, wiped every run)
-  via `HOME=`/`OS_CLIENT_CONFIG_PATH=` rather than touching your real
-  `~/.osc` or `~/.config/openstack`. If you invoke the SDK some other way
-  and hit "user cannot be found: `<id>`" against a freshly bootstrapped
-  keystone, check `~/.osc` for a stale entry before assuming a real bug.
+  cloud-config hash) survives across server restarts. Since each run bootstraps
+  a brand-new admin user, a stale cache entry would make the SDK replay a token
+  for a user id that no longer exists in the fresh DB — surfaces as widespread,
+  seemingly random 401/500s that have nothing to do with the actual server. The
+  runner works around this by pointing `load_test` at an isolated `$HOME` (under
+  `STATE_DIR`, wiped every run) via `HOME=`/`OS_CLIENT_CONFIG_PATH=` rather than
+  touching your real `~/.osc` or `~/.config/openstack`. If you invoke the SDK
+  some other way and hit "user cannot be found: `<id>`" against a freshly
+  bootstrapped keystone, check `~/.osc` for a stale entry before assuming a real
+  bug.
 - `AsyncOpenStack`/`CloudConfig` accepts either a `clouds.yaml` entry
   (`OS_CLOUD=<name>`) or plain `OS_*` auth env vars
-  (`OS_AUTH_URL`/`OS_USERNAME`/`OS_PASSWORD`/...) via
-  `CloudConfig::from_env()` — `tests/loadtest/src/main.rs`'s
-  `load_cloud_config()` prefers the env-var form whenever `OS_AUTH_URL` is
-  set, falling back to `OS_CLOUD` + clouds.yaml otherwise, so a clouds.yaml
-  file isn't a hard requirement to run the suite.
-- Goose logs any non-2xx response into its `ERRORS`/status-code tables at
-  the HTTP layer regardless of the transaction's own pass/fail logic.
-  Negative-test transactions (wrong password, revoke-then-validate, rescope
-  to a nonexistent project) must call `user.set_success(&mut goose.request)`
-  once they've confirmed the rejection was the *expected* outcome, or the
-  top-line failure percentage reads misleadingly high even though nothing
-  is actually broken.
-- Loadtest also runs against a keystone deployed via skaffold to local k3s
-  (see `doc/src/contributor/development.md` for that setup) — skip
-  `tools/run-loadtest-local.sh` entirely and point `load_test` straight at
-  the cluster's exposed URL/port with `--host`, using `OS_CLOUD`/`OS_*` env
-  vars matching that deployment's admin credentials.
+  (`OS_AUTH_URL`/`OS_USERNAME`/`OS_PASSWORD`/...) via `CloudConfig::from_env()`
+  — `tests/loadtest/src/main.rs`'s `load_cloud_config()` prefers the env-var
+  form whenever `OS_AUTH_URL` is set, falling back to `OS_CLOUD` + clouds.yaml
+  otherwise, so a clouds.yaml file isn't a hard requirement to run the suite.
+- Goose logs any non-2xx response into its `ERRORS`/status-code tables at the
+  HTTP layer regardless of the transaction's own pass/fail logic. Negative-test
+  transactions (wrong password, revoke-then-validate, rescope to a nonexistent
+  project) must call `user.set_success(&mut goose.request)` once they've
+  confirmed the rejection was the _expected_ outcome, or the top-line failure
+  percentage reads misleadingly high even though nothing is actually broken.
+- Loadtest also runs against a keystone deployed via skaffold to local k3s (see
+  `doc/src/contributor/development.md` for that setup) — skip
+  `tools/run-loadtest-local.sh` entirely and point `load_test` straight at the
+  cluster's exposed URL/port with `--host`, using `OS_CLOUD`/`OS_*` env vars
+  matching that deployment's admin credentials.
 - `tests/loadtest/sample_metrics.sh <output-file> [interval-seconds]` polls
-  `kubectl top` (keystone-rs/keystone-py pods + node) and host
-  free/loadavg on a loop, for correlating CPU/memory against a concurrent
-  loadtest run in the skaffold k3s deployment. Requires metrics-server
-  already working (`kubectl top nodes` succeeds standalone). Run it in the
-  background bracketing the `load_test` invocation, then `kill` it:
+  `kubectl top` (keystone-rs/keystone-py pods + node) and host free/loadavg on a
+  loop, for correlating CPU/memory against a concurrent loadtest run in the
+  skaffold k3s deployment. Requires metrics-server already working
+  (`kubectl top nodes` succeeds standalone). Run it in the background bracketing
+  the `load_test` invocation, then `kill` it:
   `./sample_metrics.sh /tmp/metrics.log 3 & SAMPLER=$!; load_test ...; kill "$SAMPLER"`.
-  See the script's header comment for the output format and an `awk`
-  one-liner to derive per-pod min/max/avg memory from it.
+  See the script's header comment for the output format and an `awk` one-liner
+  to derive per-pod min/max/avg memory from it.
 
 ## Commit Message Rules
 
@@ -225,8 +221,8 @@ For detailed setup and environment configuration, see:
 - CONTRIBUTING.md: Development commands, workspace structure, design patterns
 - doc/src/contributor/development.md: Kubernetes/skaffold setup, OSC
   configuration
-- doc/src/contributor/security-model.md: Security model, invariants, and reviewer
-  checklist for auth/authorization
+- doc/src/contributor/security-model.md: Security model, invariants, and
+  reviewer checklist for auth/authorization
 - doc/src/contributor/crypto-inventory.md: Cryptographic primitives, providers
   and FIPS 140-3 status; update it with any crypto change
 - doc/src/adr/: Architecture Decision Records

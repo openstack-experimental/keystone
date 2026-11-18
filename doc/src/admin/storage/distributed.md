@@ -1059,7 +1059,7 @@ What it sets up, and why:
   match the pinned values are rejected.
 - **KEK.** `kek_provider = "pkcs11"` with the token PIN mounted from the
   `keystone-pkcs11-pin` Secret (create it out of band). The published
-  `ghcr.io/openstack-experimental/keystone:main` image is built with both the
+  `ghcr.io/cloud-plane/iam:main` image is built with both the
   PKCS#11 and TPM features (see `.github/workflows/container-publish.yml`), so
   this overlay works as-is and a TPM-backed cluster can switch the config to
   `kek_provider = "tpm"` without changing the image. A self-built image must

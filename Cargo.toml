@@ -73,8 +73,8 @@ edition = "2024"
 license = "Apache-2.0"
 authors = ["Artem Goncharov (gtema)"]
 rust-version = "1.96"  # MSRV
-repository = "https://github.com/openstack-experimental/keystone"
-homepage = "https://openstack-experimental.github.io/keystone"
+repository = "https://github.com/cloud-plane/iam"
+homepage = "https://cloud-plane.github.io/iam"
 # Exclude content not relevant for the package
 exclude = [
   ".github",

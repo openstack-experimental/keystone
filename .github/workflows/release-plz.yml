@@ -12,7 +12,7 @@ jobs:
     name: Release-plz release
     environment: release
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'openstack-experimental'
+    if: github.repository_owner == 'cloud-plane'
     permissions:
       contents: read
       id-token: write # Required for trusted publishing
@@ -58,7 +58,7 @@ jobs:
   release-plz-pr:
     name: Release-plz PR
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'openstack-experimental' }}
+    if: ${{ github.repository_owner == 'cloud-plane' }}
     permissions:
       contents: read
     concurrency:

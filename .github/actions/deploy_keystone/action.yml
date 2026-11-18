@@ -71,13 +71,14 @@ runs:
       shell: bash
       run: |
         network=$(docker network ls --filter name=github_network_ -q | head -n 1)
+        # TODO: switch to ghcr.io/cloud-plane/iam/py-keystone once published
         docker run -d \
           --network "$network" \
           -p 5001:5001 \
           -e OS_KEYSTONE_CONFIG_DIR="${{ github.workspace }}/etc" \
           -v $PWD/etc:/etc/keystone:rw -v $PWD/etc:$PWD/etc \
           --name keystone \
-          ghcr.io/gtema/keystone/py-keystone:main
+          ghcr.io/cloud-plane/keystone/py-keystone:main
 
     - name: Add postgres container address to /etc/hosts
       shell: bash

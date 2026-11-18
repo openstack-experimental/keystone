@@ -20,17 +20,17 @@ kind: Component
 # (fail closed, like `tools/opa_config.yaml`). Pin it in your overlay:
 #
 #   1. Resolve a release tag or commit tag to a digest:
-#        crane digest ghcr.io/openstack-experimental/keystone-bundle-verify:sha-<commit>
+#        crane digest ghcr.io/cloud-plane/iam-bundle-verify:sha-<commit>
 #   2. Check its build provenance:
 #        gh attestation verify \
-#          oci://ghcr.io/openstack-experimental/keystone-bundle-verify@sha256:<digest> \
-#          --repo openstack-experimental/keystone
+#          oci://ghcr.io/cloud-plane/iam-bundle-verify@sha256:<digest> \
+#          --repo cloud-plane/iam
 #   3. Set `digest` below (or override it in your overlay).
 #
 # The image is published for linux/amd64 and linux/arm64.
 images:
   - name: keystone-bundle-verify
-    newName: ghcr.io/openstack-experimental/keystone-bundle-verify
+    newName: ghcr.io/cloud-plane/iam-bundle-verify
     digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
 
 patches:

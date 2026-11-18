@@ -34,10 +34,10 @@ images:
   # config to `kek_provider = "tpm"` without changing the image. A self-built
   # image must pass the same build argument.
   - name: keystone-rs
-    newName: ghcr.io/openstack-experimental/keystone
+    newName: ghcr.io/cloud-plane/iam
     newTag: main
   - name: keystone-opa
-    newName: ghcr.io/openstack-experimental/keystone-opa
+    newName: ghcr.io/cloud-plane/iam-opa
     newTag: main
 
 # Keep in sync with `retry_join_nodes` in statefulset-patch.yaml. Use an odd

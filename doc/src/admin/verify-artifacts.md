@@ -6,20 +6,20 @@ them before deploying, with the [GitHub CLI](https://cli.github.com/):
 ```console
 # Container image (use the digest you deploy, not a mutable tag)
 $ gh attestation verify \
-    oci://ghcr.io/openstack-experimental/keystone@sha256:<digest> \
-    --repo openstack-experimental/keystone
+    oci://ghcr.io/cloud-plane/iam@sha256:<digest> \
+    --repo cloud-plane/iam
 
 # Release archive downloaded from the GitHub release
 $ gh attestation verify keystone-<target>.tar.xz \
-    --repo openstack-experimental/keystone
+    --repo cloud-plane/iam
 ```
 
 The command fails if the artifact was not built by this repository's release
 workflows, or if it was modified after the build. Pin the verified digest in
-your manifests (`image: ghcr.io/openstack-experimental/keystone@sha256:…`)
+your manifests (`image: ghcr.io/cloud-plane/iam@sha256:…`)
 instead of a tag.
 
-The OPA policy bundle (`ghcr.io/openstack-experimental/keystone/opa-bundle`)
+The OPA policy bundle (`ghcr.io/cloud-plane/iam/opa-bundle`)
 is signed separately with keyless `cosign` signatures; verify it with
 `cosign verify` against the bundle digest.
 
@@ -31,7 +31,7 @@ document `keystone.openvex.json`. They are attested like the archives:
 
 ```console
 $ gh attestation verify keystone_bin.cdx.json \
-    --repo openstack-experimental/keystone
+    --repo cloud-plane/iam
 ```
 
 The VEX document states, for each advisory the project has chosen to ignore,
@@ -41,7 +41,7 @@ a BuildKit SPDX SBOM attestation covering the operating-system packages:
 
 ```console
 $ docker buildx imagetools inspect \
-    ghcr.io/openstack-experimental/keystone@sha256:<digest> \
+    ghcr.io/cloud-plane/iam@sha256:<digest> \
     --format '{{ json .SBOM }}'
 ```
 
@@ -64,7 +64,7 @@ only after that succeeds, so a bad signature leaves the pod in `Init:Error`.
 The verifier image is referenced by digest, and the component ships an
 all-zero digest so the pod does not start until you pin it: resolve a
 `keystone-bundle-verify` tag to a digest, check it with
-`gh attestation verify oci://ghcr.io/openstack-experimental/keystone-bundle-verify@sha256:<digest> --repo openstack-experimental/keystone`,
+`gh attestation verify oci://ghcr.io/cloud-plane/iam-bundle-verify@sha256:<digest> --repo cloud-plane/iam`,
 and set `digest` for the image in your overlay. The image is published for
 `linux/amd64` and `linux/arm64`.
 The pod needs egress to `ghcr.io` and the Sigstore endpoints. The standalone
