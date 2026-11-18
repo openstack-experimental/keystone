@@ -39,7 +39,6 @@ harness = false
 
 [dependencies]
 async-trait.workspace = true
-byteorder.workspace = true
 dashmap.workspace = true
 eyre.workspace = true
 governor.workspace = true

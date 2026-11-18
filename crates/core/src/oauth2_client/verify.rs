@@ -45,7 +45,8 @@ use openstack_keystone_key_repository::asymmetric::{SigningAlgorithm, jwt_algori
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum TokenVerificationError {
-    /// The validation profile is missing required issuer or audience constraints.
+    /// The validation profile is missing required issuer or audience
+    /// constraints.
     #[error("subject-token validation profile must specify issuers and audiences")]
     InvalidProfile,
 

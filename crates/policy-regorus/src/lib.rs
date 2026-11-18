@@ -20,21 +20,22 @@
 //!
 //! ## Design
 //!
-//! * `regorus::Engine` needs `&mut self` for evaluation. The enforcer
-//!   therefore never evaluates through a shared engine; it keeps one
+//! * `regorus::Engine` needs `&mut self` for evaluation. The enforcer therefore
+//!   never evaluates through a shared engine; it keeps one
 //!   [`regorus::CompiledPolicy`] per rule, which is a cheap, `Send + Sync`
 //!   handle that builds a throw-away engine for each evaluation.
 //! * Loading the complete policy tree into a single engine is rejected by
-//!   regorus ("recursion detected": a reference to `data.identity.<rule>`
-//!   is treated as a dependency on every rule below `data.identity`). Every
+//!   regorus ("recursion detected": a reference to `data.identity.<rule>` is
+//!   treated as a dependency on every rule below `data.identity`). Every
 //!   entrypoint package is therefore compiled in its own engine together with
 //!   the *helper* packages (modules not defining `allow`).
 //! * OPA returns the whole package document (`allow`, `violation`,
-//!   `can_see_other_domain_resources`). regorus can only compile a rule
-//!   path, so each of the three rules is compiled and evaluated separately.
-//! * The compiled set sits in an [`ArcSwap`], so [`RegorusPolicyEnforcer::reload`]
-//!   can atomically replace the policies while in-flight evaluations finish on
-//!   the old set. Keystone calls it on `SIGHUP`.
+//!   `can_see_other_domain_resources`). regorus can only compile a rule path,
+//!   so each of the three rules is compiled and evaluated separately.
+//! * The compiled set sits in an [`ArcSwap`], so
+//!   [`RegorusPolicyEnforcer::reload`] can atomically replace the policies
+//!   while in-flight evaluations finish on the old set. Keystone calls it on
+//!   `SIGHUP`.
 //! * Optional rules (`violation`, `can_see_other_domain_resources`) that a
 //!   package declares but that fail to compile abort the load instead of being
 //!   treated as absent. Symlinks and hidden entries (Kubernetes `..data`) in
@@ -51,16 +52,16 @@
 //! * **Helper packages are not a prefix of an entrypoint package.** Helpers
 //!   live in `common.*` (`common.identity`, `common.api_key`, ...). With the
 //!   helper in `identity.api_key` and the entrypoint in
-//!   `identity.api_key.create`, regorus silently evaluates a later `allow`
-//!   body that uses the helper to the wrong value (`violation` came back
-//!   empty where OPA reports messages).
-//! * **No complete rule (`:=`) with several bodies that may fire at once.**
-//!   OPA only evaluates the bodies a decision needs, regorus reorders and
-//!   evaluates more, so equal or `null`/value pairs raise "rule conflicts".
-//!   `identity.any_domain_id` is therefore a set of candidates
-//!   (`_domain_ids`) and the predicates quantify over it.
-//! * **Builtins are guarded by their types.** `count(null)` is undefined in
-//!   OPA but an error in regorus, so `is_array(x)` precedes `count(x)`.
+//!   `identity.api_key.create`, regorus silently evaluates a later `allow` body
+//!   that uses the helper to the wrong value (`violation` came back empty where
+//!   OPA reports messages).
+//! * **No complete rule (`:=`) with several bodies that may fire at once.** OPA
+//!   only evaluates the bodies a decision needs, regorus reorders and evaluates
+//!   more, so equal or `null`/value pairs raise "rule conflicts".
+//!   `identity.any_domain_id` is therefore a set of candidates (`_domain_ids`)
+//!   and the predicates quantify over it.
+//! * **Builtins are guarded by their types.** `count(null)` is undefined in OPA
+//!   but an error in regorus, so `is_array(x)` precedes `count(x)`.
 //!
 //! The first two also hold for OPA; the changes are behaviour preserving
 //! there (`opa test policy` stays green) and only turn a would-be conflict

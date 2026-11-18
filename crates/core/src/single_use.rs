@@ -60,10 +60,10 @@ pub trait SingleUseStore: Send + Sync {
     /// credential could still pass verification.
     ///
     /// # Errors
-    /// [`SingleUseError::Replayed`] for a live entry, [`SingleUseError::Capacity`]
-    /// when a bound is reached (a live entry is never evicted),
-    /// [`SingleUseError::InvalidLifetime`] for failed preconditions and
-    /// [`SingleUseError::Unavailable`] for a backend failure.
+    /// [`SingleUseError::Replayed`] for a live entry,
+    /// [`SingleUseError::Capacity`] when a bound is reached (a live entry is
+    /// never evicted), [`SingleUseError::InvalidLifetime`] for failed
+    /// preconditions and [`SingleUseError::Unavailable`] for a backend failure.
     async fn consume(
         &self,
         scope: &str,
@@ -76,7 +76,8 @@ pub trait SingleUseStore: Send + Sync {
     async fn cleanup(&self, now: i64) -> Result<(), SingleUseError>;
 }
 
-/// Encode the scope of an external assertion: `"{len(domain_id)}:{domain_id}{issuer}"`.
+/// Encode the scope of an external assertion:
+/// `"{len(domain_id)}:{domain_id}{issuer}"`.
 ///
 /// Lengths count bytes, so `("a", "b")` and `("ab", "")` stay apart.
 pub fn assertion_scope(domain_id: &str, issuer: &str) -> String {

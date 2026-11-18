@@ -133,7 +133,6 @@ pub async fn get_isolated_database() -> Result<DatabaseConnection> {
     Ok(db)
 }
 
-#[allow(unsafe_code)]
 pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
     get_state_with_config(|_| {}).await
 }
@@ -146,7 +145,6 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
 /// config -- so tests that need e.g. a non-default
 /// `[oauth2] refresh_token_reuse_grace_minutes` must go through this
 /// entry point instead.
-#[allow(unsafe_code)]
 pub async fn get_state_with_config(
     mutate: impl FnOnce(&mut Config),
 ) -> Result<(Arc<Service>, TempDir)> {
@@ -212,6 +210,7 @@ pub async fn get_state_with_config(
             // tasks may race to set these concurrently, but every writer uses
             // the identical constant value, so the race is benign.
             // SAFETY: values written are constant across all callers.
+            #[allow(unsafe_code)]
             unsafe {
                 if std::env::var("KEYSTONE_DEV_KEK").is_err() {
                     std::env::set_var(

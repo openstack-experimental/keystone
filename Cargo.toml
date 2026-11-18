@@ -91,7 +91,6 @@ aws-lc-rs = { version = "1.18", default-features = false, features = ["alloc"] }
 async-trait = { version = "0.1" }
 axum = { version = "0.8", default-features = false }
 axum-extra = { version = "0.12", default-features = false }
-axum-server = { version = "0.8", default-features = false }
 crc32fast = { version = "1.5" }
 base64 = { version = "0.23" }
 base64urlsafedata = "0.6"
@@ -107,20 +106,17 @@ cryptoki = "0.12"
 dashmap = "6.2"
 data-encoding = "2"
 derive_builder = { version = "0.20" }
-dyn-clone = { version = "1.0" }
 extism = { version = "1.30" }
 eyre = { version = "0.6" }
 fernet = { version = "0.2", default-features = false }
 futures = { version = "0.3" }
 futures-util = { version = "0.3" }
 governor = "0.10"
-getrandom = { version = "0.4", features = ["std"] }
 http-body-util = "0.1"
 http = { version = "1.5" }
 httpmock = { version = "0.9", features = ["http2"] }
 hyper = { version = "1.11" }
 hyper-util = { version = "0.1" }
-hkdf = { version = "0.13" }
 hmac = { version = "0.13" }
 inventory = { version = "0.3" }
 ipnet = { version = "2" }
@@ -130,7 +126,6 @@ log = { version = "0.4" }
 ldap3 = { version = "0.12", default-features = false }
 minijinja = { version = "3", features = ["serde"] }
 mockall = { version = "0.15" }
-mockall_double = { version = "0.3" }
 nix = { version = "0.31", default-features = false }
 notify = { version = "8.2" }
 openraft = { version = "0.10" }
@@ -210,7 +205,6 @@ rust-ini = { version = "0.21" }
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "logging"] }
 rustls-native-certs = { version = "0.8" }
 rustls-pki-types = { version = "1.12" }
-schemars = { version = "1.2" }
 scopeguard = "1.2"
 serial_test = { version = "4.0" }
 sea-orm = { version = "2.0", default-features = false }

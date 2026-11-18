@@ -52,3 +52,6 @@ test = false
 name = "oauth2_federated"
 path = "src/oauth2_federated.rs"
 test = false
+
+[lints]
+workspace = true

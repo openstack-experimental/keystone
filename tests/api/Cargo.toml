@@ -91,3 +91,6 @@ test = false
 name = "scim_v2"
 path = "tests/scim_v2.rs"
 test = false
+
+[lints]
+workspace = true

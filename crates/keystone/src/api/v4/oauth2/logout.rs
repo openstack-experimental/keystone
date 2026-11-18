@@ -93,12 +93,7 @@ const BAD_HINT: &str = "invalid id_token_hint";
     ),
     tag = "oauth2"
 )]
-#[tracing::instrument(
-    name = "api::v4::oauth2::logout",
-    level = "debug",
-    skip(state, params),
-    err(Debug)
-)]
+#[tracing::instrument(name = "api::v4::oauth2::logout", level = "debug", skip(state, params))]
 pub(super) async fn logout(
     Path(domain_id): Path<String>,
     State(state): State<ServiceState>,
@@ -141,8 +136,7 @@ pub(super) async fn logout(
 #[tracing::instrument(
     name = "api::v4::oauth2::logout_post",
     level = "debug",
-    skip(state, params),
-    err(Debug)
+    skip(state, params)
 )]
 pub(super) async fn logout_post(
     Path(domain_id): Path<String>,

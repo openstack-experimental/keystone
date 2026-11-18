@@ -374,8 +374,7 @@ async fn load_session(
 #[tracing::instrument(
     name = "api::v4::oauth2::authorize_federated",
     level = "debug",
-    skip(state, form),
-    err(Debug)
+    skip(state, form)
 )]
 pub(super) async fn authorize_federated(
     Path(domain_id): Path<String>,
@@ -471,8 +470,7 @@ fn upstream_amr(claims: &serde_json::Value) -> Vec<String> {
 #[tracing::instrument(
     name = "api::v4::oauth2::authorize_federated_callback",
     level = "debug",
-    skip(state, query),
-    err(Debug)
+    skip(state, query)
 )]
 pub(super) async fn authorize_federated_callback(
     Path(domain_id): Path<String>,

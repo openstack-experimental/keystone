@@ -19,7 +19,6 @@ use tracing_test::traced_test;
 use url::Url;
 use uuid::Uuid;
 
-use webauthn_authenticator_rs::WebauthnAuthenticator;
 use webauthn_authenticator_rs::softtoken::SoftToken;
 
 use openstack_keystone_api_types::v3::user::UserCreateBuilder;

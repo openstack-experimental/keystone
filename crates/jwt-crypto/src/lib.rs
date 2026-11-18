@@ -21,10 +21,9 @@
 //! come from the same backends as the rest of the workspace:
 //!
 //! * default (`ring` feature): the `ring` crate;
-//! * `aws-lc` feature: `aws-lc-rs`, through the same code. When both `ring`
-//!   and `aws-lc` are enabled `aws-lc` wins, because cargo features are
-//!   additive and a workspace-wide build must not silently fall back to
-//!   `ring`.
+//! * `aws-lc` feature: `aws-lc-rs`, through the same code. When both `ring` and
+//!   `aws-lc` are enabled `aws-lc` wins, because cargo features are additive
+//!   and a workspace-wide build must not silently fall back to `ring`.
 //! * `fips` feature: `aws-lc` built against the FIPS 140-3 validated AWS-LC
 //!   module. Use [`is_fips`] or [`assert_fips`] to check it at start-up.
 //!

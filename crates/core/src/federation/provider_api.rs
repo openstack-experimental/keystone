@@ -139,8 +139,8 @@ pub trait FederationApi: Send + Sync {
     /// # Returns
     /// - `Ok(Some(idp))` - exactly one enabled match in the preferred scope.
     /// - `Ok(None)` - no match, or the matched identity provider is disabled.
-    /// - `Err(AmbiguousIssuer)` - more than one match in the preferred
-    ///   scope; the lookup fails closed.
+    /// - `Err(AmbiguousIssuer)` - more than one match in the preferred scope;
+    ///   the lookup fails closed.
     async fn get_identity_provider_by_issuer<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

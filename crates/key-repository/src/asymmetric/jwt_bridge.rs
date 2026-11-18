@@ -21,9 +21,9 @@
 //! `jsonwebtoken` expects different per-algorithm shapes (PKCS#8 DER for EC
 //! private keys, but the raw SEC1 point for EC public keys; PKCS#8 or
 //! PKCS#1 DER for an RSA private key and PKCS#1 `RSAPublicKey` DER for the
-//! public half) — this module bridges the two. Shared by every JWT-signing consumer of
-//! this repository (the Phase 0 JWS token driver, the Phase 3 OAuth2
-//! `/token` signer), so the conversion lives here rather than in any one
+//! public half) — this module bridges the two. Shared by every JWT-signing
+//! consumer of this repository (the Phase 0 JWS token driver, the Phase 3
+//! OAuth2 `/token` signer), so the conversion lives here rather than in any one
 //! driver crate.
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey};
 use openstack_keystone_jwt_crypto::{

@@ -48,7 +48,6 @@
 //!   removed (`mark_refresh_token_spent_impl`) and the rotated child gets its
 //!   own fresh entry (`create_refresh_token_impl`).
 use async_trait::async_trait;
-use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use std::sync::Arc;
@@ -238,19 +237,6 @@ fn parse_expiry_idx_key(key: &str) -> Option<(i64, &str, &str)> {
     let (kind, primary_key) = rest.split_once(':')?;
     let expires_at: i64 = ts.parse().ok()?;
     Some((expires_at, kind, primary_key))
-}
-
-async fn put<T: Serialize>(
-    storage: &dyn StorageApi,
-    key: String,
-    value: &T,
-) -> Result<(), StoreError> {
-    let envelope = StoreDataEnvelope {
-        data: rmp_serde::to_vec(value)?,
-        metadata: Metadata::new(),
-    };
-    storage.set_value(key, envelope, None, None).await?;
-    Ok(())
 }
 
 /// Index of the pending (pre-auth session, device code grant) records by the

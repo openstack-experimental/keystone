@@ -532,8 +532,8 @@ mod tests {
         // compute and overwrite it with a different value.
         //
         // Uses password_hash_rounds=4 (bcrypt minimum) to build a cache key
-        // ("Bcrypt-Some(4)") that no other test in this module uses, ensuring the
-        // cache is genuinely cold regardless of test execution order.
+        // ("Bcrypt-Some(4)") that no other test in this module uses, ensuring
+        // the cache is genuinely cold regardless of test execution order.
         let mut conf = mock_config(PasswordHashingAlgo::Bcrypt, 255);
         conf.identity.password_hash_rounds = Some(4); // unique key: "Bcrypt-Some(4)"
         let conf = std::sync::Arc::new(conf);
