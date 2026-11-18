@@ -66,6 +66,7 @@ use crate::network::{
     CertExpiryWatchdog, ChannelCache, NetworkManager, RaftTlsClient, init_tls_watcher,
 };
 use crate::pb::raft::cluster_admin_service_server::ClusterAdminServiceServer;
+use crate::pb::raft::feed_service_server::FeedServiceServer;
 use crate::pb::raft::raft_service_server::RaftServiceServer;
 use crate::protobuf::api::storage_service_client::StorageServiceClient;
 use crate::protobuf::api::storage_service_server::StorageServiceServer;
@@ -111,6 +112,10 @@ pub struct Storage {
     /// `[distributed_storage] feed_retention_days` and `feed_max_events`.
     feed_retention_days: u32,
     feed_max_events: u64,
+    /// Parsed `feed_subscribers` and `feed_heartbeat_secs`.
+    pub(crate) feed_subscribers:
+        std::collections::HashMap<String, crate::grpc::feed_service::SubscriberEntry>,
+    pub(crate) feed_heartbeat: Duration,
     /// Number of attempts for the `ensure_linearizable` retry loop, from
     /// `[distributed_storage] ensure_linearizable_retries`. See
     /// [`ensure_linearizable_with_retry`](Storage::ensure_linearizable_with_retry).

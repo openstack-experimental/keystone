@@ -240,7 +240,7 @@ const ROGUE_IDENTITIES_PORT_BASE: u16 = 1150;
 const QUARANTINE_FORWARD_PORT_BASE: u16 = 1200;
 
 /// Connect to node `node_id` presenting `leaf` as the client certificate.
-async fn connect_as(
+pub(super) async fn connect_as(
     pki: &TestPki,
     leaf: &TestLeaf,
     node_id: u64,

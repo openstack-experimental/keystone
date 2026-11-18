@@ -480,6 +480,71 @@ message ListSitesResponse {
   repeated Site sites = 1;
 }
 
+// Inter-authority change feed (ADR 0045 section 3, M4).
+service FeedService {
+  // Subscribe streams the feed events after the cursor that match the filter,
+  // intersected with what the caller's identity may receive. Any voter serves.
+  rpc Subscribe(SubscribeRequest) returns (stream FeedMessage) {}
+}
+
+message SubscribeRequest {
+  // Feed epoch the cursor belongs to. Ignored without a cursor.
+  uint64 epoch = 1;
+  // Whether the request resumes from a cursor; otherwise from the oldest event.
+  bool has_cursor = 2;
+  // Log index and position of the last event the consumer applied.
+  uint64 cursor_index = 3;
+  uint32 cursor_position = 4;
+  // Kinds wanted; empty means every kind the caller may receive.
+  repeated string kinds = 5;
+  // Domains wanted; empty means every domain the caller may receive.
+  repeated string domains = 6;
+}
+
+message FeedEvent {
+  uint64 index = 1;
+  uint32 position = 2;
+  string kind = 3;
+  bool has_domain = 4;
+  string domain_id = 5;
+  bytes key = 6;
+  // True for a removal.
+  bool removed = 7;
+  bool has_value = 8;
+  bytes value = 9;
+}
+
+message FeedEvents {
+  uint64 epoch = 1;
+  repeated FeedEvent events = 2;
+}
+
+// Heartbeat: where the serving voter stands.
+message FeedHead {
+  uint64 epoch = 1;
+  // Last log index the serving voter applied.
+  uint64 applied_index = 2;
+  // Milliseconds since the serving voter last heard from a leader; zero on the
+  // leader itself.
+  uint64 leader_contact_age_ms = 3;
+}
+
+// The cursor cannot be resumed: reload from a bundle and subscribe without a
+// cursor.
+message FeedReset {
+  uint64 epoch = 1;
+  uint64 floor = 2;
+  string reason = 3;
+}
+
+message FeedMessage {
+  oneof message {
+    FeedEvents events = 1;
+    FeedHead head = 2;
+    FeedReset reset = 3;
+  }
+}
+
 message RotateDekRequest {
   // If true, the current DEK is revoked (not retired) and the rotation
   // is recorded as an emergency event in the audit log.

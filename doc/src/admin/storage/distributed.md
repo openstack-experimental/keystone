@@ -1634,3 +1634,32 @@ by the security team.
 12. **Startup pre-flight.** Before loading any key material, the node verifies
     `RLIMIT_CORE == 0` and `PR_SET_DUMPABLE == 0`. Failures emit CRITICAL log
     entries and (when `--dev-mode` is not set) prevent startup.
+
+## Change feed (ADR 0045, M4)
+
+A driver that owns data other authorities replicate (the registry, revocations)
+adds a `Mutation::Emit { kind, domain_id, key, op, value, tier }` to the
+transaction that changes it. On apply every voter appends the event to its
+outbox, encrypted under the DEK and keyed by Raft log index, so any voter can
+serve the feed and a cursor survives a leader change. Tier 2 and 3 data is
+refused.
+
+```toml
+[distributed_storage]
+# Kinds that may be emitted; empty (default) disables the feed.
+feed_kinds = "registry,revocation"
+# <spiffe id>=<kinds>[@<domains>]; a request is narrowed to its entry, never
+# widened. The caller also needs the feed-consumer role (trust_domain_roles).
+feed_subscribers = "spiffe://other.example/keystone/feed=registry+revocation@d1+d2"
+feed_heartbeat_secs = 5
+feed_retention_days = 7     # 0: keep until feed_max_events
+feed_max_events     = 1000000
+```
+
+`FeedService.Subscribe` streams events after a cursor (`epoch`, log index,
+position) as `FeedEvents`, with a `FeedHead` heartbeat (the voter's applied
+index and its time since leader contact; the stream ends when that exceeds
+`local_read_max_staleness_ms`). A `FeedReset` means the cursor cannot be
+resumed because the feed epoch changed (restore, emergency DEK rotation) or the
+event was pruned: reload from a bundle and subscribe again without a cursor.
+The leader prunes events past the retention limits every ten minutes.

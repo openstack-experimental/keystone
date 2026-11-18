@@ -23,5 +23,6 @@
 //!   three.
 pub mod authz;
 pub mod cluster_admin_service;
+pub mod feed_service;
 pub mod raft_service;
 pub mod storage_service;

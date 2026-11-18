@@ -13,7 +13,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Feed outbox (ADR 0045 section 3, M4).
 
+use super::common::TestPki;
 use super::harness::*;
+use super::quarantine::connect_as;
 use super::*;
 use openstack_keystone_distributed_storage::FeedOp;
 
@@ -256,5 +258,178 @@ async fn test_retention_and_emergency_rotation_inner() -> Result<()> {
         .await?;
     assert!(sm.outbox_events_after(None, 10)?.is_empty());
     assert_ne!(epoch_before, sm.feed_epoch()?);
+    Ok(())
+}
+
+/// The feed stream: identity-bound filters, resume, and reset.
+#[serial_test::serial]
+#[test]
+fn test_subscribe_filters_resumes_and_resets() {
+    TypeConfig::run(async {
+        test_subscribe_inner().await.unwrap();
+    });
+}
+
+/// Serves the feed on `port` for a subscriber holding the `feed-consumer`
+/// role. The node's TLS mode cannot grant that role by certificate name, so
+/// the listener authorises the subscriber by an explicit SVID binding, as a
+/// SPIFFE deployment does with `peers`.
+async fn serve_feed(node: &Arc<InstanceHolder>, port: u16, svid: &str) -> Result<()> {
+    use openstack_keystone_distributed_storage::grpc::authz::{PeerAuthz, PeerRole};
+    use openstack_keystone_distributed_storage::protobuf::raft::feed_service_server::FeedServiceServer;
+
+    let authz = Arc::new(
+        PeerAuthz::spiffe(
+            vec!["keystone".into()],
+            "/storage/".into(),
+            "storage-operator".into(),
+            vec![],
+        )
+        .with_peer_roles(std::collections::HashMap::from([(
+            svid.to_owned(),
+            vec![PeerRole::FeedConsumer],
+        )])),
+    );
+    let svc = FeedServiceServer::new(node.storage.feed_service_with_authz(authz));
+    let addr = get_addr_with_port(1, port);
+    let tls = openstack_keystone_distributed_storage::network::get_server_tls_config(&node.config)?;
+    tokio::spawn(async move {
+        let _ = tonic::transport::Server::builder()
+            .tls_config(tls)
+            .expect("tls")
+            .add_service(svc)
+            .serve(addr)
+            .await;
+    });
+    wait_for_listener(addr).await;
+    Ok(())
+}
+
+async fn next_message(
+    stream: &mut tonic::Streaming<pb::raft::FeedMessage>,
+) -> Result<pb::raft::feed_message::Message> {
+    loop {
+        let msg = tokio::time::timeout(Duration::from_secs(10), stream.message())
+            .await??
+            .ok_or_else(|| eyre::eyre!("feed stream ended"))?;
+        match msg.message {
+            Some(pb::raft::feed_message::Message::Head(_)) => continue,
+            Some(m) => return Ok(m),
+            None => continue,
+        }
+    }
+}
+
+async fn test_subscribe_inner() -> Result<()> {
+    use openstack_keystone_distributed_storage::protobuf::raft::feed_service_client::FeedServiceClient;
+    use pb::raft::feed_message::Message;
+
+    const PORT: u16 = FEED_PORT_BASE + 80;
+    let provider = openstack_keystone_tls_provider::provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let pki = TestPki::new()?;
+    let node_cert = pki.leaf(Some(&format!("{ROLE_SAN_PREFIX}node")))?;
+    let op_cert = pki.leaf(Some(&format!("{ROLE_SAN_PREFIX}storage-operator")))?;
+    let feed_cert = pki.leaf(Some(&format!("{ROLE_SAN_PREFIX}feed-consumer")))?;
+
+    let node = Arc::new(
+        InstanceHolder::new_with_ds_config(1, |path| DistributedStorageConfiguration {
+            tls_role_san_prefix: Some(ROLE_SAN_PREFIX.to_string()),
+            feed_kinds: vec!["registry".into(), "revocation".into()],
+            feed_subscribers: vec![format!("{ROLE_SAN_PREFIX}feed-consumer=registry@d1")],
+            feed_heartbeat_secs: 1,
+            ..get_ds_config_with_port(
+                1,
+                PORT,
+                path,
+                pki.tls_configuration(&node_cert)
+                    .expect("tls configuration"),
+            )
+        })
+        .await?,
+    );
+    spawn_raft_app(&node).await;
+    let op_ch = connect_as(&pki, &op_cert, 1, PORT).await?;
+    ClusterAdminServiceClient::new(op_ch.clone())
+        .init(pb::raft::InitRequest {
+            nodes: vec![new_node_with_port(1, PORT)],
+        })
+        .await?;
+    wait_for_leader(&mut ClusterAdminServiceClient::new(op_ch), 1).await;
+
+    node.storage
+        .transaction(vec![
+            emit("registry", "d1", "a", DataTier::Internal),
+            emit("registry", "d2", "b", DataTier::Internal),
+            emit("revocation", "d1", "r", DataTier::Internal),
+        ])
+        .await?;
+
+    // Other roles and an unlisted identity get nothing.
+    let node_ch = connect_as(&pki, &node_cert, 1, PORT).await?;
+    let err = FeedServiceClient::new(node_ch)
+        .subscribe(pb::raft::SubscribeRequest::default())
+        .await
+        .expect_err("a node is not a feed consumer");
+    assert_eq!(tonic::Code::PermissionDenied, err.code());
+
+    // The subscriber sees only registry events of d1, even if it asks for more.
+    serve_feed(&node, PORT + 10, &format!("{ROLE_SAN_PREFIX}feed-consumer")).await?;
+    let feed_ch = connect_as(&pki, &feed_cert, 1, PORT + 10).await?;
+    let mut client = FeedServiceClient::new(feed_ch);
+    let mut stream = client
+        .subscribe(pb::raft::SubscribeRequest {
+            kinds: vec!["registry".into(), "revocation".into()],
+            domains: vec!["d1".into(), "d2".into()],
+            ..Default::default()
+        })
+        .await?
+        .into_inner();
+    let Message::Events(first) = next_message(&mut stream).await? else {
+        panic!("expected events");
+    };
+    assert_eq!(1, first.events.len());
+    assert_eq!(b"a".to_vec(), first.events[0].key);
+    let epoch = first.epoch;
+    let last = (first.events[0].index, first.events[0].position);
+
+    // A later event is pushed on the open stream.
+    node.storage
+        .transaction(vec![emit("registry", "d1", "later", DataTier::Internal)])
+        .await?;
+    let Message::Events(pushed) = next_message(&mut stream).await? else {
+        panic!("expected events");
+    };
+    assert_eq!(b"later".to_vec(), pushed.events[0].key);
+    drop(stream);
+
+    // Resuming from the first cursor yields only what follows it.
+    let mut resumed = client
+        .subscribe(pb::raft::SubscribeRequest {
+            epoch,
+            has_cursor: true,
+            cursor_index: last.0,
+            cursor_position: last.1,
+            ..Default::default()
+        })
+        .await?
+        .into_inner();
+    let Message::Events(rest) = next_message(&mut resumed).await? else {
+        panic!("expected events");
+    };
+    assert_eq!(b"later".to_vec(), rest.events[0].key);
+    drop(resumed);
+
+    // A cursor of another epoch is reset.
+    let mut stale = client
+        .subscribe(pb::raft::SubscribeRequest {
+            epoch: epoch + 1,
+            has_cursor: true,
+            cursor_index: last.0,
+            ..Default::default()
+        })
+        .await?
+        .into_inner();
+    assert!(matches!(next_message(&mut stale).await?, Message::Reset(_)));
     Ok(())
 }

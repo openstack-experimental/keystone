@@ -166,6 +166,18 @@ pub struct DistributedStorageConfiguration {
     #[serde(default)]
     pub feed_kinds: Vec<String>,
 
+    /// Identities that may subscribe to the feed, each
+    /// `<spiffe id>=<kind>[+<kind>...][@<domain>[+<domain>...]]`. A request is
+    /// intersected with its entry and never widened. Without `@` every domain
+    /// is allowed. A caller without an entry is refused, whatever its role.
+    #[serde(default)]
+    pub feed_subscribers: Vec<String>,
+
+    /// Seconds between feed heartbeats. Defaults to 5.
+    #[serde(default = "default_feed_heartbeat_secs")]
+    #[validate(range(min = 1))]
+    pub feed_heartbeat_secs: u64,
+
     /// Days a feed event stays in the outbox. `0` keeps events until
     /// `feed_max_events` removes them. Defaults to 7.
     #[serde(default = "default_feed_retention_days")]
@@ -918,6 +930,10 @@ fn default_dek_rotation_days() -> u32 {
     90
 }
 
+fn default_feed_heartbeat_secs() -> u64 {
+    5
+}
+
 fn default_feed_retention_days() -> u32 {
     7
 }
@@ -995,6 +1011,8 @@ impl Default for DistributedStorageConfiguration {
             dek_rotation_days: default_dek_rotation_days(),
             write_rate_threshold: default_write_rate_threshold(),
             feed_kinds: Vec::new(),
+            feed_subscribers: Vec::new(),
+            feed_heartbeat_secs: default_feed_heartbeat_secs(),
             feed_retention_days: default_feed_retention_days(),
             feed_max_events: default_feed_max_events(),
             audit_spool_dir: None,

@@ -508,6 +508,25 @@ impl Storage {
         &self.state_machine_store
     }
 
+    /// A feed service that authorises subscribers with `authz` instead of
+    /// the node's own peer policy, to serve the feed on a dedicated listener
+    /// (and to exercise roles the node's TLS mode cannot grant by name).
+    pub fn feed_service_with_authz(
+        &self,
+        authz: Arc<crate::grpc::authz::PeerAuthz>,
+    ) -> crate::grpc::feed_service::FeedServiceImpl {
+        crate::grpc::feed_service::FeedServiceImpl::new(
+            self.raft.clone(),
+            self.node_id,
+            self.state_machine_store.clone(),
+            authz,
+            self.leader_contact.clone(),
+            self.feed_subscribers.clone(),
+            self.feed_heartbeat,
+            self.local_read_max_staleness,
+        )
+    }
+
     /// Try to commit the command to the raft cluster.
     ///
     /// Attempt to commit command to the current node forwarding the request

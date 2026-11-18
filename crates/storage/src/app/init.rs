@@ -842,6 +842,9 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         dek_rotation_days: ds_config.dek_rotation_days,
         feed_retention_days: ds_config.feed_retention_days,
         feed_max_events: ds_config.feed_max_events,
+        feed_subscribers: crate::grpc::feed_service::parse_subscribers(&ds_config.feed_subscribers)
+            .map_err(StoreError::Other)?,
+        feed_heartbeat: Duration::from_secs(ds_config.feed_heartbeat_secs),
     });
 
     // Automatic DEK rotation by age and by log nonce volume (ADR 0016-v2
@@ -1046,6 +1049,17 @@ pub async fn get_app_server(storage: &Storage) -> Result<Routes, StoreError> {
         storage.node_id,
     );
 
+    let feed_svc_impl = crate::grpc::feed_service::FeedServiceImpl::new(
+        storage.raft.clone(),
+        storage.node_id,
+        storage.state_machine_store.clone(),
+        storage.peer_authz.clone(),
+        storage.leader_contact.clone(),
+        storage.feed_subscribers.clone(),
+        storage.feed_heartbeat,
+        storage.local_read_max_staleness,
+    );
+
     let mut router = Routes::builder();
     router
         .add_service(
@@ -1053,6 +1067,7 @@ pub async fn get_app_server(storage: &Storage) -> Result<Routes, StoreError> {
                 .max_decoding_message_size(crate::RAFT_MAX_MESSAGE_SIZE),
         )
         .add_service(ClusterAdminServiceServer::new(cluster_admin_svc_impl))
+        .add_service(FeedServiceServer::new(feed_svc_impl))
         .add_service(StorageServiceServer::new(storage_svc_impl));
 
     Ok(router.routes())
