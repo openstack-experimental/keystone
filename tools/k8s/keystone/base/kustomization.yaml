@@ -7,8 +7,7 @@ configMapGenerator:
       - conf/helper.conf
 images:
   - name: py-keystone
-    # TODO: switch to ghcr.io/cloud-plane/iam/py-keystone once published
-    newName: ghcr.io/cloud-plane/keystone/py-keystone
+    newName: ghcr.io/cloud-plane/iam/py-keystone
     newTag: main
   - name: busybox
     newTag: 1.36.1
