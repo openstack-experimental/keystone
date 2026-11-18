@@ -50,6 +50,7 @@ mod reconcile_dek_local_emergency;
 mod remove_peer;
 mod restore;
 mod rotate_dek;
+mod sites;
 mod status;
 mod transfer_leader;
 
@@ -68,6 +69,7 @@ use crate::storage::reconcile_dek_local_emergency::ReconcileDekLocalEmergencyCom
 use crate::storage::remove_peer::RemovePeerCommand;
 use crate::storage::restore::RestoreCommand;
 use crate::storage::rotate_dek::RotateDekCommand;
+use crate::storage::sites::SitesCommand;
 use crate::storage::status::StatusCommand;
 use crate::storage::transfer_leader::TransferLeaderCommand;
 
@@ -97,6 +99,7 @@ impl PerformAction for StorageCommand {
             StorageCommands::RemovePeer(e) => e.take_action(config).await,
             StorageCommands::Restore(e) => e.take_action(config).await,
             StorageCommands::RotateDek(e) => e.take_action(config).await,
+            StorageCommands::Sites(e) => e.take_action(config).await,
             StorageCommands::Status(e) => e.take_action(config).await,
             StorageCommands::TransferLeader(e) => e.take_action(config).await,
             StorageCommands::ListDekLocalEmergencyCandidates(e) => e.take_action(config).await,
@@ -119,6 +122,7 @@ enum StorageCommands {
     RemovePeer(RemovePeerCommand),
     Restore(RestoreCommand),
     RotateDek(RotateDekCommand),
+    Sites(SitesCommand),
     Status(StatusCommand),
     TransferLeader(TransferLeaderCommand),
     ListDekLocalEmergencyCandidates(ListDekLocalEmergencyCandidatesCommand),

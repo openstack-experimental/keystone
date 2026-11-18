@@ -1081,7 +1081,11 @@ The `sites` entries are only the initial list. After the first `SetSites`
 call the cluster-wide list is stored in the replicated state, travels with
 snapshots and backups, and wins over the configuration on every node.
 
-To add a site, first run `SetSites` with the full new list (on the leader, as an
+`keystone-manage storage sites` lists the sites, and `--add
+<name>=<public-key.pem>[@<version>]` and `--remove <name>` change the list
+(each is repeatable).
+
+To add a site, first run `SetSites` (`storage sites --add`) with the full new list (on the leader, as an
 operator; the answering node's own site must stay in it), then start and join
 the new site's node. `SetSites` makes every node open the DEK envelopes it
 stores and wrap them again for the new list, so the joiner's `FetchDek` and any
