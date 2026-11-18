@@ -240,6 +240,12 @@ pub struct DistributedStorageConfiguration {
     #[serde(default)]
     #[validate(nested)]
     pub transit: Option<TransitKekConfiguration>,
+
+    /// Per-site KEK configuration (ADR 0045 §11.2). Required when
+    /// `kek_provider = "per_site"`.
+    #[serde(default)]
+    #[validate(nested)]
+    pub per_site: Option<PerSiteKekConfiguration>,
 }
 
 /// `local_read_max_staleness_ms` must exceed two heartbeat intervals: a
@@ -348,6 +354,44 @@ fn validate_kek_selection(
                     .with_message(std::borrow::Cow::Borrowed(
                         "[distributed_storage.transit] JWT login needs both transit_jwt_file and transit_jwt_role",
                     )));
+                }
+            }
+        },
+        KekProvider::PerSite => match &cfg.per_site {
+            None => {
+                return Err(validator::ValidationError::new(
+                    "kek_provider_per_site_missing_section",
+                )
+                .with_message(std::borrow::Cow::Borrowed(
+                    "kek_provider = \"per_site\" requires a [distributed_storage.per_site] section",
+                )));
+            }
+            Some(p) => {
+                let msg = |m: String| {
+                    validator::ValidationError::new("kek_provider_per_site")
+                        .with_message(std::borrow::Cow::Owned(m))
+                };
+                let mut seen = std::collections::HashSet::new();
+                for spec in p.sites.iter().chain(p.escrow_site.iter()) {
+                    let parsed = SiteSpec::parse(spec).map_err(|e| msg(e.to_string()))?;
+                    if p.escrow_site.as_ref() != Some(spec) && !seen.insert(parsed.name) {
+                        return Err(msg(format!("duplicate site in sites: {spec}")));
+                    }
+                }
+                if p.site_key_file.is_some() == p.site_key_transit_name.is_some() {
+                    return Err(msg(
+                        "[distributed_storage.per_site] requires exactly one of site_key_file or site_key_transit_name".into(),
+                    ));
+                }
+                if p.site_key_transit_name.is_some() && cfg.transit.is_none() {
+                    return Err(msg(
+                        "site_key_transit_name needs a [distributed_storage.transit] section for the connection to OpenBao".into(),
+                    ));
+                }
+                if p.sites.is_empty() && p.escrow_site.is_none() {
+                    return Err(msg(
+                        "[distributed_storage.per_site] needs at least one entry in sites or an escrow_site".into(),
+                    ));
                 }
             }
         },
@@ -503,6 +547,9 @@ pub enum KekProvider {
     Tpm,
     /// OpenBao Transit key (ADR 0045 §11.2). The KEK never leaves OpenBao.
     Transit,
+    /// One wrapped DEK openable by every registered site, each with its own
+    /// key (ADR 0045 §11.2). See [`PerSiteKekConfiguration`].
+    PerSite,
 }
 
 /// Which reads may be served from the local state machine without a
@@ -515,6 +562,85 @@ pub enum LocalReadsMode {
     Disabled,
     /// Tier 0/1 records may be read locally when the consumer asks for it.
     LocalForPublic,
+}
+
+/// Per-site KEK provider configuration (ADR 0045 §11.2).
+///
+/// Every site holds its own RSA key. The DEK is wrapped to the public key of
+/// every site in `sites` (plus `escrow_site`), so a snapshot or backup made at
+/// one site is readable at any other. This node opens only the entry of its
+/// own `site`.
+#[derive(Debug, Deserialize, Clone, Validate)]
+pub struct PerSiteKekConfiguration {
+    /// Cluster identifier, bound into every wrapped DEK so one cluster's DEK
+    /// cannot be replayed into another.
+    #[validate(length(min = 1))]
+    pub cluster_id: String,
+
+    /// Optional offline recipient, `<name>=<public_key_pem_file>[@<version>]`.
+    /// Disaster recovery starts a node with `site = "<name>"` and the escrow
+    /// private key as `site_key_file`.
+    #[serde(default)]
+    pub escrow_site: Option<String>,
+
+    /// This node's site name.
+    #[validate(length(min = 1))]
+    pub site: String,
+
+    /// Software private key of this site, a PKCS#8 PEM file. Mutually
+    /// exclusive with `site_key_transit_name`.
+    #[serde(default)]
+    pub site_key_file: Option<PathBuf>,
+
+    /// Name of the `rsa-*` OpenBao Transit key holding this site's private
+    /// key; the connection comes from `[distributed_storage.transit]`.
+    /// Mutually exclusive with `site_key_file`.
+    #[serde(default)]
+    pub site_key_transit_name: Option<String>,
+
+    /// Registered sites, each `<name>=<public_key_pem_file>[@<version>]`
+    /// (SubjectPublicKeyInfo PEM, RSA of at least 2048 bits; the version
+    /// defaults to 1). Must include this node's own `site`.
+    #[serde(default)]
+    pub sites: Vec<String>,
+}
+
+/// One parsed `<name>=<file>[@<version>]` site specification.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SiteSpec<'a> {
+    /// Site name.
+    pub name: &'a str,
+    /// Public key PEM file.
+    pub file: &'a str,
+    /// Key version.
+    pub key_version: u32,
+}
+
+impl<'a> SiteSpec<'a> {
+    /// Parse `<name>=<file>[@<version>]`.
+    pub fn parse(spec: &'a str) -> Result<Self, Report> {
+        let (name, rest) = spec
+            .split_once('=')
+            .ok_or_else(|| eyre::eyre!("site `{spec}` is not <name>=<file>[@<version>]"))?;
+        let (file, key_version) = match rest.rsplit_once('@') {
+            Some((file, v)) => (
+                file,
+                v.parse::<u32>()
+                    .wrap_err_with(|| format!("site `{spec}` has an invalid key version"))?,
+            ),
+            None => (rest, 1),
+        };
+        if name.is_empty() || name.len() > 255 || file.is_empty() {
+            return Err(eyre::eyre!(
+                "site `{spec}` needs a name (at most 255 bytes) and a file"
+            ));
+        }
+        Ok(Self {
+            name,
+            file,
+            key_version,
+        })
+    }
 }
 
 /// OpenBao Transit KEK provider configuration (ADR 0045 §11.2).
@@ -854,6 +980,7 @@ impl Default for DistributedStorageConfiguration {
             tls_role_san_prefix: None,
             tpm: None,
             transit: None,
+            per_site: None,
         }
     }
 }
@@ -1794,5 +1921,69 @@ roles = ["reservation-voter"]
             ..Default::default()
         };
         assert!(!has_code(&cfg, "tls_role_san_prefix_invalid"));
+    }
+
+    #[test]
+    fn test_site_spec_parse() {
+        assert_eq!(
+            SiteSpec::parse("eu=/k/eu.pem").unwrap(),
+            SiteSpec {
+                name: "eu",
+                file: "/k/eu.pem",
+                key_version: 1
+            }
+        );
+        assert_eq!(SiteSpec::parse("eu=/k/eu.pem@3").unwrap().key_version, 3);
+        assert!(SiteSpec::parse("eu").is_err());
+        assert!(SiteSpec::parse("=/k/eu.pem").is_err());
+        assert!(SiteSpec::parse("eu=").is_err());
+        assert!(SiteSpec::parse("eu=/k/eu.pem@x").is_err());
+    }
+
+    fn per_site_cfg(per_site: Option<PerSiteKekConfiguration>) -> DistributedStorageConfiguration {
+        DistributedStorageConfiguration {
+            kek_provider: KekProvider::PerSite,
+            dev_mode: true,
+            per_site,
+            ..Default::default()
+        }
+    }
+
+    fn per_site() -> PerSiteKekConfiguration {
+        PerSiteKekConfiguration {
+            cluster_id: "c".into(),
+            escrow_site: None,
+            site: "a".into(),
+            site_key_file: Some("/k/a.key".into()),
+            site_key_transit_name: None,
+            sites: vec!["a=/k/a.pem".into()],
+        }
+    }
+
+    #[test]
+    fn test_per_site_kek_validation() {
+        assert!(validate_kek_selection(&per_site_cfg(Some(per_site()))).is_ok());
+        assert!(validate_kek_selection(&per_site_cfg(None)).is_err());
+
+        let mut both = per_site();
+        both.site_key_transit_name = Some("k".into());
+        assert!(validate_kek_selection(&per_site_cfg(Some(both))).is_err());
+
+        let mut neither = per_site();
+        neither.site_key_file = None;
+        assert!(validate_kek_selection(&per_site_cfg(Some(neither))).is_err());
+
+        let mut transit_without_section = per_site();
+        transit_without_section.site_key_file = None;
+        transit_without_section.site_key_transit_name = Some("k".into());
+        assert!(validate_kek_selection(&per_site_cfg(Some(transit_without_section))).is_err());
+
+        let mut dup = per_site();
+        dup.sites.push("a=/k/other.pem".into());
+        assert!(validate_kek_selection(&per_site_cfg(Some(dup))).is_err());
+
+        let mut empty = per_site();
+        empty.sites.clear();
+        assert!(validate_kek_selection(&per_site_cfg(Some(empty))).is_err());
     }
 }

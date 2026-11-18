@@ -200,6 +200,7 @@ async fn build_kek(
         KekProviderKind::Pkcs11 => build_pkcs11_kek(ds_config),
         KekProviderKind::Tpm => build_tpm_kek(ds_config),
         KekProviderKind::Transit => build_transit_kek(ds_config).await,
+        KekProviderKind::PerSite => build_per_site_kek(ds_config).await,
     }
 }
 
@@ -267,6 +268,15 @@ fn build_pkcs11_kek(
 async fn build_transit_kek(
     ds_config: &DistributedStorageConfiguration,
 ) -> Result<Arc<dyn KekProvider>, StoreError> {
+    Ok(Arc::new(connect_transit(ds_config).await?))
+}
+
+/// The connection to OpenBao described by `ds_config.transit`, used for the
+/// Transit KEK and for per-site key unwrapping.
+#[cfg(feature = "transit")]
+async fn connect_transit(
+    ds_config: &DistributedStorageConfiguration,
+) -> Result<openstack_keystone_storage_crypto_transit::TransitKek, StoreError> {
     use secrecy::SecretString;
 
     use openstack_keystone_storage_crypto::error::CryptoError;
@@ -364,7 +374,154 @@ async fn build_transit_kek(
         cfg.transit_key_name.clone(),
     )
     .map_err(|e| StoreError::Other(eyre!("failed to set up Transit KEK: {e}")))?;
+    Ok(kek)
+}
+
+/// Build the per-site KEK (ADR 0045 §11.2) from `ds_config.per_site`.
+///
+/// Reads the registered sites' public keys and this site's key source, and
+/// checks offline that a DEK can be wrapped for every site, so a malformed key
+/// stops startup rather than the first DEK rotation.
+async fn build_per_site_kek(
+    ds_config: &DistributedStorageConfiguration,
+) -> Result<Arc<dyn KekProvider>, StoreError> {
+    use rustls::pki_types::{SubjectPublicKeyInfoDer, pem::PemObject};
+
+    use openstack_keystone_storage_crypto::{SiteEntry, SiteKek, SiteKeyUnwrapper, SiteRegistry};
+
+    use crate::config::SiteSpec;
+
+    let cfg = ds_config.per_site.as_ref().ok_or_else(|| {
+        StoreError::Other(eyre!(
+            "kek_provider = \"per_site\" requires a [distributed_storage.per_site] section"
+        ))
+    })?;
+    let read_entry = |spec: &str| -> Result<SiteEntry, StoreError> {
+        let spec = SiteSpec::parse(spec).map_err(StoreError::Other)?;
+        let pem = std::fs::read(spec.file).map_err(|e| {
+            StoreError::Other(eyre!(
+                "reading the public key of site '{}' from {}: {e}",
+                spec.name,
+                spec.file
+            ))
+        })?;
+        let der = SubjectPublicKeyInfoDer::from_pem_slice(&pem).map_err(|e| {
+            StoreError::Other(eyre!(
+                "{} is not a PEM public key (SubjectPublicKeyInfo): {e}",
+                spec.file
+            ))
+        })?;
+        Ok(SiteEntry {
+            name: spec.name.to_owned(),
+            public_key_der: der.as_ref().to_vec(),
+            key_version: spec.key_version,
+        })
+    };
+    let sites = cfg
+        .sites
+        .iter()
+        .map(|s| read_entry(s))
+        .collect::<Result<Vec<_>, _>>()?;
+    let escrow = cfg.escrow_site.as_deref().map(read_entry).transpose()?;
+
+    // The envelope entry names the version of the site key that wraps it, so
+    // the node needs the key at the version its own entry is registered with.
+    let local_version = sites
+        .iter()
+        .chain(escrow.iter())
+        .find(|s| s.name == cfg.site)
+        .map(|s| s.key_version)
+        .ok_or_else(|| {
+            StoreError::Other(eyre!(
+                "the local site '{}' is neither in per_site.sites nor the escrow site",
+                cfg.site
+            ))
+        })?;
+
+    let unwrappers: Vec<(u32, Arc<dyn SiteKeyUnwrapper>)> =
+        match (&cfg.site_key_file, &cfg.site_key_transit_name) {
+            (Some(path), None) => {
+                vec![(local_version, build_software_site_key(path)?)]
+            }
+            // Older Transit key versions stay usable for envelopes made
+            // before the site key was rotated.
+            (None, Some(name)) => {
+                let mut v = Vec::new();
+                for version in 1..=local_version {
+                    v.push((
+                        version,
+                        build_transit_site_key(ds_config, name, version).await?,
+                    ));
+                }
+                v
+            }
+            _ => {
+                return Err(StoreError::Other(eyre!(
+                    "[distributed_storage.per_site] requires exactly one of site_key_file or \
+                 site_key_transit_name"
+                )));
+            }
+        };
+
+    let kek = SiteKek::new(
+        cfg.cluster_id.clone(),
+        cfg.site.clone(),
+        unwrappers,
+        Arc::new(SiteRegistry::new(sites)),
+        escrow,
+    );
+    kek.wrap_dek(&[0u8; 32]).await.map_err(|e| {
+        StoreError::Other(eyre!("the per_site configuration cannot wrap a DEK: {e}"))
+    })?;
     Ok(Arc::new(kek))
+}
+
+#[cfg(feature = "software-site-key")]
+fn build_software_site_key(
+    path: &std::path::Path,
+) -> Result<Arc<dyn openstack_keystone_storage_crypto::SiteKeyUnwrapper>, StoreError> {
+    use rustls::pki_types::{PrivatePkcs8KeyDer, pem::PemObject};
+
+    let pem = std::fs::read(path)
+        .map_err(|e| StoreError::Other(eyre!("reading site_key_file {path:?}: {e}")))?;
+    let der = PrivatePkcs8KeyDer::from_pem_slice(&pem).map_err(|e| {
+        StoreError::Other(eyre!("site_key_file {path:?} is not a PKCS#8 PEM key: {e}"))
+    })?;
+    let key =
+        openstack_keystone_storage_crypto::SoftwareSiteKey::from_pkcs8_der(der.secret_pkcs8_der())
+            .map_err(|e| StoreError::Other(eyre!("site_key_file {path:?}: {e}")))?;
+    Ok(Arc::new(key))
+}
+
+#[cfg(not(feature = "software-site-key"))]
+fn build_software_site_key(
+    _path: &std::path::Path,
+) -> Result<Arc<dyn openstack_keystone_storage_crypto::SiteKeyUnwrapper>, StoreError> {
+    Err(StoreError::Other(eyre!(
+        "site_key_file needs a build with the `software-site-key` feature (its RSA decryption \
+         is not constant time without `fips`); use site_key_transit_name"
+    )))
+}
+
+#[cfg(feature = "transit")]
+async fn build_transit_site_key(
+    ds_config: &DistributedStorageConfiguration,
+    key_name: &str,
+    key_version: u32,
+) -> Result<Arc<dyn openstack_keystone_storage_crypto::SiteKeyUnwrapper>, StoreError> {
+    let transit = connect_transit(ds_config).await?;
+    Ok(Arc::new(transit.site_key(key_name, key_version)))
+}
+
+#[cfg(not(feature = "transit"))]
+async fn build_transit_site_key(
+    _ds_config: &DistributedStorageConfiguration,
+    _key_name: &str,
+    _key_version: u32,
+) -> Result<Arc<dyn openstack_keystone_storage_crypto::SiteKeyUnwrapper>, StoreError> {
+    Err(StoreError::Other(eyre!(
+        "site_key_transit_name was set but this build was compiled without the `transit` feature"
+    )))
 }
 
 #[cfg(not(feature = "transit"))]
@@ -955,8 +1112,10 @@ pub(crate) async fn adopt_cluster_dek(
         .await
         .map_err(|e| {
             StoreError::Other(eyre!(
-                "failed to adopt cluster DEK version {}: {e}; this node's KEK material \
-                 must be identical to every other cluster node's KEK (ADR 0016-v2 §2.5)",
+                "failed to adopt cluster DEK version {}: {e}; with a shared KEK provider this node's KEK material \
+                 must be identical to every other cluster node's KEK (ADR 0016-v2 §2.5); with \
+                 `per_site` this node's site must be in the cluster's site registry and hold \
+                 the matching private key (ADR 0045 §11.2)",
                 fetch_resp.dek_version
             ))
         })?;

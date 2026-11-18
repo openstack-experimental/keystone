@@ -812,7 +812,8 @@ node_listener_addr = "0.0.0.0:8310"
 # initial membership. Any other node adds itself as a learner on the first
 # listed peer that answers (after adopting the cluster DEK). The join is still
 # authenticated by mTLS. Without the list the nodes are joined manually with
-# `init` and `join`. All nodes must share the same KEK material.
+# `init` and `join`. All nodes must share the same KEK material (or, with
+# `kek_provider = "per_site"`, be registered sites of the same cluster).
 # retry_join_nodes = "0=https://keystone-0:8310,1=https://keystone-1:8310,2=https://keystone-2:8310"
 
 # Set to false on nodes that are about to receive a disaster recovery
@@ -866,6 +867,7 @@ write_rate_threshold = 1073741824
 # kek_provider = "pkcs11"
 # kek_provider = "tpm"
 # kek_provider = "transit"
+# kek_provider = "per_site"
 
 # --- Transport: SPIFFE (default) ---
 trust_domains = "example.org"
@@ -1006,13 +1008,8 @@ A wrapped DEK is the Transit ciphertext (`vault:v<N>:...`), so rotating the
 Transit key keeps older DEKs readable; rewrap them with Transit's `rewrap`
 endpoint before retiring old key versions. The FIPS status of the wrap is that
 of the OpenBao build and of the TLS link (the process-wide rustls provider).
-Per-site wrapping of one DEK to several sites with RSA Transit keys builds on
-the same crate (`TransitKek::site_key`, ADR 0045 §11.2), but is not yet wired
-into join, replication or install.
-
-Every node unwraps the replicated DEK with its own Transit key, so until
-per-site blobs are stored in the state machine (#1671) all nodes of a cluster
-must use the **same** Transit key: one OpenBao, or OpenBao instances that share
+With the `transit` provider every node unwraps the replicated DEK with its own
+Transit key, so all nodes of a cluster must use the **same** Transit key: one OpenBao, or OpenBao instances that share
 the key (for example through replication). A node whose OpenBao holds a
 different key cannot join, because it cannot unwrap the DEK it fetches.
 
@@ -1034,6 +1031,45 @@ can start before OpenBao is up, as well as when applying a DEK change
 (rotation, snapshot or restore). After five minutes the retry is logged at
 `error` level. A rejected request (wrong key, bad policy for the operation) is
 a hard error.
+
+Sites that must not share a KEK use the `per_site` provider below.
+
+#### Per-site KEK
+
+Every site holds its own RSA key (2048 bits or more). The DEK is wrapped once
+for each registered site, so the wrapped DEK in the Raft log, in snapshots, in
+backups and in the join handshake is an envelope any registered site opens with
+its own private key; no key material is shared between sites. This node opens
+only the entry of its own `site`. The cluster id and the site name are bound
+inside each blob, so a blob cannot be replayed into another cluster or
+presented as another site's.
+
+```toml
+[distributed_storage]
+kek_provider = "per_site"
+
+[distributed_storage.per_site]
+cluster_id = "prod-global"
+site       = "eu-1"
+# Every site that must be able to open the DEK, this one included, as
+# name=public-key-PEM-file[@key-version] (SubjectPublicKeyInfo, version
+# defaults to 1). Keep the same list on every node.
+sites = "eu-1=/etc/keystone/storage/sites/eu-1.pem,us-1=/etc/keystone/storage/sites/us-1.pem"
+# Optional offline recipient for disaster recovery, same format.
+# escrow_site = "escrow=/etc/keystone/storage/sites/escrow.pem"
+
+# Exactly one place for this site's private key. A software key (PKCS#8 PEM):
+site_key_file = "/etc/keystone/storage/site.key"
+# or an `rsa-2048`/`rsa-4096` OpenBao Transit key; the connection (address and
+# authentication) comes from [distributed_storage.transit], and the node's
+# policy needs `update` on `transit/decrypt/<name>` only:
+# site_key_transit_name = "keystone-site-key"
+```
+
+Transit decrypts with OAEP-SHA256 and no label; use a non-exportable key. The
+public key of each site is exported with `bao read transit/keys/<name>`.
+The site list is read from the configuration at start-up, so a change takes
+effect on the next restart and applies to DEKs wrapped afterwards.
 
 #### TPM 2.0
 
@@ -1116,7 +1152,8 @@ keystone-manage storage join https://10.0.0.1:8310
 `join` first asks the local node, which must already be running, to fetch the
 cluster's data encryption keys from the leader and install them, and only then
 registers it as a learner. The node therefore never replicates under the DEK it
-generated at first boot. All nodes must share the same KEK material, otherwise
+generated at first boot. All nodes must share the same KEK material (with the
+`per_site` provider: be registered sites that hold their private key), otherwise
 the adoption fails and the join is aborted. Re-running `join` on a node that is
 already a member is harmless. If the registration fails after the adoption (for
 example because the id is registered at a different address), the node keeps the
