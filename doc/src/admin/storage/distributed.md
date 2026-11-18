@@ -369,8 +369,19 @@ group member can never be observed as still-valid on a lagging follower.
 Local reads are off by default. Setting `local_reads_mode = "local_for_public"`
 lets a consumer ask for a stale local read of a single call; the node then
 serves Tier 0/1 records from its own state machine without contacting the leader
-and may return data older than the latest committed write; the staleness is
-unbounded, since a lagging or partitioned node serves whatever it last applied.
+and may return data older than the latest committed write. By default the
+staleness is unbounded, since a lagging or partitioned node serves whatever it
+last applied. Setting `local_read_max_staleness_ms` bounds it: a node that has
+not heard from a Raft leader for longer than that, or whose state machine has
+not applied up to the committed index, falls back to `ReadIndex`. A leader
+serves locally only while a quorum has acknowledged it within the bound, so a
+partitioned leader falls back too. The value must be at least twice
+`raft_heartbeat_interval_ms`. `Storage::staleness()` reports the current age.
+Known limitation: OpenRaft does not step a leader down when it loses its
+quorum, so a follower still connected to such a leader keeps receiving
+heartbeats and may serve local reads that the majority side has already
+superseded. Keep the bound well below the time an operator accepts for such
+a partition.
 Records without metadata or with an unknown tier are never served locally, and
 records written without an explicit tier default to Tier 1. Without the option,
 or for Tier 2/3 records (and prefix scans that match one), the request is
@@ -817,6 +828,11 @@ node_listener_addr = "0.0.0.0:8310"
 # Allow consumers to request stale local reads of Tier 0/1 records
 # (`disabled` (default) or `local_for_public`).
 # local_reads_mode = "disabled"
+
+# Longest a node may go without contact from a Raft leader and still serve a
+# local read (milliseconds). Unset means unbounded. At least twice
+# raft_heartbeat_interval_ms.
+# local_read_max_staleness_ms = 5000
 
 # Raft timing and log compaction. Raise the heartbeat and election timeouts for
 # clusters spread across availability zones. `raft_snapshot_logs_since_last = 0`

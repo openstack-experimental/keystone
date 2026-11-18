@@ -559,6 +559,10 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         ensure_linearizable_retries: ds_config.ensure_linearizable_retries,
         ensure_linearizable_retry_delay_ms: ds_config.ensure_linearizable_retry_delay_ms,
         local_reads_mode: ds_config.local_reads_mode,
+        local_read_max_staleness: ds_config
+            .local_read_max_staleness_ms
+            .map(Duration::from_millis),
+        leader_contact: Arc::new(LeaderContact::default()),
         log_nonce,
         dek_rotation_days: ds_config.dek_rotation_days,
     });
@@ -737,7 +741,11 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
 /// # Returns
 /// A `Result` containing the `Routes`, or a `StoreError`.
 pub async fn get_app_server(storage: &Storage) -> Result<Routes, StoreError> {
-    let raft_svc_impl = RaftServiceImpl::new(storage.raft.clone(), storage.peer_authz.clone());
+    let raft_svc_impl = RaftServiceImpl::new(
+        storage.raft.clone(),
+        storage.peer_authz.clone(),
+        storage.leader_contact.clone(),
+    );
     let cluster_admin_svc_impl = ClusterAdminServiceImpl::new(
         storage.raft.clone(),
         storage.node_id,
