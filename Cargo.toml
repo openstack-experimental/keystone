@@ -274,6 +274,17 @@ lto = "thin"
 [profile.dev.package."*"]
 debug = false
 
+# Password hashing is deliberately CPU-expensive; unoptimised it dominates
+# test wall time (API tests create many users).
+[profile.dev.package.bcrypt]
+opt-level = 3
+
+[profile.dev.package.scrypt]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3
+
 [profile.dev]
 debug = 1
 split-debuginfo = "deny"
