@@ -16,6 +16,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   NEXTEST_RETRIES: 3
+  # No debuginfo in CI: smaller target dir / cache, faster links.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
   KEYSTONE_DEV_KEK: 4242424242424242424242424242424242424242424242424242424242424242
   KEYSTONE_ALLOW_ENV_KEK: "1"
   SPIRE_VERSION: "1.15.1"
@@ -135,6 +138,8 @@ jobs:
       - name: Rust Cache
         if: needs.changes.outputs.code == 'true'
         uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Set up Python for cross-verification tests
         if: needs.changes.outputs.code == 'true'
@@ -222,6 +227,10 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         env:
           KEYSTONE_TEST_TOKEN_PROVIDER: jws
+          # Same as the step above: a different OTLP setting changes the
+          # server's feature set and forces a full rebuild.
+          KEYSTONE_TEST_OTLP_ENDPOINT: http://127.0.0.1:4318
+          JAEGER_QUERY_URL: http://127.0.0.1:16686
         run: cargo nextest run -p test_api --profile ci-api --test integration_api_v3 --test integration_api_v4
 
       - name: Invalidate eventual openstack_sdk cache (JWS)
@@ -230,19 +239,25 @@ jobs:
 
       - name: Run REST API SCIMv2 tests
         if: needs.changes.outputs.code == 'true'
+        env:
+          KEYSTONE_TEST_OTLP_ENDPOINT: http://127.0.0.1:4318
+          JAEGER_QUERY_URL: http://127.0.0.1:16686
         run: cargo nextest run -p test_api --profile ci-api --test scim_v2
 
       # Real-browser OAuth2 sign-in tests (login/consent/SSO/logout/passkey).
       # ubuntu-latest ships Chrome and chromedriver ($CHROMEWEBDRIVER).
       - name: Run browser (WebDriver) OAuth2 tests
         if: needs.changes.outputs.code == 'true'
+        env:
+          KEYSTONE_TEST_OTLP_ENDPOINT: http://127.0.0.1:4318
+          JAEGER_QUERY_URL: http://127.0.0.1:16686
         run: |
           "$CHROMEWEBDRIVER/chromedriver" --port=4444 > /tmp/chromedriver.log 2>&1 &
           cargo nextest run -p test_api --profile ci-browser --test integration_api_browser
 
       - name: Run Doc tests
         if: needs.changes.outputs.code == 'true'
-        run: cargo test --doc
+        run: cargo test --doc --all-features
 
       - name: Dump docker state
         if: failure()
@@ -426,6 +441,7 @@ jobs:
         uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: features-${{ matrix.name }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build and test
         run: ${{ matrix.run }}
@@ -458,6 +474,7 @@ jobs:
         uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: openapi-build
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Generate OpenAPI
         run: cargo run -p openstack-keystone --bin keystone -- --dump-openapi yaml > openapi.yaml
