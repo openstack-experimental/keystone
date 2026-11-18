@@ -28,7 +28,8 @@ use std::time::{Duration, Instant};
 use futures::Stream;
 use futures::StreamExt;
 use openraft::base::{BoxFuture, BoxStream};
-use openraft::error::{NetworkError, ReplicationClosed, Unreachable};
+use openraft::error::{NetworkError, ReplicationClosed, Timeout, Unreachable};
+use openraft::network::RPCTypes;
 use openraft::network::{
     Backoff, NetBackoff, NetSnapshot, NetStreamAppend, NetTransferLeader, NetVote, RPCOption,
 };
@@ -264,6 +265,15 @@ const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
 /// Time to wait for a PING acknowledgement before the connection is dropped.
 const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Snapshot chunk size when OpenRaft does not request one.
+const SNAPSHOT_CHUNK_SIZE: usize = 1024 * 1024;
+
+/// Slowest link speed a snapshot transfer is expected to sustain. The
+/// transfer deadline grows by one second per this many bytes, so a large
+/// snapshot over a WAN link is not cut off by an RPC-sized timeout while a
+/// stalled peer is still abandoned.
+const SNAPSHOT_MIN_BYTES_PER_SEC: u64 = 1024 * 1024;
+
 /// Per-peer cache of established gRPC channels.
 ///
 /// OpenRaft asks the factory for a new client for every replication stream and
@@ -424,14 +434,16 @@ impl RaftNetworkFactory<TypeConfig> for Arc<NetworkManager> {
     type Network = NetworkConnection;
 
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn new_client(&mut self, _: NodeId, node: &Node) -> Self::Network {
-        NetworkConnection::new(node.clone(), self.channels.clone())
+    async fn new_client(&mut self, target: NodeId, node: &Node) -> Self::Network {
+        NetworkConnection::new(target, node.clone(), self.channels.clone())
     }
 }
 
 /// Represents an active network connection to a remote Raft node.
 /// Handles serialization and deserialization of Raft messages over gRPC.
 pub struct NetworkConnection {
+    /// Target node id.
+    target_id: NodeId,
     /// Target node.
     target_node: pb::raft::Node,
     /// Shared per-peer channel cache.
@@ -446,10 +458,42 @@ impl NetworkConnection {
     }
 
     /// Creates a new `NetworkConnection` for `target_node`.
-    fn new(target_node: Node, channels: Arc<ChannelCache>) -> Self {
+    fn new(target_id: NodeId, target_node: Node, channels: Arc<ChannelCache>) -> Self {
         NetworkConnection {
+            target_id,
             target_node,
             channels,
+        }
+    }
+
+    /// Run `fut` under `limit`, mapping expiry to [`RPCError::Timeout`].
+    ///
+    /// OpenRaft passes an [`RPCOption`] to every RPC and expects the transport
+    /// to honour it; without a deadline a hung peer holds the replication task
+    /// until the kernel gives up on the TCP connection. OpenRaft's `Timeout`
+    /// error carries both node ids but the factory does not know the local one,
+    /// so `id` repeats the target (it is only used for logging).
+    ///
+    /// Callers bound the RPC on `RPCOption::soft_ttl`, as OpenRaft documents:
+    /// it is shorter than `hard_ttl`, so the transport reports its own timeout
+    /// before OpenRaft cancels the in-flight RPC.
+    async fn with_deadline<T, F>(
+        &self,
+        action: RPCTypes,
+        limit: Duration,
+        fut: F,
+    ) -> Result<T, RPCError>
+    where
+        F: Future<Output = Result<T, RPCError>>,
+    {
+        match tokio::time::timeout(limit, fut).await {
+            Ok(res) => res,
+            Err(_) => Err(RPCError::Timeout(Timeout {
+                action,
+                id: self.target_id,
+                target: self.target_id,
+                timeout: limit,
+            })),
         }
     }
 
@@ -484,18 +528,23 @@ impl NetStreamAppend<TypeConfig> for NetworkConnection {
     fn stream_append<'s, S>(
         &'s mut self,
         input: S,
-        _option: RPCOption,
+        option: RPCOption,
     ) -> BoxFuture<'s, Result<BoxStream<'s, Result<AppendResult<TypeConfig>, RPCError>>, RPCError>>
     where
         S: Stream<Item = AppendEntriesRequest> + OptionalSend + Unpin + 'static,
     {
         let fu = async move {
-            let mut client = self.make_client().await?;
-
-            let response = client
-                .stream_append(input.map(pb::raft::AppendEntriesRequest::from))
-                .await
-                .map_err(|e| RPCError::Network(NetworkError::<TypeConfig>::new(&e)))?;
+            // Only the stream setup is bounded: the stream itself is
+            // long-lived and its liveness is covered by HTTP/2 keepalive.
+            let response = self
+                .with_deadline(RPCTypes::AppendEntries, option.soft_ttl(), async {
+                    let mut client = self.make_client().await?;
+                    client
+                        .stream_append(input.map(pb::raft::AppendEntriesRequest::from))
+                        .await
+                        .map_err(|e| RPCError::Network(NetworkError::<TypeConfig>::new(&e)))
+                })
+                .await?;
 
             let output = response.into_inner().map(|result| {
                 let resp =
@@ -514,15 +563,18 @@ impl NetVote<TypeConfig> for NetworkConnection {
     async fn vote(
         &mut self,
         req: VoteRequest,
-        _option: RPCOption,
+        option: RPCOption,
     ) -> Result<VoteResponse, RPCError> {
-        let mut client = self.make_client().await?;
-
         let proto_vote_req: PbVoteRequest = req.into();
-        let response = client
-            .vote(proto_vote_req)
-            .await
-            .map_err(|e| RPCError::Network(NetworkError::<TypeConfig>::new(&e)))?;
+        let response = self
+            .with_deadline(RPCTypes::Vote, option.soft_ttl(), async {
+                let mut client = self.make_client().await?;
+                client
+                    .vote(proto_vote_req)
+                    .await
+                    .map_err(|e| RPCError::Network(NetworkError::<TypeConfig>::new(&e)))
+            })
+            .await?;
 
         let proto_vote_resp: PbVoteResponse = response.into_inner();
         #[allow(clippy::result_large_err)]
@@ -540,7 +592,7 @@ impl NetSnapshot<TypeConfig> for NetworkConnection {
         vote: Vote,
         snapshot: Snapshot,
         _cancel: impl Future<Output = ReplicationClosed> + OptionalSend + 'static,
-        _option: RPCOption,
+        option: RPCOption,
     ) -> Result<SnapshotResponse, StreamingError> {
         let mut client = self.make_client().await?;
 
@@ -571,24 +623,42 @@ impl NetSnapshot<TypeConfig> for NetworkConnection {
         // once it has read the entire request stream (see
         // `RaftServiceImpl::snapshot`'s `while let Some(chunk) =
         // stream.next().await` loop), so the request stream must be
-        // produced independently of awaiting the response. The whole
-        // snapshot already lives in memory here, so the simplest way to
-        // satisfy that is to build every chunk eagerly into a `Vec` up
-        // front and hand it to `stream::iter` — no channel, no separate
-        // feeder task, and thus no chance of the response await starving
-        // the very code that would produce the stream it's waiting on.
-        let chunk_size = 1024 * 1024;
-        let mut requests = Vec::with_capacity(1 + snapshot.snapshot.len().div_ceil(chunk_size));
-        requests.push(meta_request);
-        requests.extend(snapshot.snapshot.chunks(chunk_size).map(|chunk| {
+        // produced independently of awaiting the response. The snapshot
+        // already lives in memory here; chunks are copied lazily as the
+        // transport pulls them so the extra memory is one chunk, not a second
+        // copy of the whole snapshot.
+        let chunk_size = option
+            .snapshot_chunk_size()
+            .filter(|s| *s > 0)
+            .unwrap_or(SNAPSHOT_CHUNK_SIZE);
+        let data = snapshot.snapshot;
+        let total = data.len();
+        let chunks = (0..total.div_ceil(chunk_size)).map(move |i| {
+            let start = i * chunk_size;
+            let end = (start + chunk_size).min(total);
             pb::raft::SnapshotRequest {
-                payload: Some(pb::raft::snapshot_request::Payload::Chunk(chunk.to_vec())),
+                payload: Some(pb::raft::snapshot_request::Payload::Chunk(
+                    data.get(start..end).unwrap_or_default().to_vec(),
+                )),
             }
-        }));
+        });
+        let requests = futures::stream::once(futures::future::ready(meta_request))
+            .chain(futures::stream::iter(chunks));
 
-        let response = client
-            .snapshot(futures::stream::iter(requests))
+        // The whole transfer shares one deadline: OpenRaft's soft ttl plus the
+        // time `total` bytes need at the slowest tolerated link speed.
+        let limit =
+            option.soft_ttl() + Duration::from_secs(total as u64 / SNAPSHOT_MIN_BYTES_PER_SEC);
+        let response = tokio::time::timeout(limit, client.snapshot(requests))
             .await
+            .map_err(|_| {
+                StreamingError::Timeout(Timeout {
+                    action: RPCTypes::InstallSnapshot,
+                    id: self.target_id,
+                    target: self.target_id,
+                    timeout: limit,
+                })
+            })?
             .map_err(|e| NetworkError::<TypeConfig>::new(&e))?;
 
         let message = response.into_inner();
@@ -613,16 +683,20 @@ impl NetTransferLeader<TypeConfig> for NetworkConnection {
     async fn transfer_leader(
         &mut self,
         req: TransferLeaderRequest<TypeConfig>,
-        _option: RPCOption,
+        option: RPCOption,
     ) -> Result<
         openraft::raft::TransferLeaderResponse<TypeConfig>,
         openraft::error::RPCError<TypeConfig>,
     > {
-        let mut client = self.make_client().await?;
-        let response = client
-            .transfer_leader(pb::raft::TransferLeaderRequest::from(req))
-            .await
-            .map_err(|e| RPCError::Network(NetworkError::<TypeConfig>::new(&e)))?;
+        let response = self
+            .with_deadline(RPCTypes::TransferLeader, option.soft_ttl(), async {
+                let mut client = self.make_client().await?;
+                client
+                    .transfer_leader(pb::raft::TransferLeaderRequest::from(req))
+                    .await
+                    .map_err(|e| RPCError::Network(NetworkError::<TypeConfig>::new(&e)))
+            })
+            .await?;
         response
             .into_inner()
             .try_into()
@@ -1184,6 +1258,42 @@ mod channel_cache_tests {
             .unwrap()
             .insert("peer:1".into(), (lazy_channel(), Instant::now()));
         (cache, tx)
+    }
+
+    fn connection() -> (NetworkConnection, watch::Sender<ClientTlsConfig>) {
+        let (cache, tx) = cache_with(Duration::from_secs(60));
+        let conn = NetworkConnection::new(7, pb::raft::Node::default(), Arc::new(cache));
+        (conn, tx)
+    }
+
+    #[tokio::test]
+    async fn with_deadline_times_out_a_hung_rpc() {
+        let (conn, _tx) = connection();
+        let res: Result<(), RPCError> = conn
+            .with_deadline(
+                RPCTypes::Vote,
+                Duration::from_millis(20),
+                futures::future::pending(),
+            )
+            .await;
+        match res {
+            Err(RPCError::Timeout(t)) => {
+                assert_eq!(t.target, 7);
+                assert_eq!(t.timeout, Duration::from_millis(20));
+            }
+            other => panic!("expected timeout, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn with_deadline_passes_through_a_fast_rpc() {
+        let (conn, _tx) = connection();
+        let res = conn
+            .with_deadline(RPCTypes::Vote, Duration::from_secs(5), async {
+                Ok::<_, RPCError>(42)
+            })
+            .await;
+        assert_eq!(res.unwrap(), 42);
     }
 
     fn cached(cache: &ChannelCache) -> usize {
