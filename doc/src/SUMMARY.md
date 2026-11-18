@@ -158,3 +158,4 @@ ______________________________________________________________________
     - [OAuth2 Sender-Constrained Tokens with DPoP](adr/0043-oauth2-dpop.md)
     - [Single-Use Credential Registry](adr/0044-single-use-credential-registry.md)
     - [Global IAM Mesh](adr/0045-global-iam-mesh.md)
+    - [Domain Member Invitations](adr/0046-domain-member-invitations.md)
