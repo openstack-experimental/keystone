@@ -232,8 +232,7 @@ pub(super) async fn device(
 #[tracing::instrument(
     name = "api::v4::oauth2::device_submit_code",
     level = "debug",
-    skip(state, form),
-    err(Debug)
+    skip(state, form)
 )]
 pub(super) async fn device_login_code(
     Path(domain_id): Path<String>,
@@ -341,8 +340,7 @@ pub(super) async fn device_login_code(
 #[tracing::instrument(
     name = "api::v4::oauth2::device_login",
     level = "debug",
-    skip(state, form),
-    err(Debug)
+    skip(state, form)
 )]
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn device_login(
@@ -607,8 +605,7 @@ pub(super) async fn after_device_authentication(
 #[tracing::instrument(
     name = "api::v4::oauth2::device_consent",
     level = "debug",
-    skip(state, form),
-    err(Debug)
+    skip(state, form)
 )]
 pub(super) async fn device_consent(
     Path(domain_id): Path<String>,

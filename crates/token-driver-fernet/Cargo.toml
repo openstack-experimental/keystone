@@ -44,3 +44,6 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"]}
 default = []
 bench_internals = []
 fuzz_internals = []
+
+[lints]
+workspace = true

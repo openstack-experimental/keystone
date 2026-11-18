@@ -102,8 +102,7 @@ async fn load_grant(
 #[tracing::instrument(
     name = "api::v4::oauth2::device_federated",
     level = "debug",
-    skip(state, form, headers, jar),
-    err(Debug)
+    skip(state, form, headers, jar)
 )]
 pub(super) async fn device_federated(
     Path(domain_id): Path<String>,
@@ -194,8 +193,7 @@ async fn login_with_error(
 #[tracing::instrument(
     name = "api::v4::oauth2::device_federated_callback",
     level = "debug",
-    skip(state, query, headers, jar),
-    err(Debug)
+    skip(state, query, headers, jar)
 )]
 pub(super) async fn device_federated_callback(
     Path(domain_id): Path<String>,

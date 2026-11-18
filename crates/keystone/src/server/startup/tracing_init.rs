@@ -343,7 +343,7 @@ mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use tracing_subscriber::layer::{Context, SubscriberExt as _};
+    use tracing_subscriber::layer::Context;
     use tracing_subscriber::{Layer, Registry};
 
     use super::*;

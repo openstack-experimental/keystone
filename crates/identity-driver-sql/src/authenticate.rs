@@ -806,7 +806,8 @@ mod tests {
         let real_hash = password_hashing::hash_password(&config, &SecretString::from("other"))
             .await
             .unwrap();
-        // Warm the dummy-hash cache: the cold-start cost is not what is measured.
+        // Warm the dummy-hash cache: the cold-start cost is not what is
+        // measured.
         password_hashing::warm_dummy_hash_cache(&config)
             .await
             .unwrap();

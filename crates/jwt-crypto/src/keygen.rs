@@ -18,10 +18,9 @@
 //! repository stores.
 //!
 //! * EC P-256 keys come from `ring` or, with `aws-lc`, from AWS-LC.
-//! * RSA keys come from AWS-LC with `aws-lc`. `ring` cannot generate RSA
-//!   keys, so otherwise the `rsa-keygen` feature (the `rsa` crate) provides
-//!   them, and without it generation fails with
-//!   [`KeygenError::Unsupported`].
+//! * RSA keys come from AWS-LC with `aws-lc`. `ring` cannot generate RSA keys,
+//!   so otherwise the `rsa-keygen` feature (the `rsa` crate) provides them, and
+//!   without it generation fails with [`KeygenError::Unsupported`].
 
 #[cfg(feature = "aws-lc")]
 use aws_lc_rs as provider;

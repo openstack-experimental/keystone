@@ -147,8 +147,7 @@ async fn load_idp(state: &ServiceState, domain_id: &str, idp_id: &str) -> Option
 #[tracing::instrument(
     name = "api::v4::oauth2::logout_complete",
     level = "debug",
-    skip(state),
-    err(Debug)
+    skip(state)
 )]
 pub(super) async fn logout_complete(
     Path(domain_id): Path<String>,

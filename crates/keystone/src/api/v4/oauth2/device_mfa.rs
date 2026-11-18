@@ -61,8 +61,7 @@ pub(super) struct DeviceMfaForm {
 #[tracing::instrument(
     name = "api::v4::oauth2::device_mfa",
     level = "debug",
-    skip(state, form, headers, jar),
-    err(Debug)
+    skip(state, form, headers, jar)
 )]
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn device_mfa(

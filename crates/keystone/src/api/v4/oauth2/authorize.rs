@@ -322,8 +322,7 @@ fn render_consent(
 #[tracing::instrument(
     name = "api::v4::oauth2::authorize",
     level = "debug",
-    skip(state, query),
-    err(Debug)
+    skip(state, query)
 )]
 pub(super) async fn authorize(
     Path(domain_id): Path<String>,
@@ -706,8 +705,7 @@ pub(super) async fn authorize(
 #[tracing::instrument(
     name = "api::v4::oauth2::authorize_login",
     level = "debug",
-    skip(state, form),
-    err(Debug)
+    skip(state, form)
 )]
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn authorize_login(
@@ -970,8 +968,7 @@ pub(super) async fn after_authentication(
 #[tracing::instrument(
     name = "api::v4::oauth2::authorize_consent",
     level = "debug",
-    skip(state, form),
-    err(Debug)
+    skip(state, form)
 )]
 pub(super) async fn authorize_consent(
     Path(domain_id): Path<String>,

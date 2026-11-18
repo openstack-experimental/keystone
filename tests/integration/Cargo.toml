@@ -60,3 +60,15 @@ uuid = { workspace = true, features = ["v4"] }
 [[test]]
 name = "integration"
 path = "src/integration.rs"
+
+# Not `workspace = true`: the test harness sets env vars (unsafe in edition
+# 2024) and the workspace `forbid` cannot be overridden by `allow`.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+enum_glob_use = "deny"
+expect_used = "deny"
+print_stdout = "deny"
+unwrap_used = "deny"
+doc_paragraphs_missing_punctuation = "warn"

@@ -15,7 +15,6 @@ cadf.workspace = true
 chrono = { workspace = true, features = ["now", "serde"] }
 config = { workspace = true, features = ["async", "ini", "toml"] }
 eyre.workspace = true
-http.workspace = true
 ipnet = { workspace = true }
 log.workspace = true
 oslo-config.workspace = true
