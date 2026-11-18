@@ -68,6 +68,11 @@ pub trait KekProvider: Send + Sync {
     ///
     /// Returns an opaque blob: `[12-byte nonce][ciphertext][16-byte GCM tag]`.
     async fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError>;
+
+    /// The per-site view of this provider, when it is one.
+    fn as_site_kek(&self) -> Option<&crate::site_kek::SiteKek> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------

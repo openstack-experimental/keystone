@@ -53,6 +53,7 @@ pub mod error;
 pub mod kek;
 pub mod mlock;
 pub mod nonce;
+pub mod site_kek;
 pub mod site_wrap;
 
 pub use audit::AuditHmacKey;
@@ -65,6 +66,7 @@ pub use error::CryptoError;
 pub use kek::{EnvKek, KekProvider, run_blocking};
 pub use mlock::LockedKey;
 pub use nonce::{NonceManager, NoncePersistence};
+pub use site_kek::{SiteEntry, SiteKek, SiteRegistry, envelope_sites};
 #[cfg(feature = "software-site-key")]
 pub use site_wrap::SoftwareSiteKey;
 pub use site_wrap::{SiteBinding, SiteKeyUnwrapper, unwrap_dek_for_site, wrap_dek_for_site};
