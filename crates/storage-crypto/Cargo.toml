@@ -27,11 +27,12 @@ doc_paragraphs_missing_punctuation = "warn"
 
 [features]
 default = ["ring"]
-# `ring` primitives (AES-GCM, HKDF, HMAC, RNG). Unused, but still compiled,
-# when `fips` is also enabled; build with
+# `ring` primitives (AES-GCM, HKDF, HMAC, RNG) and the RustCrypto `rsa`
+# crate for RSA-OAEP site wrapping (not FIPS validated, not constant time).
+# Unused, but still compiled, when `fips` is also enabled; build with
 # `--no-default-features --features fips` to keep it out of this crate.
-ring = ["dep:ring"]
-# Route all primitives (AES-GCM, HKDF, HMAC, RNG) through the FIPS 140-3
+ring = ["dep:ring", "dep:rsa"]
+# Route all primitives (AES-GCM, HKDF, HMAC, RNG, RSA-OAEP) through the FIPS 140-3
 # validated AWS-LC module. Takes precedence over `ring`. Building it needs
 # cmake, a C compiler, clang (bindgen) and Go.
 fips = ["dep:aws-lc-rs", "aws-lc-rs/fips"]
@@ -40,6 +41,10 @@ fips = ["dep:aws-lc-rs", "aws-lc-rs/fips"]
 aws-lc-rs = { workspace = true, optional = true }
 nix = { workspace = true, features = ["mman", "feature"] }
 ring = { workspace = true, optional = true }
+rsa = { workspace = true, optional = true, features = ["sha2"] }
 thiserror.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+rsa = { workspace = true, features = ["sha2"] }
