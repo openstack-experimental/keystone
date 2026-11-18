@@ -470,6 +470,36 @@ pub enum Mutation {
         /// The keyspace to drop.
         keyspace: String,
     },
+
+    /// Record a change in the outbox that feeds other authorities (ADR 0045
+    /// section 3, M4).
+    ///
+    /// The driver emits it in the same transaction as the mutation it
+    /// describes and names the owning domain itself. The kind must be enabled
+    /// in the node configuration; Tier 2 and 3 data is refused.
+    Emit {
+        /// Feed kind, for example `registry` or `revocation`.
+        kind: String,
+        /// Owning domain, if the event belongs to one.
+        domain_id: Option<String>,
+        /// Key of the changed record.
+        key: Vec<u8>,
+        /// What happened to it.
+        op: FeedOp,
+        /// Plaintext value for [`FeedOp::Set`].
+        value: Option<Vec<u8>>,
+        /// Sensitivity of the value.
+        tier: DataTier,
+    },
+}
+
+/// Change recorded by [`Mutation::Emit`].
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum FeedOp {
+    /// The record was created or replaced.
+    Set,
+    /// The record was removed.
+    Remove,
 }
 
 impl Mutation {

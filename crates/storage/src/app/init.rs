@@ -666,6 +666,7 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     ) = crate::new::<crate::TypeConfig, _>(ds_config.path.clone(), ds_config.node_id, kek.clone())
         .await?;
     state_machine_store.set_write_rate_threshold(ds_config.write_rate_threshold);
+    state_machine_store.set_feed_kinds(ds_config.feed_kinds.iter().cloned());
     let log_nonce = log_store.nonce_manager();
     tracing::debug!("Raft stores opened; initializing Raft TLS client...");
     let tls_client = init_tls_watcher(config_manager).await?;

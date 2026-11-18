@@ -19,7 +19,7 @@ use crate::StoreError;
 use crate::types::Metadata;
 
 /// Re-export `Mutation` from storage-api crate.
-pub use openstack_keystone_storage_api::Mutation;
+pub use openstack_keystone_storage_api::{FeedOp, Mutation};
 
 /// Store command.
 ///
@@ -290,6 +290,23 @@ pub enum MutationInner {
         /// The complete new list.
         sites: Vec<SiteRecord>,
     },
+
+    /// Append an event to the feed outbox (ADR 0045 section 3, M4).
+    Emit {
+        /// Feed kind; must be enabled in `[distributed_storage.feed]`.
+        kind: String,
+        /// Owning domain, if any.
+        domain_id: Option<String>,
+        /// Key of the changed record.
+        #[serde(with = "serde_bytes")]
+        key: Vec<u8>,
+        /// What happened to the record.
+        op: FeedOp,
+        /// Plaintext value for a `Set`.
+        value: Option<serde_bytes::ByteBuf>,
+        /// Data tier (0 to 3); Tier 2 and 3 are refused.
+        tier: u8,
+    },
 }
 
 /// A site that can open the DEK envelope.
@@ -353,6 +370,21 @@ impl MutationInner {
             },
             Mutation::SetIndex { key } => MutationInner::SetIndex { key },
             Mutation::DropKeyspace { keyspace } => MutationInner::DropKeyspace { keyspace },
+            Mutation::Emit {
+                kind,
+                domain_id,
+                key,
+                op,
+                value,
+                tier,
+            } => MutationInner::Emit {
+                kind,
+                domain_id,
+                key,
+                op,
+                value: value.map(serde_bytes::ByteBuf::from),
+                tier: tier as u8,
+            },
         })
     }
 }

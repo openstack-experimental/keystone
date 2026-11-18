@@ -132,6 +132,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             let mut pending_keyspace_drops: Vec<String> = Vec::new();
             // Site list of a `SetSites`, installed in the in-memory registry
             // once the batch that re-wrapped the envelopes commits.
+            let mut emit_position: u16 = 0;
             let mut pending_sites: Option<Vec<openstack_keystone_storage_crypto::SiteEntry>> = None;
 
             let response = if let Some(command) = command {
@@ -935,6 +936,56 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                                  replicated-drop allow-list"
                                             ),
                                         });
+                                    }
+                                }
+                                MutationInner::Emit {
+                                    kind,
+                                    domain_id,
+                                    key,
+                                    op,
+                                    value,
+                                    tier,
+                                } => {
+                                    let refuse = |what: &str, why: String| Violation {
+                                        r#type: what.to_string(),
+                                        subject: kind.clone(),
+                                        description: why,
+                                    };
+                                    if !self.feed_kind_enabled(&kind) {
+                                        violations.push(refuse(
+                                            "FEED_KIND_DISABLED",
+                                            format!("feed kind '{kind}' is not enabled"),
+                                        ));
+                                        continue;
+                                    }
+                                    if tier >= DataTier::Sensitive as u8 {
+                                        violations.push(refuse(
+                                            "FEED_TIER_REFUSED",
+                                            "Tier 2 and 3 data is never on the feed".to_string(),
+                                        ));
+                                        continue;
+                                    }
+                                    let event = OutboxEvent {
+                                        kind: kind.clone(),
+                                        domain_id,
+                                        key,
+                                        op,
+                                        value,
+                                    };
+                                    let cursor = FeedCursor {
+                                        index: last_applied_log.index,
+                                        position: emit_position,
+                                    };
+                                    emit_position = emit_position.saturating_add(1);
+                                    match self.stage_outbox_event(&mut batch, cursor, &event) {
+                                        Ok(()) => {}
+                                        Err(StoreError::Quarantined(p)) => {
+                                            violations.push(refuse(
+                                                "QUARANTINED",
+                                                format!("partition '{p}' is quarantined"),
+                                            ));
+                                        }
+                                        Err(e) => return Err(io::Error::other(e.to_string())),
                                     }
                                 }
                                 MutationInner::SetSites { sites } => {

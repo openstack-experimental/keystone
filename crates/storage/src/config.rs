@@ -161,6 +161,11 @@ pub struct DistributedStorageConfiguration {
     #[validate(range(min = 1))]
     pub write_rate_threshold: u32,
 
+    /// Feed kinds that drivers may emit into the outbox (ADR 0045 section 3,
+    /// M4). Empty (the default) refuses every `Emit`, which disables the feed.
+    #[serde(default)]
+    pub feed_kinds: Vec<String>,
+
     /// Directory holding the durable, fsynced audit spool for this node
     /// (ADR 0016-v2 §3.1). Defaults to `<path>/audit-spool`. An external
     /// shipper tails these files to the SIEM; records are never deleted
@@ -971,6 +976,7 @@ impl Default for DistributedStorageConfiguration {
             raft_purge_batch_size: default_raft_purge_batch_size(),
             dek_rotation_days: default_dek_rotation_days(),
             write_rate_threshold: default_write_rate_threshold(),
+            feed_kinds: Vec::new(),
             audit_spool_dir: None,
             audit_max_spool_bytes: default_audit_max_spool_bytes(),
             pkcs11: None,

@@ -477,6 +477,9 @@ pub fn ensure_data_command(cmd: &StoreCommand) -> Result<(), Status> {
                     | MutationInner::RemoveIndex { .. }
                     | MutationInner::CreateIfAbsent { .. }
                     | MutationInner::SetIndex { .. }
+                    // Drivers emit feed events beside their writes; the
+                    // state machine checks kind and tier.
+                    | MutationInner::Emit { .. }
                     // Proposed by the leader's cleanup task; a request
                     // forwarded after a leader change arrives here. The
                     // state machine enforces the prefix allow-list.

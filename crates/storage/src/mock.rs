@@ -444,6 +444,9 @@ impl StorageApi for MockStorage {
                     indexes.insert(key, ());
                 }
 
+                // The mock keeps no outbox.
+                Mutation::Emit { .. } => {}
+
                 Mutation::DropKeyspace { keyspace } => {
                     let mixed = has_non_drop;
                     if mixed {

@@ -204,6 +204,18 @@ fn mutation_inner_layouts() {
         "81a85365745369746573919193a161c401aa02",
     );
     assert_wire(
+        "MutationInner::Emit",
+        &MutationInner::Emit {
+            kind: "k".into(),
+            domain_id: Some("d".into()),
+            key: vec![1],
+            op: openstack_keystone_storage_api::FeedOp::Remove,
+            value: None,
+            tier: 1,
+        },
+        "81a4456d697496a16ba164c40101a652656d6f7665c001",
+    );
+    assert_wire(
         "MutationInner::Quarantine",
         &MutationInner::Quarantine {
             node_id: 3,

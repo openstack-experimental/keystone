@@ -57,6 +57,7 @@ use crate::types::Metadata;
 
 mod dek;
 mod keyspace_drop;
+mod outbox;
 mod quarantine;
 mod raft_sm;
 mod restore;
@@ -67,6 +68,7 @@ mod snapshot_file;
 mod status;
 
 pub(crate) use self::keyspace_drop::keyspace_drop_allowed;
+pub use self::outbox::{FeedCursor, OutboxEvent};
 pub(crate) use self::restore::MAX_LIVE_RESTORE_SIZE;
 pub(crate) use self::rotation::{
     DEK_REVOKED_PENDING_PREFIX, DEK_REVOKED_PREFIX, META_DEK_CURRENT, unix_now,
@@ -222,6 +224,8 @@ pub struct FjallStateMachine {
     /// Per-key write version at which further writes to the key are
     /// rejected (`[distributed_storage] write_rate_threshold`).
     write_rate_threshold: Arc<AtomicU32>,
+    /// Feed kinds that `Emit` may write (ADR 0045 M4).
+    feed_kinds: Arc<RwLock<HashSet<String>>>,
 }
 
 impl FjallStateMachine {
@@ -458,6 +462,7 @@ impl FjallStateMachine {
             ),
             audit: std::sync::OnceLock::new(),
             write_rate_threshold: Arc::new(AtomicU32::new(DEFAULT_WRITE_RATE_THRESHOLD)),
+            feed_kinds: Arc::new(RwLock::new(HashSet::new())),
         };
         // A replicated site list wins over the configured seed.
         sm.reload_site_registry()?;

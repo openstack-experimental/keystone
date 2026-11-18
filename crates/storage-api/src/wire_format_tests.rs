@@ -27,7 +27,7 @@ use std::fmt::Write;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::{DataTier, Metadata, Mutation, StoreDataEnvelope, Violation};
+use crate::{DataTier, FeedOp, Metadata, Mutation, StoreDataEnvelope, Violation};
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().fold(String::new(), |mut out, b| {
@@ -152,6 +152,18 @@ fn mutation_layouts() {
         "Mutation::SetIndex",
         &Mutation::SetIndex { key: vec![1] },
         "81a8536574496e646578919101",
+    );
+    assert_wire(
+        "Mutation::Emit",
+        &Mutation::Emit {
+            kind: "k".into(),
+            domain_id: Some("d".into()),
+            key: vec![1],
+            op: FeedOp::Set,
+            value: Some(vec![2]),
+            tier: DataTier::Internal,
+        },
+        "81a4456d697496a16ba1649101a35365749102a8496e7465726e616c",
     );
     assert_wire(
         "Mutation::DropKeyspace",

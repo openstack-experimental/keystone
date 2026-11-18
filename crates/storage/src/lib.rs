@@ -79,7 +79,7 @@ mod wire_format_tests;
 
 // Re-export lightweight types from storage-api crate.
 pub use openstack_keystone_storage_api::{
-    DataTier, Metadata, Mutation, Node, ReadConsistency, StorageApi, StorageReadiness,
+    DataTier, FeedOp, Metadata, Mutation, Node, ReadConsistency, StorageApi, StorageReadiness,
     StoreDataEnvelope, StoreError as ApiStoreError, StoreResponse, Violation,
     is_conflict_violation, require_no_conflict,
 };

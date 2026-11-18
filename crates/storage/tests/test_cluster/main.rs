@@ -54,6 +54,7 @@ mod basic;
 #[path = "../common/mod.rs"]
 mod common;
 mod crash;
+mod feed;
 mod harness;
 mod join;
 mod kek;
