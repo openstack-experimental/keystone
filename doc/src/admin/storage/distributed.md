@@ -405,8 +405,8 @@ trust_domains = "example.org"
   `spiffe://<trust-domain><spiffe_path_prefix>node`. Register that identity in
   SPIRE for every storage workload; if it is missing, storage initialization
   stalls in the SVID source retry loop and the node never becomes ready.
-- `allowed_peer_svids` must be non-empty when `dev_mode = false`; the
-  configuration is rejected otherwise.
+- When `dev_mode = false` every trust domain needs an `allowed_peer_svids` or
+  `peers` entry; the configuration is rejected otherwise.
 
 ### TLS Fallback Mode
 
@@ -452,6 +452,53 @@ certificate. In SPIFFE mode (`spiffe_path_prefix` defaults to
 | `spiffe://<td><spiffe_path_prefix><operator_role>` | Operator |
 | exact entry of `allowed_peer_svids`                | Node     |
 | anything else (including the former `/ns/` form)   | rejected |
+
+The role names `voter`, `learner`, `eval-replica`, `feed-consumer`, `proxy` and
+`reservation-voter` (ADR 0045) cannot be claimed by a path: only an explicit
+binding of a full SPIFFE ID grants them, and no RPC authorises them yet, so a
+peer holding one is denied everywhere. Bind roles to the SVIDs of remote peers
+with `peers` entries (`site.toml`). One SVID may hold several roles, and two
+workloads of one trust domain may hold different roles:
+
+```toml
+[[distributed_storage.peers]]
+svid = "spiffe://core.example.org/ns/keystone/sa/node-1"
+roles = ["node", "voter"]
+
+[[distributed_storage.peers]]
+svid = "spiffe://eval.example.org/ns/keystone/sa/replica"
+roles = ["learner"]
+```
+
+A listed SVID holds exactly its listed roles, whatever its path says. The trust
+domain of every entry must be in `trust_domains`; an unknown role, a repeated
+SVID or a repeated role fails the configuration load. In a trust domain
+without `peers` entries, SVIDs resolve as in the table above. A trust domain with at least one
+entry is managed by its entries: there the path convention is off, and only
+listed SVIDs and exact `allowed_peer_svids` entries are accepted. An
+`allowed_peer_svids` entry under `spiffe_path_prefix` is rejected there; list it
+in `peers`. Only the `node` identity is used for outbound connections so far;
+other `identities` log a warning at startup.
+
+A node that holds several SVIDs says which one it presents for which role with
+`identities` entries:
+
+```toml
+[[distributed_storage.identities]]
+svid = "spiffe://core.example.org/ns/keystone/sa/node-1"
+roles = ["node", "voter"]
+
+[[distributed_storage.identities]]
+svid = "spiffe://core.example.org/ns/keystone/sa/reservation"
+roles = ["reservation-voter"]
+```
+
+A connection made for a role presents the SVID listed for that role, matched on
+the full SPIFFE ID (trust domain included). A role is listed on one SVID only,
+and the list must serve `node`: that SVID is also the one the Raft listener
+presents. Without `identities` the node presents the single SVID picked by
+`allowed_peer_svids` (first entry) or `<spiffe_path_prefix>node`, for every
+role.
 
 The `/ns/...` SVID fallback has been removed. An `allowed_peer_svids` entry that
 lies under `spiffe_path_prefix` is resolved by the role convention, not by the

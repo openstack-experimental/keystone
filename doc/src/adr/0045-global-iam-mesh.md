@@ -677,14 +677,44 @@ site's Bao.
   server inside a single trust domain would let a compromised site server mint
   any SPIFFE ID in that domain, including a core voter; per-site domains confine
   it. A single trust domain per authority remains valid for small deployments.
-- The authority record in the registry lists its trust domains and the roles
-  allowed from each. The role is decided by trust domain and SPIFFE path
-  together: `voter` only from the core trust-domain set; `learner` and
-  `eval-replica` from the listed evaluation sites; authority-to-authority peers
-  get `feed-consumer`/`proxy`, and their reservation-group voters
-  `reservation-voter`, with the federated trust domain pinned. The storage code
-  already takes a list of trust domains (`trust_domains`, `PeerAuthz`);
-  per-domain role binding is new work.
+- **A role is bound to a full SVID, not to a path or a trust domain.** A path
+  segment is chosen by whoever registers the workload in SPIRE, and a trust
+  domain holds many workloads, so neither can say which peer is the voter. The
+  receiver keeps a table from full SPIFFE ID to roles: one SVID may hold several
+  roles (a core node is `node` and `voter`), and two workloads of one trust
+  domain may hold different ones. A listed SVID holds exactly its listed roles
+  whatever its path says. In a trust domain with no entry, an SVID resolves
+  only `node` and the operator role, by the existing path convention or the
+  allow-list. A trust domain with any entry is managed by its entries alone, so
+  a compromised registrar there cannot mint `node` or the operator by path.
+  Every other role (`voter`, `learner`, `eval-replica`, `feed-consumer`,
+  `proxy`, `reservation-voter`) is granted by the table only. A role check
+  passes when any role of the peer is allowed for the RPC.
+- **The authority record drives the table.** It lists the authority's trust
+  domains and, for each, the SVIDs and their roles. The trust domain still
+  bounds what may be bound: `voter` only in the core trust-domain set; `learner`
+  and `eval-replica` in the listed evaluation sites; `feed-consumer` and
+  `proxy` for authority-to-authority peers, and `reservation-voter` for their
+  reservation-group voters, with the federated trust domain pinned. The node
+  checks that every bound SVID is in one of its trusted domains. The role and
+  domain matrix is enforced where the table is produced from the record; the
+  first step reads the table from the site configuration (`peers` in
+  `site.toml`), and reading it from the registry is open item 11.
+- **A node chooses the SVID it presents by role.** A workload may match several
+  SPIRE entries (its node identity, a reservation-group identity, a feed
+  identity), and the Workload API returns them in no meaningful order, so the
+  node names them: a list of its own SVIDs with the roles each is used for
+  (`identities` in `site.toml`). A connection made for a role (replication as
+  `node`, the reservation group as `reservation-voter`, the feed as
+  `feed-consumer`) presents the SVID listed for that role. SVIDs are matched on
+  the full SPIFFE ID, trust domain included: matching the path alone is
+  ambiguous once a workload holds SVIDs from several trust domains. A role is
+  served by one SVID only, and the list must serve `node`, whose SVID is also
+  the one the Raft listener presents. Without the list a node keeps the single
+  path-pinned SVID for every role.
+- Not covered yet: the dialing side authorizes the server by trust domain
+  only, so it does not check that the server holds the role it is dialed for
+  (open item 11).
 - SVID lifetime and the 30-day leaf limit are unchanged. Renewal is local to the
   site, so partitions do not stop it.
 - **Bundles across partitions.** A peer keeps the last bundle it fetched, so
@@ -1013,8 +1043,10 @@ Stage 2 (inside an authority):
 2. WAN-ready snapshot transfer (stream from disk, HTTP/2 windows, resumable),
    RPC timeouts honoring openraft's `RPCOption`, larger linearizable retry
    budget; object-store snapshot bundles (M7) for seeding learners.
-3. Per-domain role binding in `PeerAuthz`; the `transit-per-site` KEK provider
-   (offline RSA wrap per site) when Raft members span sites.
+3. Per-SVID role binding in `PeerAuthz` and the per-role SVID a node presents
+   (section 11.1; done for the site-configured table, registry-driven table is
+   open item 11); the `transit-per-site` KEK provider (offline RSA wrap per
+   site) when Raft members span sites.
 4. Availability inside the boundary (section 2.1): A1 is a deployment choice on
    top of item 3; A2 and A3 need per-site continuation keys, replica issuance,
    and the site break-glass deny store; A2 needs DPoP or mTLS binding (ADR
@@ -1120,6 +1152,12 @@ base URL uniqueness (section 4), guardrails at legacy enforcement points
 10. Legal review of what crosses a boundary: pseudonymous `sub`, group and
     project IDs, audit records and the reverse index at the target. Decide
     whether a pairwise `sub` per target authority is needed.
+11. Section 11.1: read the SVID-to-role table from the authority record in the
+    registry instead of the site configuration, and generate it so the role and
+    trust-domain matrix holds. Have the dialing side check that the server's
+    SVID holds the role it is dialed for (today it checks the trust domain
+    only), and let a listener present a different SVID per role if a single
+    server SVID proves too coarse.
 
 ## Alternatives considered
 
@@ -1204,6 +1242,14 @@ base URL uniqueness (section 4), guardrails at legacy enforcement points
 - **Domain-level trust records as the only cross-domain path:** grants
   individuals without their consent and admits any principal of the trusted
   domain; kept for groups and automation, invitations for individuals.
+- **Binding roles to a trust domain, or to a path segment:** a domain holds many
+  workloads, and a path is picked by whoever registers the workload, so a
+  compromised or careless registration would mint a voter; rejected in favor of
+  a per-SVID table, with the trust domain as a bound on that table.
+- **One SVID per node for every role:** a node that is a core voter and a
+  reservation-group voter would present one identity to both groups, and the
+  receiver could not tell which role it speaks for; rejected in favor of an
+  SVID per role (section 11.1).
 - **Region as the term:** collides with the catalog region concept.
 - **Multi-raft inside an authority:** possible for isolating hot regional data;
   not required here; separate ADR if pursued.

@@ -294,10 +294,15 @@ fn validate_peer_authz(
     // Shape checks apply regardless of dev_mode: a malformed prefix or an
     // operator role colliding with "node" silently breaks role resolution.
     if let RaftTlsConfiguration::Spiffe(s) = &cfg.tls_configuration {
-        if s.operator_role.is_empty() || s.operator_role == "node" {
+        if s.operator_role.is_empty()
+            || s.operator_role == "node"
+            || crate::grpc::authz::is_extra_role_name(&s.operator_role)
+        {
             return Err(
                 validator::ValidationError::new("operator_role_invalid").with_message(
-                    "operator_role must be non-empty and different from \"node\"".into(),
+                    "operator_role must be non-empty and different from \"node\" and the \
+                     other role names"
+                        .into(),
                 ),
             );
         }
@@ -307,6 +312,7 @@ fn validate_peer_authz(
                     .with_message("spiffe_path_prefix must start and end with '/'".into()),
             );
         }
+        validate_svid_bindings(s)?;
     }
     if let Some(prefix) = &cfg.tls_role_san_prefix
         && (prefix.is_empty() || !prefix.ends_with('/'))
@@ -320,10 +326,28 @@ fn validate_peer_authz(
         return Ok(());
     }
     match &cfg.tls_configuration {
-        RaftTlsConfiguration::Spiffe(s) if s.allowed_peer_svids.is_empty() => Err(
-            validator::ValidationError::new("allowed_peer_svids_required")
-                .with_message("allowed_peer_svids must be set when dev_mode = false".into()),
-        ),
+        RaftTlsConfiguration::Spiffe(s) => {
+            // Every trust domain needs an explicit entry, or the path
+            // convention would accept `<prefix>node` from any registrar there.
+            for td in &s.trust_domains {
+                let prefix = format!("spiffe://{td}/");
+                let listed = s.peers.iter().any(|p| p.svid.starts_with(&prefix))
+                    || s.allowed_peer_svids.iter().any(|a| a.starts_with(&prefix));
+                if !listed {
+                    return Err(
+                        validator::ValidationError::new("allowed_peer_svids_required")
+                            .with_message(
+                                format!(
+                                    "trust domain '{td}' has no `peers` or \
+                                     `allowed_peer_svids` entry (required when dev_mode = false)"
+                                )
+                                .into(),
+                            ),
+                    );
+                }
+            }
+            Ok(())
+        }
         RaftTlsConfiguration::Tls(_) if cfg.tls_role_san_prefix.is_none() => Err(
             validator::ValidationError::new("tls_role_san_prefix_required").with_message(
                 "tls_role_san_prefix must be set in TLS mode when dev_mode = false".into(),
@@ -331,6 +355,39 @@ fn validate_peer_authz(
         ),
         _ => Ok(()),
     }
+}
+
+/// Check `peers`, `identities` and `allowed_peer_svids` at load time, so a typo
+/// fails the config instead of the node start.
+fn validate_svid_bindings(s: &SpiffeTls) -> Result<(), validator::ValidationError> {
+    let bad = |msg: String| {
+        validator::ValidationError::new("svid_bindings_invalid").with_message(msg.into())
+    };
+    let peers =
+        crate::grpc::authz::resolve_svid_roles(&s.peers, &s.trust_domains, &s.operator_role)
+            .map_err(|e| bad(format!("invalid peers: {e}")))?;
+    crate::grpc::authz::resolve_identities(&s.identities, &s.trust_domains, &s.operator_role)
+        .map_err(|e| bad(format!("invalid identities: {e}")))?;
+    // An exact allow-list entry under the role prefix of a managed domain
+    // would change role silently (the convention is off there).
+    for a in &s.allowed_peer_svids {
+        let Some((domain, path)) = a.strip_prefix("spiffe://").and_then(|r| r.split_once('/'))
+        else {
+            continue;
+        };
+        let managed = peers.keys().any(|k| {
+            k.strip_prefix("spiffe://")
+                .and_then(|r| r.split_once('/'))
+                .is_some_and(|(d, _)| d == domain)
+        });
+        if managed && format!("/{path}").starts_with(&s.spiffe_path_prefix) {
+            return Err(bad(format!(
+                "allowed_peer_svids entry '{a}' is under spiffe_path_prefix in a trust \
+                 domain managed by `peers`; list it in `peers` instead"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Selects which Key Encryption Key provider backs DEK wrap/unwrap (ADR
@@ -606,9 +663,11 @@ impl Default for DistributedStorageConfiguration {
 pub struct SpiffeTls {
     /// Exact SVIDs outside `spiffe_path_prefix` that are accepted with the
     /// `node` role. Entries under the prefix resolve by the role convention
-    /// instead. Required (non-empty) when `dev_mode = false`; when empty in
-    /// `dev_mode` only `<spiffe_path_prefix>node` and
-    /// `<spiffe_path_prefix><operator_role>` are accepted.
+    /// instead. When `dev_mode = false` every trust domain needs an entry
+    /// here or in `peers`; when empty in `dev_mode` only
+    /// `<spiffe_path_prefix>node` and `<spiffe_path_prefix><operator_role>`
+    /// are accepted. An entry under the prefix is rejected in a trust domain
+    /// managed by `peers`.
     ///
     /// Example:
     /// ```yaml
@@ -633,6 +692,55 @@ pub struct SpiffeTls {
     /// Trusted domains for SPIFFE verification.
     #[serde(deserialize_with = "csv")]
     pub trust_domains: Vec<String>,
+
+    /// Explicit role bindings for the SVIDs of *remote* peers (ADR 0045
+    /// §11.1): the receiver grants a peer exactly the roles listed for its
+    /// full SPIFFE ID, never a role it names for itself in its path. One SVID
+    /// may hold several roles.
+    ///
+    /// ```toml
+    /// [[distributed_storage.peers]]
+    /// svid = "spiffe://core.example.org/ns/keystone/sa/node-1"
+    /// roles = ["node", "voter"]
+    /// ```
+    ///
+    /// Roles: `node`, the operator role, `voter`, `learner`, `eval-replica`,
+    /// `feed-consumer`, `proxy`, `reservation-voter`. The SVID must be in a
+    /// trust domain of `trust_domains`. A listed SVID gets exactly these
+    /// roles. In a trust domain with no entry, an SVID resolves `node` and the
+    /// operator role by the `spiffe_path_prefix` convention (or `node` through
+    /// `allowed_peer_svids`), never any other role. A trust domain with an
+    /// entry is managed by its entries: the convention is off there.
+    #[serde(default)]
+    pub peers: Vec<SvidRoles>,
+
+    /// SVIDs this node presents to other peers, and the roles each one is
+    /// used for (ADR 0045 §11.1). A connection made on behalf of a role
+    /// presents the SVID listed for that role; a role may be listed on one
+    /// SVID only. The SVID of the `node` role is also the one the Raft
+    /// listener presents. When empty, the node presents the single SVID
+    /// chosen by [`SpiffeTls::own_svid_path`] for every role.
+    ///
+    /// ```toml
+    /// [[distributed_storage.identities]]
+    /// svid = "spiffe://core.example.org/ns/keystone/sa/node-1"
+    /// roles = ["node", "voter"]
+    ///
+    /// [[distributed_storage.identities]]
+    /// svid = "spiffe://core.example.org/ns/keystone/sa/reservation"
+    /// roles = ["reservation-voter"]
+    /// ```
+    #[serde(default)]
+    pub identities: Vec<SvidRoles>,
+}
+
+/// A full SPIFFE ID and the storage roles bound to it.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+pub struct SvidRoles {
+    /// Full SPIFFE ID, `spiffe://<trust_domain>/<path>`.
+    pub svid: String,
+    /// Storage role names bound to the SVID.
+    pub roles: Vec<String>,
 }
 
 fn default_spiffe_path_prefix() -> String {
@@ -656,8 +764,9 @@ impl SpiffeTls {
     ///
     /// A node's process typically matches more than one SPIRE registration
     /// entry, and Raft peers accept only role paths under
-    /// `spiffe_path_prefix` or exact `allowed_peer_svids` entries on the SVID
-    /// each peer presents. In a
+    /// `spiffe_path_prefix`, exact `allowed_peer_svids` entries or `peers`
+    /// bindings on the SVID each peer presents. With `identities` set, the
+    /// SVID of the `node` role is used instead ([`Self::node_selector`]). In a
     /// homogeneous cluster every node therefore presents one of the SVIDs its
     /// peers allow, so when `allowed_peer_svids` is set the first entry's path
     /// is this node's own identity. When it is empty the registration
@@ -667,6 +776,20 @@ impl SpiffeTls {
             .first()
             .and_then(|svid| spiffe_id_path(svid))
             .unwrap_or_else(|| format!("{}node", self.spiffe_path_prefix))
+    }
+}
+
+impl SpiffeTls {
+    /// The SVID the node presents as a server and for plain `node`
+    /// connections: the `identities` entry holding the `node` role, else the
+    /// legacy path-only pin of [`Self::own_svid_path`].
+    pub fn node_selector(&self) -> crate::spiffe_wait::SvidSelector {
+        use crate::spiffe_wait::SvidSelector;
+        self.identities
+            .iter()
+            .find(|i| i.roles.iter().any(|r| r == "node"))
+            .map(|i| SvidSelector::Id(i.svid.clone()))
+            .unwrap_or_else(|| SvidSelector::Path(self.own_svid_path()))
     }
 }
 
@@ -859,7 +982,91 @@ allowed_peer_svids = ["spiffe://example.org/ns/default/sa/keystone"]
     }
 
     #[test]
+    fn test_spiffe_peers_and_identities_toml() {
+        use crate::spiffe_wait::SvidSelector;
+        let c = Config::builder()
+            .add_source(File::from_str(
+                r#"
+node_cluster_addr = "https://localhost:8310"
+node_id = 1
+path = "/keystone/storage"
+trust_domains = "core.org,eval.org"
+
+[[peers]]
+svid = "spiffe://core.org/ns/ks/sa/node-2"
+roles = ["node", "voter"]
+
+[[peers]]
+svid = "spiffe://eval.org/ns/ks/sa/replica"
+roles = ["learner"]
+
+[[identities]]
+svid = "spiffe://core.org/ns/ks/sa/node-1"
+roles = ["node", "voter"]
+
+[[identities]]
+svid = "spiffe://core.org/ns/ks/sa/reservation"
+roles = ["reservation-voter"]
+"#,
+                FileFormat::Toml,
+            ))
+            .build()
+            .unwrap();
+        let cfg: DistributedStorageConfiguration = c.try_deserialize().unwrap();
+        let RaftTlsConfiguration::Spiffe(spiffe) = &cfg.tls_configuration else {
+            panic!("should be spiffe");
+        };
+        assert_eq!(spiffe.peers.len(), 2);
+        assert_eq!(spiffe.peers[0].roles, vec!["node", "voter"]);
+        assert_eq!(spiffe.identities.len(), 2);
+        assert_eq!(
+            spiffe.node_selector(),
+            SvidSelector::Id("spiffe://core.org/ns/ks/sa/node-1".into())
+        );
+    }
+
+    fn toml_cfg(extra: &str, dev_mode: bool) -> DistributedStorageConfiguration {
+        let c = Config::builder()
+            .add_source(File::from_str(
+                &format!(
+                    "node_cluster_addr = \"https://localhost:8310\"\nnode_id = 1\n\
+                     path = \"/keystone/storage\"\ndev_mode = {dev_mode}\n\
+                     trust_domains = \"core.org,eval.org\"\n{extra}"
+                ),
+                FileFormat::Toml,
+            ))
+            .build()
+            .unwrap();
+        c.try_deserialize().unwrap()
+    }
+
+    #[test]
+    fn test_peer_authz_validation_of_bindings() {
+        let ok = "[[peers]]\nsvid = \"spiffe://core.org/a\"\nroles = [\"node\"]\n\
+                  [[peers]]\nsvid = \"spiffe://eval.org/b\"\nroles = [\"learner\"]\n";
+        assert!(validate_peer_authz(&toml_cfg(ok, false)).is_ok());
+        // Typo in a role name fails at load time.
+        let typo = ok.replace("learner", "lerner");
+        assert!(validate_peer_authz(&toml_cfg(&typo, true)).is_err());
+        // Two identities serving `node`.
+        let dup = "[[identities]]\nsvid = \"spiffe://core.org/a\"\nroles = [\"node\"]\n\
+                   [[identities]]\nsvid = \"spiffe://core.org/b\"\nroles = [\"node\"]\n";
+        assert!(validate_peer_authz(&toml_cfg(dup, true)).is_err());
+        // Production: eval.org has no entry.
+        let one = "[[peers]]\nsvid = \"spiffe://core.org/a\"\nroles = [\"node\"]\n";
+        assert!(validate_peer_authz(&toml_cfg(one, false)).is_err());
+        assert!(validate_peer_authz(&toml_cfg(one, true)).is_ok());
+        // Allow-list entry under the prefix of a managed domain.
+        let clash = "allowed_peer_svids = [\"spiffe://core.org/keystone/storage/storage-operator\"]\n\
+                     [[peers]]\nsvid = \"spiffe://core.org/a\"\nroles = [\"node\"]\n";
+        assert!(validate_peer_authz(&toml_cfg(clash, true)).is_err());
+        // operator_role must not shadow another role name.
+        assert!(validate_peer_authz(&toml_cfg("operator_role = \"proxy\"\n", true)).is_err());
+    }
+
+    #[test]
     fn test_spiffe_own_svid_path_from_allowed_peer_svids() {
+        use crate::spiffe_wait::SvidSelector;
         // The k8s/skaffold shape: a single shared storage SVID pinned in
         // allowed_peer_svids -- every node presents that identity to its
         // peers, so it is also each node's own presented path.
@@ -868,12 +1075,20 @@ allowed_peer_svids = ["spiffe://example.org/ns/default/sa/keystone"]
             operator_role: "storage-operator".to_string(),
             spiffe_path_prefix: "/keystone/storage/".to_string(),
             trust_domains: vec!["example.org".to_string()],
+            peers: vec![],
+            identities: vec![],
         };
         assert_eq!(spiffe.own_svid_path(), "/ns/default/sa/keystone");
+        // No identities: the node SVID stays pinned by path.
+        assert_eq!(
+            spiffe.node_selector(),
+            SvidSelector::Path("/ns/default/sa/keystone".to_string())
+        );
     }
 
     #[test]
     fn test_spiffe_own_svid_path_registration_convention() {
+        use crate::spiffe_wait::SvidSelector;
         // The devstack shape: no allowed_peer_svids -- the node presents the
         // registration-convention identity <spiffe_path_prefix>node.
         let spiffe = SpiffeTls {
@@ -881,16 +1096,28 @@ allowed_peer_svids = ["spiffe://example.org/ns/default/sa/keystone"]
             operator_role: "storage-operator".to_string(),
             spiffe_path_prefix: "/keystone/storage/".to_string(),
             trust_domains: vec!["cloud.trust.domain".to_string()],
+            peers: vec![],
+            identities: vec![],
         };
         assert_eq!(spiffe.own_svid_path(), "/keystone/storage/node");
+        assert_eq!(
+            spiffe.node_selector(),
+            SvidSelector::Path("/keystone/storage/node".to_string())
+        );
 
         let custom = SpiffeTls {
             allowed_peer_svids: vec![],
             operator_role: "storage-operator".to_string(),
             spiffe_path_prefix: "/custom/raft/".to_string(),
             trust_domains: vec!["example.org".to_string()],
+            peers: vec![],
+            identities: vec![],
         };
         assert_eq!(custom.own_svid_path(), "/custom/raft/node");
+        assert_eq!(
+            custom.node_selector(),
+            SvidSelector::Path("/custom/raft/node".to_string())
+        );
     }
 
     #[test]
@@ -1170,6 +1397,8 @@ allowed_peer_svids = ["spiffe://example.org/ns/default/sa/keystone"]
                 operator_role: operator_role.into(),
                 spiffe_path_prefix: prefix.into(),
                 trust_domains: vec!["example.org".into()],
+                peers: vec![],
+                identities: vec![],
             }),
             ..Default::default()
         }

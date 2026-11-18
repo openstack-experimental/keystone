@@ -14,20 +14,141 @@
 
 //! Peer role authorization for the Raft/Storage gRPC surface (issue #1303).
 
+use std::collections::{HashMap, HashSet};
+
 use tonic::{Request, Status};
 
 use crate::store_command::{MutationInner, StoreCommand};
 
 /// Role a peer certificate resolves to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PeerRole {
     /// Another cluster node: Raft replication, forwarded reads/writes.
     Node,
     /// Human/automation operator: management RPCs.
     Operator,
+    /// Raft voter hosted in a core trust domain (ADR 0045 §11.1).
+    Voter,
+    /// Non-voting Raft learner (evaluation replica storage).
+    Learner,
+    /// Read-only evaluation replica.
+    EvalReplica,
+    /// Another authority consuming the inter-authority change feed.
+    FeedConsumer,
+    /// Mesh proxy attesting proof of possession.
+    Proxy,
+    /// Member of the cross-authority reservation group.
+    ReservationVoter,
+}
+
+impl PeerRole {
+    /// Static configuration name of the role, if it has one.
+    ///
+    /// `Node` and `Operator` have no static name: `node` is a separate const
+    /// ([`NODE_ROLE`]) and the operator role's name is configurable
+    /// (`operator_role`), so neither is a property of the enum.
+    pub(crate) const fn name(self) -> Option<&'static str> {
+        match self {
+            Self::Voter => Some("voter"),
+            Self::Learner => Some("learner"),
+            Self::EvalReplica => Some("eval-replica"),
+            Self::FeedConsumer => Some("feed-consumer"),
+            Self::Proxy => Some("proxy"),
+            Self::ReservationVoter => Some("reservation-voter"),
+            Self::Node | Self::Operator => None,
+        }
+    }
 }
 
 const NODE_ROLE: &str = "node";
+
+/// Roles that only an explicit per-SVID binding can grant (never a path
+/// segment), besides the node and operator roles. None of them is authorised
+/// on any RPC yet: a peer that holds one is denied everywhere until an RPC
+/// lists it explicitly.
+const EXTRA_ROLES: [PeerRole; 6] = [
+    PeerRole::Voter,
+    PeerRole::Learner,
+    PeerRole::EvalReplica,
+    PeerRole::FeedConsumer,
+    PeerRole::Proxy,
+    PeerRole::ReservationVoter,
+];
+
+/// Resolve a list of `(svid, role names)` bindings into roles per SVID.
+///
+/// Used for both the remote peers a node accepts and the identities it
+/// presents. Every SVID must be a SPIFFE ID in one of `trust_domains`, listed
+/// once, with at least one known role and no repeated role.
+pub fn resolve_svid_roles(
+    bindings: &[crate::config::SvidRoles],
+    trust_domains: &[String],
+    operator_role: &str,
+) -> Result<HashMap<String, Vec<PeerRole>>, String> {
+    let mut out: HashMap<String, Vec<PeerRole>> = HashMap::new();
+    for b in bindings {
+        let rest = b
+            .svid
+            .strip_prefix("spiffe://")
+            .ok_or_else(|| format!("'{}' is not a SPIFFE ID", b.svid))?;
+        let domain = rest
+            .split_once('/')
+            .filter(|(d, p)| !d.is_empty() && !p.is_empty())
+            .map(|(d, _)| d)
+            .ok_or_else(|| format!("'{}' has no trust domain or no path", b.svid))?;
+        if !trust_domains.iter().any(|d| d == domain) {
+            return Err(format!(
+                "'{}' is in trust domain '{domain}', which is not in trust_domains",
+                b.svid
+            ));
+        }
+        if b.roles.is_empty() {
+            return Err(format!("'{}' has no roles", b.svid));
+        }
+        let mut roles = Vec::with_capacity(b.roles.len());
+        for name in &b.roles {
+            let role = role_from_name(name, operator_role)
+                .map_err(|e| format!("'{}': {}", b.svid, e.message()))?;
+            if roles.contains(&role) {
+                return Err(format!("'{}' lists role '{name}' twice", b.svid));
+            }
+            roles.push(role);
+        }
+        if out.insert(b.svid.clone(), roles).is_some() {
+            return Err(format!("'{}' is listed twice", b.svid));
+        }
+    }
+    Ok(out)
+}
+
+/// Resolve the identities a node presents into the SVID used for each role.
+///
+/// Same checks as [`resolve_svid_roles`], plus: a role is served by exactly one
+/// SVID, and a non-empty list must serve the `node` role (the SVID of Raft
+/// replication and of the listener). An empty list resolves to an empty map.
+pub fn resolve_identities(
+    identities: &[crate::config::SvidRoles],
+    trust_domains: &[String],
+    operator_role: &str,
+) -> Result<HashMap<PeerRole, String>, String> {
+    let bound = resolve_svid_roles(identities, trust_domains, operator_role)?;
+    let mut by_role: HashMap<PeerRole, String> = HashMap::new();
+    // Iterate the configured order so the error names a stable pair.
+    for i in identities {
+        for role in &bound[&i.svid] {
+            if let Some(other) = by_role.insert(*role, i.svid.clone()) {
+                return Err(format!(
+                    "role {role:?} is served by both '{other}' and '{}'",
+                    i.svid
+                ));
+            }
+        }
+    }
+    if !identities.is_empty() && !by_role.contains_key(&PeerRole::Node) {
+        return Err("no identity serves the `node` role".to_string());
+    }
+    Ok(by_role)
+}
 
 #[derive(Debug, Clone)]
 enum Mode {
@@ -36,6 +157,11 @@ enum Mode {
         path_prefix: String,
         operator_role: String,
         allowed_peer_svids: Vec<String>,
+        /// Explicit roles of remote SVIDs (ADR 0045 §11.1), by full SPIFFE ID.
+        /// A listed SVID holds exactly these roles.
+        peer_roles: HashMap<String, Vec<PeerRole>>,
+        /// Trust domains with at least one `peer_roles` entry (precomputed).
+        managed_domains: HashSet<String>,
     },
     /// dev_mode-only: no role derivation, every CA-signed peer accepted.
     TlsLegacy,
@@ -132,13 +258,12 @@ impl PeerAuthz {
         }
         let san = uri_san
             .ok_or_else(|| Status::permission_denied("peer certificate carries no URI SAN"))?;
-        let role = self.role_of_identity(san)?;
-        if allowed.contains(&role) {
-            Ok((identity.to_owned(), role))
-        } else {
-            Err(Status::permission_denied(format!(
-                "role {role:?} is not authorised for this RPC"
-            )))
+        let roles = self.roles_of_identity(san)?;
+        match allowed.iter().find(|a| roles.contains(a)) {
+            Some(role) => Ok((identity.to_owned(), *role)),
+            None => Err(Status::permission_denied(format!(
+                "roles {roles:?} are not authorised for this RPC"
+            ))),
         }
     }
 
@@ -166,16 +291,16 @@ impl PeerAuthz {
         self.authorize(uri_san.as_deref(), &identity, allowed)
     }
 
-    /// Map a peer identity string (URI SAN) to a role. Pure; no I/O.
+    /// Map a peer identity string (URI SAN) to its roles. Pure; no I/O.
     ///
-    /// In SPIFFE mode the role-convention path (`<path_prefix><role>`) takes
-    /// precedence over `allowed_peer_svids`: an allow-list entry under the
-    /// prefix with an unknown role is denied, and one equal to the operator
-    /// path resolves to [`PeerRole::Operator`]. Only entries outside the
-    /// prefix resolve (to [`PeerRole::Node`]) via the allow-list.
-    pub fn role_of_identity(&self, identity: &str) -> Result<PeerRole, Status> {
+    /// In SPIFFE mode an SVID listed in `peers` holds exactly the roles bound
+    /// to it. Otherwise the role-convention path (`<path_prefix><role>`)
+    /// resolves `node` and the operator role only (any other role needs an
+    /// explicit binding, so a path alone can never claim it), and an
+    /// `allowed_peer_svids` entry outside the prefix resolves to `node`.
+    pub fn roles_of_identity(&self, identity: &str) -> Result<Vec<PeerRole>, Status> {
         match &self.mode {
-            Mode::TlsLegacy => Ok(PeerRole::Node),
+            Mode::TlsLegacy => Ok(vec![PeerRole::Node]),
             Mode::TlsRoles {
                 san_prefix,
                 operator_role,
@@ -188,13 +313,21 @@ impl PeerAuthz {
                             "peer certificate carries no recognised storage role SAN",
                         )
                     })?;
-                role_from_name(role, operator_role)
+                // Only `node` and the operator role may come from a name; the
+                // other roles need an explicit per-SVID binding.
+                Ok(vec![basic_role(role, operator_role).ok_or_else(|| {
+                    Status::permission_denied(format!(
+                        "storage role '{role}' cannot be claimed by certificate name"
+                    ))
+                })?])
             }
             Mode::Spiffe {
                 trust_domains,
                 path_prefix,
                 operator_role,
                 allowed_peer_svids,
+                peer_roles,
+                managed_domains,
             } => {
                 let rest = identity.strip_prefix("spiffe://").ok_or_else(|| {
                     Status::permission_denied("peer identity is not a SPIFFE URI")
@@ -208,20 +341,44 @@ impl PeerAuthz {
                         "SPIFFE trust domain '{domain}' is not allowed"
                     )));
                 }
+                if let Some(roles) = peer_roles.get(identity) {
+                    return Ok(roles.clone());
+                }
+                // A trust domain with explicit bindings is managed by them
+                // alone: a path must not claim `node` or the operator role
+                // there, or a compromised registrar of that domain could mint
+                // one. The exact allow-list below still applies.
+                let managed = managed_domains.contains(domain);
                 // Role-convention path first, then the exact allow-list.
                 if let Some(role) = path
                     .strip_prefix(path_prefix.as_str())
-                    .filter(|r| !r.is_empty() && !r.contains('/'))
+                    .filter(|r| !managed && !r.is_empty() && !r.contains('/'))
                 {
-                    return role_from_name(role, operator_role);
+                    let role = role_from_name(role, operator_role)?;
+                    if !matches!(role, PeerRole::Node | PeerRole::Operator) {
+                        return Err(Status::permission_denied(format!(
+                            "role {role:?} cannot be claimed by SPIFFE path; bind it to the SVID in `peers`"
+                        )));
+                    }
+                    return Ok(vec![role]);
                 }
                 if allowed_peer_svids.iter().any(|s| s == identity) {
-                    return Ok(PeerRole::Node);
+                    return Ok(vec![PeerRole::Node]);
                 }
                 Err(Status::permission_denied(format!(
                     "SPIFFE ID '{identity}' has no authorised storage role"
                 )))
             }
+        }
+    }
+
+    /// Test helper: the single role of an identity that resolves to one.
+    #[cfg(test)]
+    pub(crate) fn role_of_identity(&self, identity: &str) -> Result<PeerRole, Status> {
+        let roles = self.roles_of_identity(identity)?;
+        match roles.as_slice() {
+            [r] => Ok(*r),
+            _ => Err(Status::internal("identity holds several roles")),
         }
     }
 
@@ -238,8 +395,29 @@ impl PeerAuthz {
                 path_prefix,
                 operator_role,
                 allowed_peer_svids,
+                peer_roles: HashMap::new(),
+                managed_domains: HashSet::new(),
             },
         }
+    }
+
+    /// Bind explicit roles to remote SVIDs (see [`resolve_svid_roles`]).
+    /// No-op outside SPIFFE mode.
+    pub fn with_peer_roles(mut self, roles: HashMap<String, Vec<PeerRole>>) -> Self {
+        if let Mode::Spiffe {
+            peer_roles,
+            managed_domains,
+            ..
+        } = &mut self.mode
+        {
+            *managed_domains = roles
+                .keys()
+                .filter_map(|k| k.strip_prefix("spiffe://")?.split_once('/'))
+                .map(|(d, _)| d.to_owned())
+                .collect();
+            *peer_roles = roles;
+        }
+        self
     }
 
     /// Legacy permissive TLS mode (dev_mode only): no role checks.
@@ -263,16 +441,27 @@ impl PeerAuthz {
     }
 }
 
-fn role_from_name(role: &str, operator_role: &str) -> Result<PeerRole, Status> {
+/// The roles a name alone may claim: `node` and the operator role.
+fn basic_role(role: &str, operator_role: &str) -> Option<PeerRole> {
     if role == NODE_ROLE {
-        Ok(PeerRole::Node)
+        Some(PeerRole::Node)
     } else if role == operator_role {
-        Ok(PeerRole::Operator)
+        Some(PeerRole::Operator)
     } else {
-        Err(Status::permission_denied(format!(
-            "unknown storage role '{role}'"
-        )))
+        None
     }
+}
+
+/// Whether `name` is a role that only an explicit binding can grant.
+pub fn is_extra_role_name(name: &str) -> bool {
+    EXTRA_ROLES.iter().any(|r| r.name() == Some(name))
+}
+
+/// Any known role by name; for parsing explicit bindings only.
+fn role_from_name(role: &str, operator_role: &str) -> Result<PeerRole, Status> {
+    basic_role(role, operator_role)
+        .or_else(|| EXTRA_ROLES.iter().find(|r| r.name() == Some(role)).copied())
+        .ok_or_else(|| Status::permission_denied(format!("unknown storage role '{role}'")))
 }
 
 /// `command` is a data-plane RPC: only plain data mutations may travel it.
@@ -440,6 +629,19 @@ mod tests {
             PeerRole::Operator
         );
         assert!(a.role_of_identity("CN=whatever").is_err());
+    }
+
+    #[test]
+    fn tls_roles_cannot_claim_extra_roles() {
+        let a = PeerAuthz::tls_roles("spiffe://keystone/storage/".into());
+        for role in EXTRA_ROLES {
+            let name = role.name().unwrap();
+            assert!(
+                a.role_of_identity(&format!("spiffe://keystone/storage/{name}"))
+                    .is_err(),
+                "{name}"
+            );
+        }
     }
 
     #[test]
@@ -725,5 +927,172 @@ mod tests {
                 partition: "data".into(),
             },
         ]));
+    }
+
+    use crate::config::SvidRoles;
+
+    fn bind(entries: &[(&str, &[&str])]) -> Vec<SvidRoles> {
+        entries
+            .iter()
+            .map(|(svid, roles)| SvidRoles {
+                svid: svid.to_string(),
+                roles: roles.iter().map(|r| r.to_string()).collect(),
+            })
+            .collect()
+    }
+
+    fn peers(entries: &[(&str, &[&str])]) -> HashMap<String, Vec<PeerRole>> {
+        resolve_svid_roles(
+            &bind(entries),
+            &["core.org".to_string(), "eval.org".to_string()],
+            "storage-operator",
+        )
+        .unwrap()
+    }
+
+    fn mesh(entries: &[(&str, &[&str])]) -> PeerAuthz {
+        PeerAuthz::spiffe(
+            vec!["core.org".into(), "eval.org".into()],
+            "/keystone/storage/".into(),
+            "storage-operator".into(),
+            vec![],
+        )
+        .with_peer_roles(peers(entries))
+    }
+
+    #[test]
+    fn extra_roles_cannot_be_claimed_by_path() {
+        let a = spiffe(&[]);
+        for role in EXTRA_ROLES {
+            let Some(name) = role.name() else {
+                continue;
+            };
+            let id = format!("spiffe://example.org/keystone/storage/{name}");
+            assert!(a.roles_of_identity(&id).is_err(), "{name}");
+        }
+    }
+
+    #[test]
+    fn bound_svid_holds_all_its_roles() {
+        let svid = "spiffe://core.org/ns/ks/sa/node-1";
+        let a = mesh(&[(svid, &["node", "voter"])]);
+        assert_eq!(
+            a.roles_of_identity(svid).unwrap(),
+            vec![PeerRole::Node, PeerRole::Voter]
+        );
+        // Either role authorises an RPC; the matching allowed role is returned.
+        let (_, r) = a.authorize(Some(svid), svid, &[PeerRole::Voter]).unwrap();
+        assert_eq!(r, PeerRole::Voter);
+        let (_, r) = a
+            .authorize(Some(svid), svid, &[PeerRole::Operator, PeerRole::Node])
+            .unwrap();
+        assert_eq!(r, PeerRole::Node);
+        assert!(a.authorize(Some(svid), svid, &[PeerRole::Learner]).is_err());
+    }
+
+    #[test]
+    fn same_domain_peers_get_different_roles() {
+        let a = mesh(&[
+            ("spiffe://core.org/ns/ks/sa/node-1", &["node", "voter"]),
+            ("spiffe://core.org/ns/ks/sa/node-2", &["node"]),
+        ]);
+        assert_eq!(
+            a.roles_of_identity("spiffe://core.org/ns/ks/sa/node-1")
+                .unwrap(),
+            vec![PeerRole::Node, PeerRole::Voter]
+        );
+        assert_eq!(
+            a.roles_of_identity("spiffe://core.org/ns/ks/sa/node-2")
+                .unwrap(),
+            vec![PeerRole::Node]
+        );
+        // Not listed, outside the convention and the allow-list.
+        assert!(
+            a.roles_of_identity("spiffe://core.org/ns/ks/sa/node-3")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn binding_overrides_the_path_convention() {
+        // The path says `node`, the binding says `learner`: the binding wins.
+        let svid = "spiffe://eval.org/keystone/storage/node";
+        let a = mesh(&[(svid, &["learner"])]);
+        assert_eq!(a.roles_of_identity(svid).unwrap(), vec![PeerRole::Learner]);
+        // A domain without bindings keeps the convention.
+        assert_eq!(
+            a.roles_of_identity("spiffe://core.org/keystone/storage/node")
+                .unwrap(),
+            vec![PeerRole::Node]
+        );
+    }
+
+    #[test]
+    fn bound_domain_rejects_path_claimed_roles() {
+        let a = mesh(&[("spiffe://eval.org/ns/ks/sa/replica", &["learner"])]);
+        // eval.org has a binding: a path can claim neither node nor operator.
+        for role in ["node", "storage-operator"] {
+            let id = format!("spiffe://eval.org/keystone/storage/{role}");
+            assert!(a.roles_of_identity(&id).is_err(), "{role}");
+        }
+        // core.org has none: the convention still applies there.
+        assert_eq!(
+            a.roles_of_identity("spiffe://core.org/keystone/storage/node")
+                .unwrap(),
+            vec![PeerRole::Node]
+        );
+    }
+
+    #[test]
+    fn binding_is_per_full_svid_not_per_path() {
+        let a = mesh(&[("spiffe://core.org/ns/ks/sa/n", &["voter"])]);
+        assert!(a.roles_of_identity("spiffe://eval.org/ns/ks/sa/n").is_err());
+    }
+
+    #[test]
+    fn resolve_svid_roles_rejects_bad_entries() {
+        let tds = ["core.org".to_string()];
+        let bad = |svid: &str, roles: &[&str]| {
+            resolve_svid_roles(&bind(&[(svid, roles)]), &tds, "storage-operator")
+        };
+        assert!(bad("core.org/x", &["node"]).is_err());
+        assert!(bad("spiffe://core.org", &["node"]).is_err());
+        assert!(bad("spiffe://core.org/", &["node"]).is_err());
+        assert!(bad("spiffe://other.org/x", &["node"]).is_err());
+        assert!(bad("spiffe://core.org/x", &[]).is_err());
+        assert!(bad("spiffe://core.org/x", &["bogus"]).is_err());
+        assert!(bad("spiffe://core.org/x", &["node", "node"]).is_err());
+        assert!(bad("spiffe://core.org/x", &["node", "voter"]).is_ok());
+        let dup = bind(&[
+            ("spiffe://core.org/x", &["node"]),
+            ("spiffe://core.org/x", &["voter"]),
+        ]);
+        assert!(resolve_svid_roles(&dup, &tds, "storage-operator").is_err());
+    }
+
+    #[test]
+    fn identities_serve_each_role_once() {
+        let tds = ["core.org".to_string()];
+        let ok = bind(&[
+            ("spiffe://core.org/a", &["node", "voter"]),
+            ("spiffe://core.org/b", &["reservation-voter"]),
+        ]);
+        let m = resolve_identities(&ok, &tds, "storage-operator").unwrap();
+        assert_eq!(m[&PeerRole::Voter], "spiffe://core.org/a");
+        assert_eq!(m[&PeerRole::ReservationVoter], "spiffe://core.org/b");
+
+        let twice = bind(&[
+            ("spiffe://core.org/a", &["node"]),
+            ("spiffe://core.org/b", &["node"]),
+        ]);
+        assert!(resolve_identities(&twice, &tds, "storage-operator").is_err());
+
+        let no_node = bind(&[("spiffe://core.org/a", &["voter"])]);
+        assert!(resolve_identities(&no_node, &tds, "storage-operator").is_err());
+        assert!(
+            resolve_identities(&[], &tds, "storage-operator")
+                .unwrap()
+                .is_empty()
+        );
     }
 }

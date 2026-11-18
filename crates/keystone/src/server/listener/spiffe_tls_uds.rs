@@ -160,7 +160,7 @@ pub async fn start_axum_app(
     let spiffe_server_config = match spiffe_common::build_spiffe_config(
         token.clone(),
         trust_domains,
-        svid_path.as_deref(),
+        svid_path.map(openstack_keystone_distributed_storage::spiffe_wait::SvidSelector::Path),
     )
     .await?
     {

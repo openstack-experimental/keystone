@@ -26,7 +26,7 @@ use openstack_keystone_distributed_storage::config::{
 };
 use openstack_keystone_distributed_storage::{
     app::{Storage, get_app_server},
-    grpc::authz::{PeerAuthz, PeerRole},
+    grpc::authz::{PeerAuthz, PeerRole, resolve_svid_roles},
     network::{check_svid_ttl_der, get_server_tls_config, now_unix_secs},
 };
 
@@ -40,16 +40,16 @@ const PEER_KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Validate the SPIFFE ID of the peer certificate and resolve its storage role.
 ///
-/// The identity is resolved through [`PeerAuthz::role_of_identity`]: only
-/// `<spiffe_path_prefix><role>` paths and exact `allowed_peer_svids` entries
-/// are accepted. Per-RPC role enforcement stays in the service handlers; this
+/// The identity is resolved through [`PeerAuthz::roles_of_identity`]: only
+/// `<spiffe_path_prefix><role>` paths (`node` and the operator role), exact
+/// `allowed_peer_svids` entries and SVIDs bound in `peers` are accepted. Per-RPC role enforcement stays in the service handlers; this
 /// is a coarse gate rejecting unknown identities early.
 ///
 /// Exposed as a standalone function for testability.
 fn validate_spiffe_id(
     peer_certs: Option<Arc<Vec<rustls::pki_types::CertificateDer<'static>>>>,
     authz: &PeerAuthz,
-) -> std::result::Result<PeerRole, tonic::Status> {
+) -> std::result::Result<Vec<PeerRole>, tonic::Status> {
     use spiffe::cert::spiffe_id_from_der;
 
     let certs = peer_certs
@@ -68,7 +68,7 @@ fn validate_spiffe_id(
         spiffe_id.trust_domain_name(),
         spiffe_id.path()
     );
-    let role = authz.role_of_identity(&uri)?;
+    let roles = authz.roles_of_identity(&uri)?;
 
     // Enforce the 5-minute force-renewal window (ADR 0016-v2 §4.1).
     // This guards ALL Raft gRPC routes including StorageService forwarded
@@ -78,7 +78,7 @@ fn validate_spiffe_id(
     // duplicated oversight.
     check_svid_ttl_der(leaf.as_ref(), now_unix_secs())?;
 
-    Ok(role)
+    Ok(roles)
 }
 
 /// gRPC interceptor that enforces SPIFFE mTLS identity on Raft connections.
@@ -134,17 +134,19 @@ pub async fn start_raft_app(
             let allowed_peer_svids = spiffe_cfg.allowed_peer_svids.clone();
             let spiffe_path_prefix = spiffe_cfg.spiffe_path_prefix.clone();
 
-            // This node's own storage identity: the first `allowed_peer_svids`
-            // entry (the identity every peer requires of this node in a
-            // homogeneous cluster) or the `<spiffe_path_prefix>node`
-            // registration convention. Pinning it keeps the listener from
-            // presenting some other SVID the process also holds.
-            let own_svid_path = spiffe_cfg.own_svid_path();
+            // This node's own storage identity: the `identities` entry that
+            // serves the `node` role (pinned by full SPIFFE ID), else the
+            // first `allowed_peer_svids` entry (the identity every peer
+            // requires of this node in a homogeneous cluster) or the
+            // `<spiffe_path_prefix>node` registration convention (legacy,
+            // path-pinned). Pinning it keeps the listener from presenting some
+            // other SVID the process also holds.
+            let node_svid = spiffe_cfg.node_selector();
 
             let server_config = match spiffe_common::build_spiffe_config(
                 cancel_token.clone(),
                 trust_domains.clone(),
-                Some(&own_svid_path),
+                Some(node_svid),
             )
             .await?
             {
@@ -156,12 +158,22 @@ pub async fn start_raft_app(
             let listener = TcpListener::bind(grpc_addr).await?;
 
             let interceptor = SpiffeIdInterceptor {
-                authz: Arc::new(PeerAuthz::spiffe(
-                    trust_domains,
-                    spiffe_path_prefix,
-                    spiffe_cfg.operator_role.clone(),
-                    allowed_peer_svids,
-                )),
+                authz: Arc::new(
+                    PeerAuthz::spiffe(
+                        trust_domains,
+                        spiffe_path_prefix,
+                        spiffe_cfg.operator_role.clone(),
+                        allowed_peer_svids,
+                    )
+                    .with_peer_roles(
+                        resolve_svid_roles(
+                            &spiffe_cfg.peers,
+                            &spiffe_cfg.trust_domains,
+                            &spiffe_cfg.operator_role,
+                        )
+                        .map_err(|e| eyre!("invalid peers: {e}"))?,
+                    ),
+                ),
             };
 
             let mut server = tonic::transport::Server::builder()
@@ -298,7 +310,7 @@ mod tests {
         let a = authz(&["example.org"], "/keystone/storage/", &[]);
         let cert = generate_spiffe_cert("example.org", "/keystone/storage/node");
         let certs = Some(Arc::new(vec![cert]));
-        assert_eq!(validate_spiffe_id(certs, &a).unwrap(), PeerRole::Node);
+        assert_eq!(validate_spiffe_id(certs, &a).unwrap(), vec![PeerRole::Node]);
     }
 
     #[test]
@@ -361,7 +373,7 @@ mod tests {
         );
         let cert = generate_spiffe_cert("example.org", "/ns/default/sa/keystone");
         let certs = Some(Arc::new(vec![cert]));
-        assert_eq!(validate_spiffe_id(certs, &a).unwrap(), PeerRole::Node);
+        assert_eq!(validate_spiffe_id(certs, &a).unwrap(), vec![PeerRole::Node]);
     }
 
     #[test]
@@ -369,7 +381,10 @@ mod tests {
         let a = authz(&["example.org"], "/keystone/storage/", &[]);
         let cert = generate_spiffe_cert("example.org", "/keystone/storage/storage-operator");
         let certs = Some(Arc::new(vec![cert]));
-        assert_eq!(validate_spiffe_id(certs, &a).unwrap(), PeerRole::Operator);
+        assert_eq!(
+            validate_spiffe_id(certs, &a).unwrap(),
+            vec![PeerRole::Operator]
+        );
     }
 
     #[test]
