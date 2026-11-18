@@ -204,6 +204,11 @@ fn mutation_inner_layouts() {
         "81a85365745369746573919193a161c401aa02",
     );
     assert_wire(
+        "MutationInner::PruneOutbox",
+        &MutationInner::PruneOutbox { upto_index: 7 },
+        "81ab5072756e654f7574626f789107",
+    );
+    assert_wire(
         "MutationInner::Emit",
         &MutationInner::Emit {
             kind: "k".into(),

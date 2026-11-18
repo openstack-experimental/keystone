@@ -28,6 +28,14 @@ use super::*;
 /// Fjall meta key prefix of outbox events.
 pub(crate) const OUTBOX_PREFIX: &str = "_meta:outbox:";
 
+/// Fjall meta key of the feed epoch: the log index of the first `Emit`, or of
+/// the last restore. A consumer cursor is only valid within one epoch, because
+/// a restore restarts the Raft indexes the cursors count in.
+pub(crate) const META_FEED_EPOCH: &[u8] = b"_meta:feed:epoch";
+
+/// Fjall meta key of the feed floor: the oldest log index still in the outbox.
+pub(crate) const META_FEED_FLOOR: &[u8] = b"_meta:feed:floor";
+
 /// Partition name under which outbox events are encrypted and quarantined.
 const OUTBOX_PARTITION: &[u8] = b"outbox";
 
@@ -101,6 +109,72 @@ impl FjallStateMachine {
         let mut stored = dek_version.to_be_bytes().to_vec();
         stored.extend_from_slice(&encrypted);
         batch.insert(&self.meta, key, stored);
+        Ok(())
+    }
+
+    fn meta_u64(&self, key: &[u8]) -> Result<Option<u64>, StoreError> {
+        Ok(self
+            .meta
+            .get(key)?
+            .and_then(|v| v.as_ref().try_into().ok().map(u64::from_be_bytes)))
+    }
+
+    /// The feed epoch, if any event was ever emitted.
+    pub fn feed_epoch(&self) -> Result<Option<u64>, StoreError> {
+        self.meta_u64(META_FEED_EPOCH)
+    }
+
+    /// The oldest log index a cursor can still resume from (0 if nothing was
+    /// pruned).
+    pub fn feed_floor(&self) -> Result<u64, StoreError> {
+        Ok(self.meta_u64(META_FEED_FLOOR)?.unwrap_or(0))
+    }
+
+    /// Stages the epoch for the first event of a feed.
+    pub(super) fn stage_feed_epoch(
+        &self,
+        batch: &mut fjall::OwnedWriteBatch,
+        index: u64,
+    ) -> Result<(), StoreError> {
+        if self.feed_epoch()?.is_none() {
+            batch.insert(&self.meta, META_FEED_EPOCH, index.to_be_bytes());
+        }
+        Ok(())
+    }
+
+    /// Stages the removal of every outbox event up to and including
+    /// `upto_index` and raises the floor past it.
+    pub(super) fn stage_outbox_prune(
+        &self,
+        batch: &mut fjall::OwnedWriteBatch,
+        upto_index: u64,
+    ) -> Result<(), StoreError> {
+        for item in self.meta.prefix(OUTBOX_PREFIX.as_bytes()) {
+            let key = item.key()?;
+            match cursor_from_key(&key) {
+                Some(c) if c.index <= upto_index => batch.remove(&self.meta, key),
+                _ => break,
+            }
+        }
+        let floor = self.feed_floor()?.max(upto_index.saturating_add(1));
+        batch.insert(&self.meta, META_FEED_FLOOR, floor.to_be_bytes());
+        Ok(())
+    }
+
+    /// Starts a new feed after a restore replaced `meta`: drops the restored
+    /// outbox and begins a new epoch at the restore's log index, so cursors
+    /// of the old epoch are refused. A restore into an uninitialized node
+    /// passes a random `index`, since no log index is unique across clusters.
+    pub(crate) fn reset_feed(&self, index: u64) -> Result<(), StoreError> {
+        let mut batch = self.db.batch();
+        for item in self.meta.prefix(OUTBOX_PREFIX.as_bytes()) {
+            batch.remove(&self.meta, item.key()?);
+        }
+        batch.remove(&self.meta, META_FEED_FLOOR);
+        if self.feed_epoch()?.is_some() {
+            batch.insert(&self.meta, META_FEED_EPOCH, index.to_be_bytes());
+        }
+        batch.commit()?;
         Ok(())
     }
 

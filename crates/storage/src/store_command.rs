@@ -291,6 +291,14 @@ pub enum MutationInner {
         sites: Vec<SiteRecord>,
     },
 
+    /// Delete every feed outbox event up to and including `upto_index` on
+    /// every voter and raise the feed floor past it. Proposed by the leader's
+    /// retention task, so all voters prune the same events.
+    PruneOutbox {
+        /// Newest log index to delete.
+        upto_index: u64,
+    },
+
     /// Append an event to the feed outbox (ADR 0045 section 3, M4).
     Emit {
         /// Feed kind; must be enabled in `[distributed_storage.feed]`.

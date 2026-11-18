@@ -168,6 +168,10 @@ impl ClusterAdminServiceImpl {
             .install_full_snapshot(vote, snapshot)
             .await
             .map_err(|e| Status::internal(format!("backup install failed: {e}")))?;
+        // The restored outbox and its epoch belong to the backup's cluster.
+        self.sm
+            .reset_feed(rand::random::<u64>())
+            .map_err(|e| Status::internal(format!("resetting the feed failed: {e}")))?;
         if elect {
             self.raft_node
                 .trigger()

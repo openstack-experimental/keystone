@@ -166,7 +166,11 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                         let violations = match restore_outcome.take().unwrap_or_else(|| {
                             Err(RestoreError::Fatal(io::Error::other("restore not run")))
                         }) {
-                            Ok(()) => vec![],
+                            Ok(()) => {
+                                self.reset_feed(last_applied_log.index)
+                                    .map_err(|e| io::Error::other(e.to_string()))?;
+                                vec![]
+                            }
                             Err(RestoreError::Rejected(description)) => {
                                 tracing::error!(
                                     restore_id,
@@ -977,6 +981,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         position: emit_position,
                                     };
                                     emit_position = emit_position.saturating_add(1);
+                                    self.stage_feed_epoch(&mut batch, last_applied_log.index)
+                                        .map_err(|e| io::Error::other(e.to_string()))?;
                                     match self.stage_outbox_event(&mut batch, cursor, &event) {
                                         Ok(()) => {}
                                         Err(StoreError::Quarantined(p)) => {
@@ -987,6 +993,10 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         }
                                         Err(e) => return Err(io::Error::other(e.to_string())),
                                     }
+                                }
+                                MutationInner::PruneOutbox { upto_index } => {
+                                    self.stage_outbox_prune(&mut batch, upto_index)
+                                        .map_err(|e| io::Error::other(e.to_string()))?;
                                 }
                                 MutationInner::SetSites { sites } => {
                                     pending_sites = Some(
