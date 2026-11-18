@@ -149,7 +149,7 @@ jobs:
 
       - name: Install Python Keystone for cross-verification tests
         if: needs.changes.outputs.code == 'true'
-        run: pip install keystone
+        run: pip install keystone eventlet
 
       - name: Run tests (unit)
         if: needs.changes.outputs.code == 'true'
