@@ -31,7 +31,7 @@ impl SiteFiles {
     /// RSA key pairs for sites `a` and `b`, written as PEM files.
     fn new() -> Self {
         let dir = TempDir::new().unwrap();
-        for name in ["a", "b"] {
+        for name in ["a", "b", "escrow"] {
             let key = rsa::RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap();
             std::fs::write(
                 dir.path().join(format!("{name}.pub")),
@@ -53,7 +53,7 @@ impl SiteFiles {
         let p = |f: &str| self.dir.path().join(f).display().to_string();
         PerSiteKekConfiguration {
             cluster_id: CLUSTER_ID.into(),
-            escrow_site: None,
+            escrow_site: Some(format!("escrow={}", p("escrow.pub"))),
             site: site.into(),
             site_key_file: Some(self.dir.path().join(format!("{private}.key"))),
             site_key_transit_name: None,
@@ -229,5 +229,80 @@ async fn test_wrong_site_key_cannot_join_inner() -> Result<()> {
         format!("{err:#}").contains("OAEP decryption failed"),
         "unexpected error: {err:#}"
     );
+    Ok(())
+}
+
+/// A backup made at site `a` restores at site `b` and, for disaster recovery,
+/// at a node that only holds the escrow key.
+#[serial_test::serial]
+#[test]
+fn test_backup_restores_at_other_site_and_escrow() {
+    TypeConfig::run(async {
+        test_backup_restores_at_other_site_and_escrow_inner()
+            .await
+            .unwrap();
+    });
+}
+
+async fn restore_into_fresh_node(
+    node_id: u64,
+    port_base: u16,
+    tls: &TlsConfiguration,
+    per_site: PerSiteKekConfiguration,
+    chunks: Vec<pb::raft::RestoreChunk>,
+) -> Result<Arc<InstanceHolder>> {
+    let dst = site_node(node_id, port_base, tls, per_site).await?;
+    spawn_raft_app(&dst).await;
+    let tls_client = get_client_tls_config(&dst.config)?;
+    let mut admin = new_admin_client(dst.config.node_cluster_addr.clone(), &tls_client).await?;
+    admin.restore(futures::stream::iter(chunks)).await?;
+    wait_for_leader(&mut admin, node_id).await;
+    Ok(dst)
+}
+
+async fn test_backup_restores_at_other_site_and_escrow_inner() -> Result<()> {
+    const SRC: u16 = PER_SITE_PORT_BASE + 40;
+    const SITE_B: u16 = PER_SITE_PORT_BASE + 60;
+    const ESCROW: u16 = PER_SITE_PORT_BASE + 80;
+    let provider = openstack_keystone_tls_provider::provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls = make_certificates()?;
+    let files = SiteFiles::new();
+
+    let src = site_node(1, SRC, &tls, files.config("a", "a")).await?;
+    spawn_raft_app(&src).await;
+    let tls_client = get_client_tls_config(&src.config)?;
+    let mut src_admin = new_admin_client(src.config.node_cluster_addr.clone(), &tls_client).await?;
+    src_admin
+        .init(pb::raft::InitRequest {
+            nodes: vec![new_node_with_port(1, SRC)],
+        })
+        .await?;
+    wait_for_leader(&mut src_admin, 1).await;
+    const NUM_RECORDS: usize = 50;
+    write_index_and_sensitive_records(&src.storage).await?;
+    write_records_concurrently(&src.storage, NUM_RECORDS).await?;
+
+    let mut stream = src_admin
+        .backup(pb::raft::BackupRequest {})
+        .await?
+        .into_inner();
+    let mut chunks = Vec::new();
+    while let Some(chunk) = stream.message().await? {
+        chunks.push(pb::raft::RestoreChunk {
+            data: chunk.data,
+            elect: false,
+            total_len: 0,
+        });
+    }
+    chunks[0].elect = true;
+
+    let at_b =
+        restore_into_fresh_node(1, SITE_B, &tls, files.config("b", "b"), chunks.clone()).await?;
+    assert_serves_all_records(&at_b.storage, NUM_RECORDS, "restored at site b").await?;
+
+    let at_escrow =
+        restore_into_fresh_node(1, ESCROW, &tls, files.config("escrow", "escrow"), chunks).await?;
+    assert_serves_all_records(&at_escrow.storage, NUM_RECORDS, "restored from escrow").await?;
     Ok(())
 }

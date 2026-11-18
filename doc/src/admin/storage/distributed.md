@@ -319,7 +319,7 @@ restart, when a sequential in-memory counter would otherwise reset to 0) still
 get distinct nonces; it is stored directly in the header, so decryption reads it
 rather than searching for it. The header also carries a DEK manifest: the
 current DEK and every retired DEK the snapshot may still need, each wrapped
-under the KEK. A node holding the same KEK can therefore decrypt the backup even
+under the KEK (with the `per_site` provider, one blob per registered site). A node holding the same KEK, or a registered site's key, can therefore decrypt the backup even
 if it does not know these DEKs yet.
 
 ### Nonce Management
@@ -1068,6 +1068,15 @@ site_key_file = "/etc/keystone/storage/site.key"
 
 Transit decrypts with OAEP-SHA256 and no label; use a non-exportable key. The
 public key of each site is exported with `bao read transit/keys/<name>`.
+A backup, snapshot or log entry made at any registered site opens at every
+other registered site. For disaster recovery with no surviving site key, keep
+`escrow_site` in the list of every node and the escrow private key offline.
+Start the recovery node with `site = "escrow"`, `site_key_file` set to the
+escrow key and the same `sites` and `escrow_site` entries, then `restore` the
+backup as usual. A site that was added or whose key was rotated after a backup
+was taken is not in that backup's envelope and cannot open it; keep the escrow
+recipient in the list from the first day.
+
 The site list is read from the configuration at start-up, so a change takes
 effect on the next restart and applies to DEKs wrapped afterwards.
 
@@ -1504,7 +1513,8 @@ and the DEKs, is replaced by the backup's contents, so anything written after
 the backup was taken is gone. The DEKs recorded in the backup's DEK manifest
 replace the cluster's current DEK on every node, so the restored data stays
 readable. The cluster must use the same KEK material as the cluster that
-produced the backup; a backup that cannot be unwrapped is rejected by the apply
+produced the backup (with the `per_site` provider: the restoring site must be
+in the backup's envelope, see "Per-site KEK" below); a backup that cannot be unwrapped is rejected by the apply
 entry and leaves the data untouched. The upload is streamed into the Raft log as
 it arrives, so the receiving node never buffers it; the client's declared size
 (sent with the first chunk) lets an oversized backup be refused before any of it
