@@ -298,6 +298,14 @@ service ClusterAdminService {
   // RotateDekRequest{emergency: true} by a second storage-operator.
   rpc ConfirmRotateDek(ConfirmRotateDekRequest) returns (AdminResponse) {}
 
+  // SetSites replaces the list of sites the DEK is wrapped for, with the
+  // per_site KEK provider (ADR 0045 §11.2). Leader-only, operator access
+  // over the internal management network.
+  rpc SetSites(SetSitesRequest) returns (AdminResponse) {}
+
+  // ListSites returns the sites the responding node wraps new DEKs for.
+  rpc ListSites(google.protobuf.Empty) returns (ListSitesResponse) {}
+
   // RotateDekLocalEmergency stages a node-local, quorum-bypass DEK rotation
   // candidate (ADR 0028 §3, amending ADR 0016-v2 §6.2): written only to this
   // node's local Fjall `local_emergency` keyspace, entirely bypassing Raft.
@@ -451,6 +459,25 @@ message RetiredDek {
   uint32 dek_version = 1;
   // The retired DEK, wrapped under the responding node's KEK.
   bytes wrapped_dek = 2;
+}
+
+// A site that can open the DEK envelope.
+message Site {
+  // Site name, unique in the list.
+  string name = 1;
+  // RSA public key, SubjectPublicKeyInfo DER, at least 2048 bits.
+  bytes public_key_der = 2;
+  // Version of the site's key pair.
+  uint32 key_version = 3;
+}
+
+message SetSitesRequest {
+  // The complete new list; it must include the site of the node answering.
+  repeated Site sites = 1;
+}
+
+message ListSitesResponse {
+  repeated Site sites = 1;
 }
 
 message RotateDekRequest {

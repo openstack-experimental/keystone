@@ -279,6 +279,29 @@ pub enum MutationInner {
         /// The keyspace to drop.
         keyspace: String,
     },
+
+    /// Replace the list of sites a DEK is wrapped for (ADR 0045 §11.2).
+    ///
+    /// Applied on every node: the list is stored in `meta`, each node
+    /// re-wraps the DEK envelopes it stores for the new list, and later
+    /// DEKs are wrapped for it. Only meaningful with
+    /// `kek_provider = "per_site"`.
+    SetSites {
+        /// The complete new list.
+        sites: Vec<SiteRecord>,
+    },
+}
+
+/// A site that can open the DEK envelope.
+#[derive(Debug, Deserialize, PartialEq, Eq, Serialize, Clone)]
+pub struct SiteRecord {
+    /// Site name, unique in the list.
+    pub name: String,
+    /// RSA public key, SubjectPublicKeyInfo DER.
+    #[serde(with = "serde_bytes")]
+    pub public_key_der: Vec<u8>,
+    /// Version of the site's key pair.
+    pub key_version: u32,
 }
 
 impl MutationInner {

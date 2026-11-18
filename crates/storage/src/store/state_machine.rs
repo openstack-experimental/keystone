@@ -61,6 +61,7 @@ mod quarantine;
 mod raft_sm;
 mod restore;
 mod rotation;
+mod sites;
 mod snapshot;
 mod snapshot_file;
 mod status;
@@ -432,7 +433,7 @@ impl FjallStateMachine {
             .await,
         ));
 
-        Ok(Self {
+        let sm = Self {
             db,
             snapshot_dir,
             node_id,
@@ -457,7 +458,10 @@ impl FjallStateMachine {
             ),
             audit: std::sync::OnceLock::new(),
             write_rate_threshold: Arc::new(AtomicU32::new(DEFAULT_WRITE_RATE_THRESHOLD)),
-        })
+        };
+        // A replicated site list wins over the configured seed.
+        sm.reload_site_registry()?;
+        Ok(sm)
     }
 
     /// Point-in-time node state for the `/metrics` endpoint (GitHub

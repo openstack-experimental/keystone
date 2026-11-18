@@ -29,7 +29,7 @@ use serde::de::DeserializeOwned;
 
 use crate::audit::AuditRecord;
 use crate::local_emergency::DekEmergencyPayload;
-use crate::store_command::{MutationInner, PendingRotation, StoreCommand};
+use crate::store_command::{MutationInner, PendingRotation, SiteRecord, StoreCommand};
 use crate::types::Metadata;
 
 fn hex(bytes: &[u8]) -> String {
@@ -191,6 +191,17 @@ fn mutation_inner_layouts() {
             is_emergency: true,
         },
         "81aa496e7374616c6c44656b93c402aabb09c3",
+    );
+    assert_wire(
+        "MutationInner::SetSites",
+        &MutationInner::SetSites {
+            sites: vec![SiteRecord {
+                name: "a".into(),
+                public_key_der: vec![0xAA],
+                key_version: 2,
+            }],
+        },
+        "81a85365745369746573919193a161c401aa02",
     );
     assert_wire(
         "MutationInner::Quarantine",

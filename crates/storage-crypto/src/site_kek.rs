@@ -205,15 +205,10 @@ impl SiteKek {
     }
 }
 
-#[async_trait::async_trait]
-impl KekProvider for SiteKek {
-    fn as_site_kek(&self) -> Option<&SiteKek> {
-        Some(self)
-    }
-
-    async fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
-        let sites = self.registry.list();
-        // A node that cannot reopen what it wraps would lock itself out.
+impl SiteKek {
+    /// Wrap `dek` for `sites` plus the escrow site. Refuses a list without
+    /// the local site, which could not reopen what it wraps.
+    pub fn wrap_for(&self, sites: &[SiteEntry], dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
         if !sites.iter().any(|s| s.name == self.site)
             && self.escrow.as_ref().map(|e| &e.name) != Some(&self.site)
         {
@@ -234,6 +229,28 @@ impl KekProvider for SiteKek {
             entries.push((site, blob));
         }
         encode(&entries)
+    }
+
+    /// Open `envelope` with the local site key and wrap its DEK again for
+    /// `sites` plus the escrow site, for a site list that changed.
+    pub async fn rewrap_for(
+        &self,
+        sites: &[SiteEntry],
+        envelope: &[u8],
+    ) -> Result<Vec<u8>, CryptoError> {
+        let dek = self.unwrap_dek(envelope).await?;
+        self.wrap_for(sites, &dek)
+    }
+}
+
+#[async_trait::async_trait]
+impl KekProvider for SiteKek {
+    fn as_site_kek(&self) -> Option<&SiteKek> {
+        Some(self)
+    }
+
+    async fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
+        self.wrap_for(&self.registry.list(), dek)
     }
 
     async fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
@@ -257,12 +274,7 @@ impl KekProvider for SiteKek {
                     entry.key_version, self.site
                 ))
             })?;
-        unwrap_dek_for_site(
-            unwrapper.as_ref(),
-            &entry.blob,
-            &self.binding(&self.site),
-        )
-        .await
+        unwrap_dek_for_site(unwrapper.as_ref(), &entry.blob, &self.binding(&self.site)).await
     }
 }
 
@@ -297,7 +309,10 @@ mod tests {
         SiteKek::new(
             "c1",
             local.entry.name.clone(),
-            vec![(local.entry.key_version, local.key.clone() as Arc<dyn SiteKeyUnwrapper>)],
+            vec![(
+                local.entry.key_version,
+                local.key.clone() as Arc<dyn SiteKeyUnwrapper>,
+            )],
             Arc::new(SiteRegistry::new(
                 sites.iter().map(|s| s.entry.clone()).collect(),
             )),
@@ -322,9 +337,13 @@ mod tests {
     #[tokio::test]
     async fn an_unregistered_site_cannot_open_it() {
         let (a, b, c) = (site("a"), site("b"), site("c"));
-        let envelope = kek_for(&a, &[&a, &b], None).wrap_dek(&[3u8; 32]).await.unwrap();
+        let envelope = kek_for(&a, &[&a, &b], None)
+            .wrap_dek(&[3u8; 32])
+            .await
+            .unwrap();
         let err = kek_for(&c, &[&a, &b, &c], None)
-            .unwrap_dek(&envelope).await
+            .unwrap_dek(&envelope)
+            .await
             .unwrap_err()
             .to_string();
         assert!(err.contains("no entry for site 'c'"), "{err}");
@@ -333,7 +352,10 @@ mod tests {
     #[tokio::test]
     async fn a_site_cannot_open_another_sites_entry() {
         let (a, b) = (site("a"), site("b"));
-        let envelope = kek_for(&a, &[&a, &b], None).wrap_dek(&[3u8; 32]).await.unwrap();
+        let envelope = kek_for(&a, &[&a, &b], None)
+            .wrap_dek(&[3u8; 32])
+            .await
+            .unwrap();
         // `b` with `a`'s private key: right entry name, wrong key.
         let impostor = SiteKek::new(
             "c1",
@@ -349,7 +371,8 @@ mod tests {
     async fn escrow_site_opens_it_when_started_as_that_site() {
         let (a, escrow) = (site("a"), site("escrow"));
         let envelope = kek_for(&a, &[&a], Some(&escrow))
-            .wrap_dek(&[4u8; 32]).await
+            .wrap_dek(&[4u8; 32])
+            .await
             .unwrap();
         let restored = SiteKek::new(
             "c1",
@@ -382,7 +405,8 @@ mod tests {
     async fn wrapping_requires_the_local_site_in_the_registry() {
         let (a, b) = (site("a"), site("b"));
         let err = kek_for(&a, &[&b], None)
-            .wrap_dek(&[3u8; 32]).await
+            .wrap_dek(&[3u8; 32])
+            .await
             .unwrap_err()
             .to_string();
         assert!(err.contains("local site 'a'"), "{err}");
@@ -413,5 +437,27 @@ mod tests {
         assert_eq!(r.list()[0].key_version, 2);
         assert!(r.remove("b"));
         assert!(!r.remove("b"));
+    }
+
+    #[tokio::test]
+    async fn rewrap_adds_a_site() {
+        let (a, b, c) = (site("a"), site("b"), site("c"));
+        let ka = kek_for(&a, &[&a, &b], None);
+        let old = ka.wrap_dek(&[5u8; 32]).await.unwrap();
+        let new = ka
+            .rewrap_for(&[a.entry.clone(), b.entry.clone(), c.entry.clone()], &old)
+            .await
+            .unwrap();
+        assert_eq!(
+            *kek_for(&c, &[&a], None).unwrap_dek(&new).await.unwrap(),
+            [5u8; 32]
+        );
+        assert!(kek_for(&c, &[&a], None).unwrap_dek(&old).await.is_err());
+        // Dropping the local site is refused.
+        assert!(
+            ka.rewrap_for(std::slice::from_ref(&b.entry), &old)
+                .await
+                .is_err()
+        );
     }
 }

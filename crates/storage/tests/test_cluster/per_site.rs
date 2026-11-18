@@ -31,7 +31,7 @@ impl SiteFiles {
     /// RSA key pairs for sites `a` and `b`, written as PEM files.
     fn new() -> Self {
         let dir = TempDir::new().unwrap();
-        for name in ["a", "b", "escrow"] {
+        for name in ["a", "b", "c", "escrow"] {
             let key = rsa::RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap();
             std::fs::write(
                 dir.path().join(format!("{name}.pub")),
@@ -304,5 +304,160 @@ async fn test_backup_restores_at_other_site_and_escrow_inner() -> Result<()> {
     let at_escrow =
         restore_into_fresh_node(1, ESCROW, &tls, files.config("escrow", "escrow"), chunks).await?;
     assert_serves_all_records(&at_escrow.storage, NUM_RECORDS, "restored from escrow").await?;
+    Ok(())
+}
+
+/// A site added with `SetSites` can adopt the DEK afterwards, not before.
+#[serial_test::serial]
+#[test]
+fn test_set_sites_lets_a_new_site_join() {
+    TypeConfig::run(async {
+        test_set_sites_lets_a_new_site_join_inner().await.unwrap();
+    });
+}
+
+async fn test_set_sites_lets_a_new_site_join_inner() -> Result<()> {
+    const PORT_BASE: u16 = PER_SITE_PORT_BASE + 100;
+    let provider = openstack_keystone_tls_provider::provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls = make_certificates()?;
+    let files = SiteFiles::new();
+
+    // The cluster starts with sites a and b.
+    let mut cfg_a = files.config("a", "a");
+    cfg_a.sites.truncate(2);
+    let node1 = site_node(1, PORT_BASE, &tls, cfg_a).await?;
+    spawn_raft_app(&node1).await;
+    let tls_client = get_client_tls_config(&node1.config)?;
+    let mut admin1 = new_admin_client(node1.config.node_cluster_addr.clone(), &tls_client).await?;
+    admin1
+        .init(pb::raft::InitRequest {
+            nodes: vec![new_node_with_port(1, PORT_BASE)],
+        })
+        .await?;
+    wait_for_leader(&mut admin1, 1).await;
+    node1
+        .storage
+        .set_value("k".into(), make_env("v")?, None, None)
+        .await?;
+
+    // Site c's config lists all three, but the cluster's envelope does not
+    // include c yet.
+    let mut cfg_c = files.config("c", "c");
+    cfg_c
+        .sites
+        .push(format!("c={}", files.dir.path().join("c.pub").display()));
+    let join_c = |id: u64| {
+        let cfg_c = cfg_c.clone();
+        let tls = tls.clone();
+        async move {
+            let node = site_node(id, PORT_BASE, &tls, cfg_c).await?;
+            spawn_raft_app(&node).await;
+            node.storage
+                .join_cluster(
+                    &get_addr_with_port(1, PORT_BASE).to_string(),
+                    &get_addr_with_port(id, PORT_BASE).to_string(),
+                )
+                .await?;
+            Ok::<_, eyre::Report>(node)
+        }
+    };
+    let err = join_c(2)
+        .await
+        .err()
+        .expect("site c must not join before it is registered");
+    assert!(
+        format!("{err:#}").contains("no entry for site 'c'"),
+        "{err:#}"
+    );
+
+    // Register c.
+    let public = |name: &str| -> Result<Vec<u8>> {
+        use rustls::pki_types::{SubjectPublicKeyInfoDer, pem::PemObject};
+        let pem = std::fs::read(files.dir.path().join(format!("{name}.pub")))?;
+        Ok(SubjectPublicKeyInfoDer::from_pem_slice(&pem)?
+            .as_ref()
+            .to_vec())
+    };
+    let sites = ["a", "b", "c"]
+        .into_iter()
+        .map(|n| {
+            Ok(pb::raft::Site {
+                name: n.into(),
+                public_key_der: public(n)?,
+                key_version: 1,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    admin1
+        .set_sites(pb::raft::SetSitesRequest {
+            sites: sites.clone(),
+        })
+        .await?;
+    let listed = admin1.list_sites(()).await?.into_inner().sites;
+    assert_eq!(
+        vec!["a", "b", "c"],
+        listed.iter().map(|s| s.name.as_str()).collect::<Vec<_>>()
+    );
+
+    // A list without the answering site is refused.
+    let err = admin1
+        .set_sites(pb::raft::SetSitesRequest {
+            sites: sites[1..].to_vec(),
+        })
+        .await
+        .expect_err("the leader's own site cannot be dropped");
+    assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
+
+    // Now c adopts the DEK and reads the data written before it existed.
+    let node3 = join_c(3).await?;
+    node1
+        .storage
+        .set_value("after".into(), make_env("w")?, None, None)
+        .await?;
+    let leader_index = node1.storage.last_log_index().expect("node 1 has a log");
+    let mut caught_up = false;
+    for _ in 0..100 {
+        let applied = node3
+            .storage
+            .raft
+            .metrics()
+            .borrow_watched()
+            .last_applied
+            .map(|l| l.index);
+        if applied >= Some(leader_index) {
+            caught_up = true;
+            break;
+        }
+        TypeConfig::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(caught_up, "node 3 did not catch up to index {leader_index}");
+    for key in ["k", "after"] {
+        let metadata = node1
+            .storage
+            .state_machine_store()
+            .meta()
+            .get(meta_key("data", key.as_bytes()))?
+            .map(|raw| Metadata::unpack(raw.as_ref()))
+            .transpose()?
+            .unwrap_or_else(|| panic!("node 1 has no metadata for {key}"));
+        let ciphertext = node3
+            .storage
+            .state_machine_store()
+            .data()
+            .get(key.as_bytes())?
+            .unwrap_or_else(|| panic!("node 3 has no ciphertext for {key}"));
+        node3
+            .storage
+            .state_machine_store()
+            .decrypt_state(
+                ciphertext.as_ref(),
+                metadata.tier as u8,
+                b"data",
+                key.as_bytes(),
+                metadata.dek_version,
+            )
+            .unwrap_or_else(|e| panic!("node 3 cannot decrypt {key}: {e}"));
+    }
     Ok(())
 }

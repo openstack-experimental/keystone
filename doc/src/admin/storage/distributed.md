@@ -1077,8 +1077,25 @@ backup as usual. A site that was added or whose key was rotated after a backup
 was taken is not in that backup's envelope and cannot open it; keep the escrow
 recipient in the list from the first day.
 
-The site list is read from the configuration at start-up, so a change takes
-effect on the next restart and applies to DEKs wrapped afterwards.
+The `sites` entries are only the initial list. After the first `SetSites`
+call the cluster-wide list is stored in the replicated state, travels with
+snapshots and backups, and wins over the configuration on every node.
+
+To add a site, first run `SetSites` with the full new list (on the leader, as an
+operator; the answering node's own site must stay in it), then start and join
+the new site's node. `SetSites` makes every node open the DEK envelopes it
+stores and wrap them again for the new list, so the joiner's `FetchDek` and any
+snapshot it receives include it. Joining before that fails with "no entry for
+site". `ListSites` shows the list a node wraps for. Removing a site stops later
+envelopes from including it; a copy of an older envelope that the removed site
+holds stays readable by it, so rotate the DEK (`RotateDek`) after removing a
+site that must lose access, and rotate the site key itself in its key store.
+
+Envelopes already queued in the Raft log are not re-wrapped, and nor are
+emergency rotations that are still waiting for their second operator: a site
+added in between has no entry in them. That is harmless for the log, because a
+node that adopted the DEK skips older rotations, and a pending rotation expires
+after five minutes.
 
 #### TPM 2.0
 

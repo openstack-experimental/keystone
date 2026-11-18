@@ -476,6 +476,10 @@ impl FjallStateMachine {
         self.ensure_dek_installed_at()
             .map_err(|e| io::Error::other(e.to_string()))?;
 
+        // The installed `meta` may carry a different site list.
+        self.reload_site_registry()
+            .map_err(|e| io::Error::other(e.to_string()))?;
+
         drop(_lifecycle_guard);
 
         Ok(manifest)

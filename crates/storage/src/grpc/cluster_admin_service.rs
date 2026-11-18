@@ -55,6 +55,7 @@ mod join;
 mod leader;
 mod local_emergency;
 mod restore;
+mod sites;
 mod status;
 mod transfer;
 
@@ -575,6 +576,24 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         request: Request<pb::raft::ClearQuarantineRequest>,
     ) -> Result<Response<()>, Status> {
         self.handle_clear_quarantine(request).await
+    }
+
+    /// Replaces the list of sites the DEK is wrapped for.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn set_sites(
+        &self,
+        request: Request<pb::raft::SetSitesRequest>,
+    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
+        self.handle_set_sites(request).await
+    }
+
+    /// Lists the sites the DEK is wrapped for.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn list_sites(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<pb::raft::ListSitesResponse>, Status> {
+        self.handle_list_sites(request).await
     }
 
     /// Provides dual-control approval for a pending emergency DEK rotation.
