@@ -163,6 +163,22 @@ who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-deploy"
 delta = "1.27.0 -> 1.28.0"
 
+[[audits.uuid]]
+who = "Artem Goncharov <artem.goncharov@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "1.28.0 -> 1.29.3"
+notes = """
+- Unsafe code: The only new unsafe is 10 NonNilUuid::new_v1, now_v1, new_v3 through new_v8 and now_v7 constructors in non_nil.rs. Each calls new_unchecked(Uuid::new_vN(..)), with a SAFETY comment that the version bits make the result non-nil. That holds, so it's sound.
+- Ambient capabilities: There are no new fs, net, env, process or build-script uses. The only std time use is SystemTime::UNIX_EPOCH.elapsed(), and that was already there.
+- Timestamp refactor: Timestamp now stores unix_nanos: u128 instead of seconds plus sub-second nanos. This is a pure refactor, and the SystemTime conversion now uses checked arithmetic, so it can't overflow-panic.
+- Dependencies:
+  - The atomic dependency is removed. Features v1 and v6 no longer depend on it.
+  - zerocopy moves to cfg(uuid_unstable) only.
+  - gungraun (a dev-dependency) goes from =0.19.2 to 0.20, which doesn't affect production.
+  - The serde feature entry is just moved within Cargo.toml.
+- Target gating: target_arch = "wasm32" becomes target_family = "wasm" in the rng and timestamp cfgs. This doesn't affect native Linux builds.
+"""
+
 [[audits.wasm-bindgen-shared]]
 who = "Artem Goncharov <artem.goncharov@gmail.com>"
 criteria = "safe-to-deploy"
