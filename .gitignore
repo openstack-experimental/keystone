@@ -19,3 +19,7 @@ __pycache__/
 
 # Claude Code agent worktrees/scratch state
 /.claude/
+
+# direnv / nix
+/.direnv/
+/result

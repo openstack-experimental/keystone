@@ -1,0 +1,35 @@
+name: Nix
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: '0 3 * * 6'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/nix.yml'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'tools/start-api.sh'
+      - 'tools/check-nix-config-sync.sh'
+      - 'Cargo.toml'
+
+# Eval-only checks: nothing is compiled, the full `nix flake check` and
+# `nix build` stay a local/manual exercise.
+jobs:
+  flake-eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - name: Evaluate all flake outputs
+        run: nix flake check --no-build --all-systems
+      - name: Instantiate packages
+        run: nix build --dry-run .#keystone .#keystone-vm .#vm-api-test .#api-tests
+      - name: Check Nix formatting
+        run: nix fmt -- --check flake.nix nix/vm-api-test.nix
+      - name: Check keystone.conf sync with start-api.sh
+        run: tools/check-nix-config-sync.sh
