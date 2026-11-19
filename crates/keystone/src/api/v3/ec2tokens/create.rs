@@ -19,19 +19,16 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use serde_json::{Value, json};
+use serde_json::json;
 
 use cadf::sanitize::{HostKind, sanitize_initiator_host};
 use openstack_keystone_api_types::v3::auth::token::{TokenBuilder, TokenResponse};
-use openstack_keystone_core::api::common::{get_authz_info, get_domain};
 use openstack_keystone_core::credential::ec2_signature::{validate_timestamp, verify_signature};
-use openstack_keystone_core_types::credential::{
-    Credential as CoreCredential, Ec2SignatureRequest,
-};
-use openstack_keystone_core_types::scope::{Project as ScopeProject, Scope as ProviderScope};
+use openstack_keystone_core_types::credential::Ec2SignatureRequest;
 
 use crate::api::auth::Auth;
 use crate::api::common::PeerAddr;
+use crate::api::v3::ec2tokens::redeem::redeem_ec2_credential;
 use crate::api::v3::ec2tokens::types::Ec2TokenAuthRequest;
 use crate::api::{Catalog, CatalogService, error::KeystoneApiError};
 use crate::audit::{
@@ -105,83 +102,7 @@ async fn create_inner(
     state: &ServiceState,
     req: Ec2TokenAuthRequest,
 ) -> Result<(ValidatedSecurityContext, Response), KeystoneApiError> {
-    let exec = ExecutionContext::internal(state);
     let wire = req.credentials;
-
-    let credential: CoreCredential = state
-        .provider
-        .get_credential_provider()
-        .get_credential_by_ec2_access(&exec, &wire.access)
-        .await?
-        .ok_or(AuthenticationError::Ec2AccessKeyNotFound)?;
-
-    // Defense-in-depth (ADR 0019 §5): `get_credential_by_ec2_access` keys on
-    // `SHA-256(access) == credential.id`, an invariant only established for
-    // `type == "ec2"` credentials at creation. Reject any other type so a
-    // credential mislabelled to dodge the ec2 create-time guards
-    // (project binding, delegation stamping, restricted-app-cred gate —
-    // OSSA-2026-005) can never be redeemed here even if its id were to
-    // collide with an access hash.
-    if credential.r#type != "ec2" {
-        return Err(AuthenticationError::Ec2AccessKeyNotFound.into());
-    }
-
-    let blob: Value = serde_json::from_str(&credential.blob).map_err(|e| {
-        KeystoneApiError::InternalError(format!(
-            "credential {}: corrupted ec2 blob: {e}",
-            credential.id
-        ))
-    })?;
-    let secret = blob.get("secret").and_then(Value::as_str).ok_or_else(|| {
-        KeystoneApiError::InternalError(format!(
-            "credential {}: ec2 blob missing `secret`",
-            credential.id
-        ))
-    })?;
-    let trust_id = blob.get("trust_id").and_then(Value::as_str);
-    let app_cred_id = blob.get("app_cred_id").and_then(Value::as_str);
-
-    // OAuth1 access-token-bound EC2 credentials (`access_token_id`) are not
-    // supported: OAuth1 is not implemented, so redeeming such a credential
-    // would silently fall through to a plain `Ec2Credential` context and
-    // drop the intended OAuth1 delegation restriction (OSSA-2026-005
-    // family). Fail closed until the OAuth1 delegation is wired through.
-    if blob
-        .get("access_token_id")
-        .and_then(Value::as_str)
-        .is_some()
-    {
-        return Err(KeystoneApiError::InternalError(format!(
-            "credential {}: OAuth1 access-token-bound EC2 credentials are not supported",
-            credential.id
-        )));
-    }
-
-    let project_id = credential.project_id.clone().ok_or_else(|| {
-        KeystoneApiError::InternalError(format!(
-            "credential {}: ec2 credential missing project_id",
-            credential.id
-        ))
-    })?;
-
-    // User/domain enabled checks (ADR 0019 §5 step 4). Project/project-domain
-    // enabled is checked below by `get_authz_info`'s `ScopeInfo::validate()`.
-    let user = state
-        .provider
-        .get_identity_provider()
-        .get_user(&exec, &credential.user_id)
-        .await?
-        .ok_or(AuthenticationError::Ec2AccessKeyNotFound)?;
-    if !user.enabled {
-        return Err(AuthenticationError::UserDisabled(user.id.clone()).into());
-    }
-    let user_domain = get_domain(state, Some(&user.domain_id), None::<&str>).await?;
-    if !user_domain.enabled {
-        return Err(AuthenticationError::UserDomainDisabled.into());
-    }
-
-    let auth_ttl = state.config_manager.config.read().await.ec2.auth_ttl;
-
     let sig_req = Ec2SignatureRequest {
         access: wire.access.clone(),
         signature: wire.signature.clone(),
@@ -192,68 +113,14 @@ async fn create_inner(
         headers: wire.headers.clone(),
         body_hash: wire.body_hash.clone(),
     };
-
-    // Timestamp is checked before the signature so a stale replayed request
-    // is rejected without depending on signature-comparison timing.
-    validate_timestamp(&sig_req, auth_ttl)?;
-    verify_signature(secret, &sig_req)?;
-
-    let principal = PrincipalInfo {
-        identity: IdentityInfo::User(
-            UserIdentityInfoBuilder::default()
-                .user_id(user.id.clone())
-                .user(user.clone())
-                .user_domain(user_domain.clone())
-                .build()?,
-        ),
-    };
-
-    // Delegation metadata pass-through (ADR 0019 §5, "Credential metadata in
-    // the token"): reuse the existing Trust/ApplicationCredential contexts so
-    // the bounded-object validation already wired into
-    // `ValidatedSecurityContext::new_for_scope` (trustee/expiry checks)
-    // applies unchanged.
-    let context = if let Some(tid) = trust_id {
-        let trust = state
-            .provider
-            .get_trust_provider()
-            .get_trust(&exec, tid)
-            .await?
-            .ok_or_else(|| KeystoneApiError::not_found("trust", tid))?;
-        AuthenticationContext::Trust { trust, token: None }
-    } else if let Some(aid) = app_cred_id {
-        let application_credential = state
-            .provider
-            .get_application_credential_provider()
-            .get_application_credential(&exec, aid)
-            .await?
-            .ok_or_else(|| KeystoneApiError::not_found("application_credential", aid))?;
-        AuthenticationContext::ApplicationCredential {
-            application_credential,
-            token: None,
-        }
-    } else {
-        AuthenticationContext::Ec2Credential
-    };
-
-    let auth_result = AuthenticationResultBuilder::default()
-        .context(context)
-        .principal(principal)
-        .build()?;
-
-    let ctx = SecurityContext::try_from(auth_result)?;
-    let provider_scope = ProviderScope::Project(ScopeProject {
-        id: Some(project_id),
-        name: None,
-        domain: None,
-    });
-    let authz_info = get_authz_info(state, Some(&provider_scope)).await?;
-
-    let vsc = state
-        .provider
-        .get_token_provider()
-        .issue_token_context(state, &ctx, &authz_info)
-        .await?;
+    let vsc = redeem_ec2_credential(state, &wire.access, |secret, auth_ttl| {
+        // Timestamp is checked before the signature so a stale replayed
+        // request is rejected without depending on signature-comparison
+        // timing.
+        validate_timestamp(&sig_req, auth_ttl)?;
+        verify_signature(secret, &sig_req)
+    })
+    .await?;
 
     let mut api_token = TokenResponse {
         token: TokenBuilder::try_from(&vsc)?.build()?,

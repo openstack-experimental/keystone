@@ -281,10 +281,11 @@ pub async fn with_audit_request_context(
 /// audit of its mutations) is deliberately not recorded here.
 #[must_use]
 pub fn is_authentication_surface(method: &axum::http::Method, path: &str) -> bool {
-    const PREFIXES: [&str; 7] = [
+    const PREFIXES: [&str; 8] = [
         "/v3/auth/tokens",
         "/v4/auth/tokens",
         "/v3/ec2tokens",
+        "/v3/s3tokens",
         "/v4/auth/passkey",
         "/v4/vendordata",
         "/SCIM/v2",
@@ -999,6 +1000,7 @@ mod tests {
             (Method::GET, "/v3/auth/tokens"),
             (Method::DELETE, "/v3/auth/tokens"),
             (Method::POST, "/v3/ec2tokens"),
+            (Method::POST, "/v3/s3tokens"),
             (Method::POST, "/v4/auth/passkey/start"),
             (Method::POST, "/v4/vendordata"),
             (Method::GET, "/SCIM/v2/realms/x/Users"),

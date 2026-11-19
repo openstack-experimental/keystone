@@ -20,6 +20,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::keystone::ServiceState;
 
 mod create;
+pub(crate) mod redeem;
 pub mod types;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {

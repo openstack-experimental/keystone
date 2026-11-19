@@ -41,6 +41,7 @@ pub mod region;
 pub mod role;
 pub mod role_assignment;
 pub mod role_inferences;
+pub mod s3tokens;
 pub mod service;
 pub mod unified_limit;
 pub mod user;
@@ -74,6 +75,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .nest("/regions", region::openapi_router())
         .nest("/roles", role::openapi_router())
         .nest("/role_inferences", role_inferences::openapi_router())
+        .nest("/s3tokens", s3tokens::openapi_router())
         .nest("/services", service::openapi_router())
         .nest("/users", user::openapi_router())
         .merge(role_assignment::openapi_router())

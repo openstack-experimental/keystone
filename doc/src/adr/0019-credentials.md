@@ -763,6 +763,28 @@ re-check on list). Shipping the plaintext secret to an external OPA would expose
 it to decision logging, turning the authorization channel into a secret
 exfiltration path.
 
+#### The `/v3/s3tokens` API Interface
+
+`POST /v3/s3tokens` validates the signature of a signed S3 request for S3
+gateways (e.g. Swift's `s3token` middleware). It shares the credential
+redemption flow with `/v3/ec2tokens` (lookup, type guard, enabled checks,
+delegation reconstruction, scope bounding) and differs as follows:
+
+- The body key is `credentials`, `credential` or `ec2Credentials`; the object
+  carries `access`, `signature` and `token` (urlsafe base64 of the S3
+  string-to-sign). Missing `access`/`signature` yields `401`.
+- Signature: if the string-to-sign does not start with `AWS4`,
+  `base64(HMAC-SHA1(secret, sts))`; otherwise SigV4 with exactly four lines,
+  `AWS4-HMAC-SHA256`, a four-part scope ending in `aws4_request` and service
+  `s3`, `iam` or `sts`. Comparison is constant-time.
+- Timestamp is taken from the verified string-to-sign (SigV4 line 1; SigV2
+  line 3 or the `x-amz-date:` line) and bounded by `[ec2] auth_ttl`.
+- Policy: `identity:s3tokens_validate` (admin or service), empty target.
+- **No usable token is returned**: no `X-Subject-Token` header and no token id
+  in the body. The body is rendered from the validated credential only. The
+  `ec2credential` method marker is still carried by the authentication context
+  and reported in `methods`.
+
 #### Error Codes
 
 | Status | Condition                                                                         |

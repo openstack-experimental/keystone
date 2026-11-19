@@ -27,6 +27,7 @@ pub mod ec2_signature;
 pub mod error;
 pub mod hook;
 mod provider_api;
+pub mod s3_signature;
 pub mod service;
 pub mod totp;
 
