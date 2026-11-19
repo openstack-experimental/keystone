@@ -56,7 +56,7 @@ use crate::StoreError;
 use crate::StoreResponse;
 use crate::Violation;
 use crate::audit::{AuditForwarder, AuditRecord, AuditSpoolConfig};
-use crate::grpc::authz::PeerAuthz;
+use crate::grpc::authz::{PeerAuthz, resolve_svid_roles};
 use crate::grpc::cluster_admin_service::ClusterAdminServiceImpl;
 use crate::grpc::raft_service::RaftServiceImpl;
 use crate::grpc::storage_service::StorageServiceImpl;

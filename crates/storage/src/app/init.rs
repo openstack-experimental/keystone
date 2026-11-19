@@ -522,6 +522,10 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
             s.spiffe_path_prefix.clone(),
             s.operator_role.clone(),
             s.allowed_peer_svids.clone(),
+        )
+        .with_peer_roles(
+            resolve_svid_roles(&s.peers, &s.trust_domains, &s.operator_role)
+                .map_err(|e| StoreError::Other(eyre!("invalid peers: {e}")))?,
         ),
         RaftTlsConfiguration::Tls(_) => match &ds_config.tls_role_san_prefix {
             Some(prefix) => PeerAuthz::tls_roles(prefix.clone()),

@@ -152,7 +152,7 @@ async fn get_grpc_client(
             get_spiffe_grpc_channel(
                 target_addr,
                 &spiffe_cfg.trust_domains,
-                as_node.then(|| spiffe_cfg.own_svid_path()).as_deref(),
+                as_node.then(|| spiffe_cfg.node_selector()),
             )
             .await?
         }

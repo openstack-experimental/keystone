@@ -47,11 +47,12 @@ use openstack_keystone_config::ConfigManager;
 use crate::config::{DistributedStorageConfiguration, RaftTlsConfiguration};
 
 use crate::StoreError;
+use crate::grpc::authz::{PeerRole, resolve_identities};
 use crate::protobuf as pb;
 use crate::protobuf::raft::VoteRequest as PbVoteRequest;
 use crate::protobuf::raft::VoteResponse as PbVoteResponse;
 use crate::protobuf::raft::raft_service_client::RaftServiceClient;
-use crate::spiffe_wait::PathSvidPicker;
+use crate::spiffe_wait::SvidSelector;
 use crate::types::*;
 
 /// Strip a URI scheme (`https://`, `http://`, etc.) from `addr`, returning the
@@ -74,8 +75,34 @@ fn strip_scheme(addr: &str) -> &str {
 ///   a tokio `watch` channel whenever the config file changes.
 #[derive(Clone)]
 pub enum RaftTlsClient {
-    Spiffe(Arc<rustls::ClientConfig>),
+    Spiffe(Arc<SpiffeClients>),
     Static(watch::Receiver<ClientTlsConfig>),
+}
+
+/// The SPIFFE client configurations of a node, one per SVID it presents
+/// (ADR 0045 §11.1).
+///
+/// A connection is made on behalf of a [`PeerRole`] and presents the SVID
+/// configured for that role. A node that configures no `identities` has one
+/// fallback configuration that serves every role.
+pub struct SpiffeClients {
+    by_role: std::collections::HashMap<PeerRole, Arc<rustls::ClientConfig>>,
+    fallback: Option<Arc<rustls::ClientConfig>>,
+}
+
+impl SpiffeClients {
+    /// Configuration presenting the SVID used for `role`.
+    fn for_role(&self, role: PeerRole) -> Result<Arc<rustls::ClientConfig>, StoreError> {
+        self.by_role
+            .get(&role)
+            .or(self.fallback.as_ref())
+            .cloned()
+            .ok_or_else(|| {
+                StoreError::Other(eyre::eyre!(
+                    "no SPIFFE identity is configured for role {role:?}"
+                ))
+            })
+    }
 }
 
 impl RaftTlsClient {
@@ -85,6 +112,12 @@ impl RaftTlsClient {
     /// first RPC).  In `Spiffe` mode `connect_with_connector` establishes the
     /// connection eagerly so that TLS errors surface immediately.
     pub async fn connect(&self, addr: &str) -> Result<Channel, StoreError> {
+        self.connect_as(addr, PeerRole::Node).await
+    }
+
+    /// Like [`Self::connect`], presenting the SVID configured for `role`.
+    /// Static TLS has a single identity and ignores `role`.
+    pub async fn connect_as(&self, addr: &str, role: PeerRole) -> Result<Channel, StoreError> {
         match self {
             Self::Static(rx) => {
                 let tls_cfg = rx.borrow().clone();
@@ -95,8 +128,10 @@ impl RaftTlsClient {
                 .tls_config(tls_cfg)?
                 .connect_lazy())
             }
-            Self::Spiffe(cfg) => {
-                let connector = SpiffeConnector { tls: cfg.clone() };
+            Self::Spiffe(clients) => {
+                let connector = SpiffeConnector {
+                    tls: clients.for_role(role)?,
+                };
                 Channel::builder(format!("http://{}", strip_scheme(addr)).parse()?)
                     .connect_timeout(CONNECT_TIMEOUT)
                     .http2_keep_alive_interval(KEEPALIVE_INTERVAL)
@@ -291,17 +326,23 @@ impl ChannelCache {
     }
 
     /// Cache key of the next pool slot for `addr`.
-    fn pool_key(&self, addr: &str) -> String {
+    fn pool_key(&self, addr: &str, role: PeerRole) -> String {
         let slot = self.next_slot.fetch_add(1, Ordering::Relaxed) % CHANNELS_PER_PEER;
-        format!("{addr}#{slot}")
+        format!("{addr}#{role:?}#{slot}")
     }
 
     /// Return a channel to `addr`, connecting if there is none yet.
     ///
     /// Requests are spread round-robin over [`CHANNELS_PER_PEER`] channels.
     pub(crate) async fn channel(&self, addr: &str) -> Result<Channel, RPCError> {
+        self.channel_as(addr, PeerRole::Node).await
+    }
+
+    /// Like [`Self::channel`], presenting the SVID configured for `role`.
+    /// Channels of different roles are never shared.
+    pub(crate) async fn channel_as(&self, addr: &str, role: PeerRole) -> Result<Channel, RPCError> {
         let addr = strip_scheme(addr);
-        let key = self.pool_key(addr);
+        let key = self.pool_key(addr, role);
 
         // No lock is held across an await.
         let tls_client = self.refresh();
@@ -315,7 +356,7 @@ impl ChannelCache {
             return Ok(channel.clone());
         }
 
-        let channel = Self::connect(&tls_client, addr).await?;
+        let channel = Self::connect(&tls_client, addr, role).await?;
         // Concurrent first users may each have connected; keep the first.
         Ok(self
             .channels
@@ -327,7 +368,11 @@ impl ChannelCache {
             .clone())
     }
 
-    async fn connect(tls_client: &RaftTlsClient, addr: &str) -> Result<Channel, RPCError> {
+    async fn connect(
+        tls_client: &RaftTlsClient,
+        addr: &str,
+        role: PeerRole,
+    ) -> Result<Channel, RPCError> {
         match tls_client {
             RaftTlsClient::Static(rx) => {
                 // Clone the config out of the Ref before any await so the
@@ -351,8 +396,12 @@ impl ChannelCache {
                 .map_err(|e| RPCError::Unreachable(Unreachable::<TypeConfig>::new(&e)))
             }
 
-            RaftTlsClient::Spiffe(cfg) => {
-                let connector = SpiffeConnector { tls: cfg.clone() };
+            RaftTlsClient::Spiffe(clients) => {
+                let connector = SpiffeConnector {
+                    tls: clients
+                        .for_role(role)
+                        .map_err(|e| RPCError::Unreachable(Unreachable::<TypeConfig>::new(&e)))?,
+                };
                 // Use `http://` so tonic forwards the URI directly to our
                 // connector without attempting its own hostname-based TLS.
                 Channel::builder(
@@ -824,75 +873,20 @@ pub fn get_server_tls_config(
 // SPIFFE mTLS helpers (Spiffe variant of RaftTlsConfiguration — ADR 0016-v2)
 // ---------------------------------------------------------------------------
 
-/// Initialize a SPIFFE-backed [`RaftTlsClient`] for Raft peer connections.
+/// Build a `rustls::ClientConfig` presenting the SVID chosen by `selector`.
 ///
-/// Connects to the SPIRE Workload API and builds a `rustls::ClientConfig` via
-/// [`spiffe_rustls::mtls_client`].  SVID rotation is managed internally by
-/// `spiffe-rustls`'s `MaterialWatcher`; no separate watcher task is needed.
-/// `own_svid_path` pins the storage node's own SVID path (see
-/// [`PathSvidPicker`]) so the client always presents that identity, never
-/// another SVID the same process happens to also hold.
-async fn init_spiffe_raft_tls(
-    trust_domains: Vec<String>,
-    own_svid_path: String,
-) -> Result<RaftTlsClient, StoreError> {
+/// SVID rotation is managed internally by `spiffe-rustls`'s `MaterialWatcher`;
+/// no separate watcher task is needed.
+async fn spiffe_client_config(
+    purpose: &str,
+    trust_domains: &[String],
+    selector: SvidSelector,
+) -> Result<Arc<rustls::ClientConfig>, StoreError> {
     let source = crate::spiffe_wait::wait_for_spiffe_source(
-        "Raft peer mTLS client",
-        X509SourceBuilder::new()
-            .picker(PathSvidPicker::new(own_svid_path))
-            .build(),
+        purpose,
+        X509SourceBuilder::new().picker(selector).build(),
     )
     .await
-    .map_err(StoreError::Other)?;
-
-    let mut rustls_config = mtls_client(source)
-        .authorize(
-            authorizer::trust_domains(trust_domains)
-                .map_err(|e| StoreError::Other(eyre::eyre!("Invalid SPIFFE trust domain: {e}")))?,
-        )
-        .build()
-        .map_err(|e| StoreError::Other(eyre::eyre!("Failed to build SPIFFE rustls config: {e}")))?;
-
-    // gRPC requires h2 ALPN; tonic's built-in TLS connector adds this
-    // automatically, but when bypassing it via connect_with_connector we must
-    // set it ourselves.
-    rustls_config.alpn_protocols = vec![b"h2".to_vec()];
-
-    Ok(RaftTlsClient::Spiffe(Arc::new(rustls_config)))
-}
-
-/// Build a gRPC [`Channel`] to `target_addr` using SPIFFE mTLS.
-///
-/// Intended for CLI tools that establish a single connection and exit.
-/// The channel uses a [`SpiffeConnector`] so that SPIFFE URI SAN verification
-/// is applied instead of standard hostname verification.
-///
-/// `svid_path` pins the SVID presented to the server (see [`PathSvidPicker`]);
-/// `None` takes whatever the Workload API returns first, which is only
-/// correct for a workload holding a single SVID.
-pub async fn get_spiffe_grpc_channel(
-    target_addr: http::Uri,
-    trust_domains: &[String],
-    svid_path: Option<&str>,
-) -> Result<Channel, StoreError> {
-    let source = match svid_path {
-        Some(path) => {
-            crate::spiffe_wait::wait_for_spiffe_source(
-                "Raft gRPC client channel",
-                X509SourceBuilder::new()
-                    .picker(PathSvidPicker::new(path))
-                    .build(),
-            )
-            .await
-        }
-        None => {
-            crate::spiffe_wait::wait_for_spiffe_source(
-                "Raft gRPC client channel",
-                X509Source::new(),
-            )
-            .await
-        }
-    }
     .map_err(StoreError::Other)?;
 
     let mut rustls_config = mtls_client(source)
@@ -903,11 +897,116 @@ pub async fn get_spiffe_grpc_channel(
         .build()
         .map_err(|e| StoreError::Other(eyre::eyre!("Failed to build SPIFFE rustls config: {e}")))?;
 
+    // gRPC requires h2 ALPN; tonic's built-in TLS connector adds this
+    // automatically, but when bypassing it via connect_with_connector we must
+    // set it ourselves.
     rustls_config.alpn_protocols = vec![b"h2".to_vec()];
+    Ok(Arc::new(rustls_config))
+}
 
-    let connector = SpiffeConnector {
-        tls: Arc::new(rustls_config),
+/// Initialize a SPIFFE-backed [`RaftTlsClient`] for Raft peer connections.
+///
+/// With `identities` configured, one client configuration is built per
+/// identity, pinned by its full SPIFFE ID, and each role is served by the
+/// identity listing it. Without them, a single configuration pinned by the
+/// legacy `own_svid_path` serves every role.
+async fn init_spiffe_raft_tls(
+    spiffe: &crate::config::SpiffeTls,
+) -> Result<RaftTlsClient, StoreError> {
+    let by_svid_role = resolve_identities(
+        &spiffe.identities,
+        &spiffe.trust_domains,
+        &spiffe.operator_role,
+    )
+    .map_err(|e| StoreError::Other(eyre::eyre!("invalid identities: {e}")))?;
+
+    if by_svid_role.is_empty() {
+        let cfg = spiffe_client_config(
+            "Raft peer mTLS client",
+            &spiffe.trust_domains,
+            SvidSelector::Path(spiffe.own_svid_path()),
+        )
+        .await?;
+        return Ok(RaftTlsClient::Spiffe(Arc::new(SpiffeClients {
+            by_role: Default::default(),
+            fallback: Some(cfg),
+        })));
+    }
+
+    // Only the `node` identity is used for outbound traffic so far: no caller
+    // dials with another role yet (`channel_as`/`connect_as`).
+    for role in by_svid_role.keys().filter(|r| **r != PeerRole::Node) {
+        tracing::warn!(
+            ?role,
+            "identity for this role is configured but not used for outbound connections yet"
+        );
+    }
+    let mut by_svid: std::collections::HashMap<String, Arc<rustls::ClientConfig>> =
+        Default::default();
+    let mut by_role = std::collections::HashMap::new();
+    for (role, svid) in by_svid_role {
+        let cfg = match by_svid.get(&svid) {
+            Some(cfg) => cfg.clone(),
+            None => {
+                let cfg = spiffe_client_config(
+                    "Raft peer mTLS client",
+                    &spiffe.trust_domains,
+                    SvidSelector::Id(svid.clone()),
+                )
+                .await?;
+                by_svid.insert(svid.clone(), cfg.clone());
+                cfg
+            }
+        };
+        by_role.insert(role, cfg);
+    }
+    Ok(RaftTlsClient::Spiffe(Arc::new(SpiffeClients {
+        by_role,
+        fallback: None,
+    })))
+}
+
+/// Build a gRPC [`Channel`] to `target_addr` using SPIFFE mTLS.
+///
+/// Intended for CLI tools that establish a single connection and exit.
+/// The channel uses a [`SpiffeConnector`] so that SPIFFE URI SAN verification
+/// is applied instead of standard hostname verification.
+///
+/// `svid` pins the SVID presented to the server (see [`SvidSelector`]); `None`
+/// takes whatever the Workload API returns first, which is only correct for a
+/// workload holding a single SVID.
+pub async fn get_spiffe_grpc_channel(
+    target_addr: http::Uri,
+    trust_domains: &[String],
+    svid: Option<SvidSelector>,
+) -> Result<Channel, StoreError> {
+    let tls = match svid {
+        Some(selector) => {
+            spiffe_client_config("Raft gRPC client channel", trust_domains, selector).await?
+        }
+        None => {
+            let source = crate::spiffe_wait::wait_for_spiffe_source(
+                "Raft gRPC client channel",
+                X509Source::new(),
+            )
+            .await
+            .map_err(StoreError::Other)?;
+            let mut cfg = mtls_client(source)
+                .authorize(
+                    authorizer::trust_domains(trust_domains.to_vec()).map_err(|e| {
+                        StoreError::Other(eyre::eyre!("Invalid SPIFFE trust domain: {e}"))
+                    })?,
+                )
+                .build()
+                .map_err(|e| {
+                    StoreError::Other(eyre::eyre!("Failed to build SPIFFE rustls config: {e}"))
+                })?;
+            cfg.alpn_protocols = vec![b"h2".to_vec()];
+            Arc::new(cfg)
+        }
     };
+
+    let connector = SpiffeConnector { tls };
 
     // Rewrite the URI to `http://` so tonic doesn't attempt hostname-based TLS
     // on top of our connector's own TLS.
@@ -947,11 +1046,11 @@ pub async fn init_tls_watcher(
     };
 
     if let Some(spiffe_cfg) = spiffe_cfg {
-        // Present this node's own storage identity (first allowed peer SVID,
-        // else the `<spiffe_path_prefix>node` convention), never some other
-        // SVID the process happens to also hold.
-        let own_svid_path = spiffe_cfg.own_svid_path();
-        return init_spiffe_raft_tls(spiffe_cfg.trust_domains, own_svid_path).await;
+        // Present the configured identity per role (or the node's own legacy
+        // identity: first allowed peer SVID, else the
+        // `<spiffe_path_prefix>node` convention), never some other SVID the
+        // process happens to also hold.
+        return init_spiffe_raft_tls(&spiffe_cfg).await;
     }
 
     // Static TLS fallback: load certificates from config files.
@@ -1095,9 +1194,25 @@ mod channel_cache_tests {
     async fn spreads_requests_over_a_pool_per_peer() {
         let (cache, _tx) = cache_with(CHANNEL_MAX_AGE);
         let keys: std::collections::HashSet<_> = (0..CHANNELS_PER_PEER * 3)
-            .map(|_| cache.pool_key("peer:1"))
+            .map(|_| cache.pool_key("peer:1", PeerRole::Node))
             .collect();
         assert_eq!(keys.len(), CHANNELS_PER_PEER);
+    }
+
+    #[tokio::test]
+    async fn pool_keys_separate_roles() {
+        let (cache, _tx) = cache_with(CHANNEL_MAX_AGE);
+        // Compare at the same slot: channels of different roles are never
+        // shared, so the role must be part of the key.
+        cache
+            .next_slot
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        let node = cache.pool_key("peer:1", PeerRole::Node);
+        cache
+            .next_slot
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        let voter = cache.pool_key("peer:1", PeerRole::Voter);
+        assert_ne!(node, voter);
     }
 
     #[tokio::test]
@@ -1137,5 +1252,47 @@ mod channel_cache_tests {
         let (cache, _tx) = cache_with(Duration::ZERO);
         cache.refresh();
         assert_eq!(cached(&cache), 0);
+    }
+}
+
+#[cfg(test)]
+mod spiffe_clients_tests {
+    use super::*;
+
+    fn client_config() -> Arc<rustls::ClientConfig> {
+        let provider = openstack_keystone_tls_provider::provider();
+        let _ = rustls::crypto::CryptoProvider::install_default(provider);
+        Arc::new(
+            rustls::ClientConfig::builder()
+                .with_root_certificates(rustls::RootCertStore::empty())
+                .with_no_client_auth(),
+        )
+    }
+
+    #[test]
+    fn for_role_prefers_the_role_binding() {
+        let node_cfg = client_config();
+        let voter_cfg = client_config();
+        let clients = SpiffeClients {
+            by_role: std::collections::HashMap::from([(PeerRole::Voter, voter_cfg.clone())]),
+            fallback: Some(node_cfg.clone()),
+        };
+        assert!(Arc::ptr_eq(
+            &clients.for_role(PeerRole::Voter).unwrap(),
+            &voter_cfg
+        ));
+        assert!(Arc::ptr_eq(
+            &clients.for_role(PeerRole::Node).unwrap(),
+            &node_cfg
+        ));
+    }
+
+    #[test]
+    fn for_role_errors_when_nothing_serves_the_role() {
+        let clients = SpiffeClients {
+            by_role: Default::default(),
+            fallback: None,
+        };
+        assert!(clients.for_role(PeerRole::Node).is_err());
     }
 }

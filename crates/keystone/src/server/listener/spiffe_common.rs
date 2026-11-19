@@ -24,15 +24,15 @@ use rustls::ServerConfig;
 use spiffe_rustls::{authorizer, mtls_server};
 use tokio_util::sync::CancellationToken;
 
-use openstack_keystone_distributed_storage::spiffe_wait::{PathSvidPicker, wait_for_spiffe_source};
+use openstack_keystone_distributed_storage::spiffe_wait::{SvidSelector, wait_for_spiffe_source};
 
 /// Build the SPIFFE mTLS server configuration.
 ///
 /// Validates the `SPIFFE_ENDPOINT_SOCKET` environment variable, establishes the
 /// SPIFFE `X509Source`, and constructs a `ServerConfig` authorized for the
-/// given trust domains. When `spiffe_id_path` is set it pins which SVID the
+/// given trust domains. When `svid` is set it pins which SVID the
 /// source presents if the Workload API returns more than one for this process
-/// (see [`PathSvidPicker`]) -- if no SVID has that exact path, initialization
+/// (see [`SvidSelector`]) -- if no SVID matches the selector, initialization
 /// fails rather than silently presenting a different identity. When it is
 /// `None` the source presents the Workload API's default (first) SVID.
 /// Cancellation is respected during the SPIFFE source initialization. Returns
@@ -40,7 +40,7 @@ use openstack_keystone_distributed_storage::spiffe_wait::{PathSvidPicker, wait_f
 pub async fn build_spiffe_config(
     token: CancellationToken,
     trust_domains: Vec<String>,
-    spiffe_id_path: Option<&str>,
+    svid: Option<SvidSelector>,
 ) -> Result<Option<Arc<ServerConfig>>, Report> {
     match std::env::var("SPIFFE_ENDPOINT_SOCKET") {
         Ok(val) => {
@@ -59,11 +59,11 @@ pub async fn build_spiffe_config(
 
     let source = tokio::select! {
         res = async {
-            match spiffe_id_path {
-                Some(path) => wait_for_spiffe_source(
+            match svid {
+                Some(selector) => wait_for_spiffe_source(
                     "SPIFFE mTLS listener",
                     spiffe::X509SourceBuilder::new()
-                        .picker(PathSvidPicker::new(path))
+                        .picker(selector)
                         .build(),
                 )
                 .await,

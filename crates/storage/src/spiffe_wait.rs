@@ -88,6 +88,30 @@ impl SvidPicker for SpiffeIdSvidPicker {
     }
 }
 
+/// How a node selects one of the SVIDs its workload holds.
+///
+/// `Path` matches the SPIFFE ID path only (legacy: a homogeneous cluster
+/// where every trust domain issues the same path). `Id` matches the full
+/// SPIFFE ID including the trust domain, which is the only unambiguous choice
+/// once a workload holds SVIDs from several trust domains or with several
+/// roles (ADR 0045 §11.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SvidSelector {
+    /// Exact SPIFFE ID path.
+    Path(String),
+    /// Exact full SPIFFE ID.
+    Id(String),
+}
+
+impl SvidPicker for SvidSelector {
+    fn pick_svid(&self, svids: &[Arc<X509Svid>]) -> Option<usize> {
+        match self {
+            Self::Path(p) => PathSvidPicker::new(p.clone()).pick_svid(svids),
+            Self::Id(i) => SpiffeIdSvidPicker::new(i.clone()).pick_svid(svids),
+        }
+    }
+}
+
 /// Await `source_init` (an `X509Source` construction) while logging progress.
 ///
 /// `purpose` names the consumer (e.g. "Raft client mTLS") for the log lines.
