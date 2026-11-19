@@ -28,7 +28,7 @@ use secrecy::{ExposeSecret, SecretString};
 use tracing::trace;
 use uuid::Uuid;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::{Config, Interface};
 use openstack_keystone_core_types::application_credential::ApplicationCredentialProviderError;
 use openstack_keystone_core_types::auth::{
     AuthzInfo, AuthzInfoBuilder, ScopeInfo, SecurityContext, TrustProjectInfo,
@@ -633,6 +633,20 @@ impl TokenApi for TokenService {
     #[tracing::instrument(name = "provider.token.encode_token", level = "debug", skip_all)]
     fn encode_token(&self, token: &FernetToken) -> Result<String, TokenProviderError> {
         self.backend_driver.encode(token)
+    }
+
+    /// Encode the token, recording the interface it was issued through.
+    #[tracing::instrument(
+        name = "provider.token.encode_token_with_channel",
+        level = "debug",
+        skip_all
+    )]
+    fn encode_token_with_channel(
+        &self,
+        token: &FernetToken,
+        channel: Option<Interface>,
+    ) -> Result<String, TokenProviderError> {
+        self.backend_driver.encode_with_channel(token, channel)
     }
 
     /// Get the token restriction by the ID.

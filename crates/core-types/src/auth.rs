@@ -502,6 +502,22 @@ impl SecurityContext {
         self.token.as_ref()
     }
 
+    /// Returns the interface (listener) the authenticating request arrived on.
+    ///
+    /// Defaults to [`Interface::Public`], the least privileged interface.
+    #[must_use]
+    pub const fn interface(&self) -> Interface {
+        self.interface
+    }
+
+    /// Records the interface (listener) the authenticating request arrived on.
+    ///
+    /// Must only be fed from the server-attached listener extension, never
+    /// from request data.
+    pub fn set_interface(&mut self, interface: Interface) {
+        self.interface = interface;
+    }
+
     /// Sets the `FernetToken` on this context.
     ///
     /// Populates the `token` field that was absent during initial

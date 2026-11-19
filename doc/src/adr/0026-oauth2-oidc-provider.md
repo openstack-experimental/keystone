@@ -1483,6 +1483,14 @@ must therefore not be conflated:
   key-repository layout, plugged in via the existing `KeySource` abstraction in
   `crates/key-repository` so filesystem keys shared with Python nodes work
   unchanged.
+  Additive, namespaced extension: `openstack.issuance_channel` (`public`,
+  `internal` or `admin`) records the listener the `/v3/auth/tokens` request
+  arrived on, so a relying party can tell a token minted over a privileged
+  channel from one minted over the public API (scope alone cannot express
+  this). It is taken from the server-attached listener, never from request
+  data. It is omitted — and MUST be treated as unprivileged — when the channel
+  is unknown, including when the credential is itself a token (rescope), whose
+  original channel the new token does not inherit. Python Keystone ignores it.
 
 **Verification:** Round-trip fixture tests against tokens minted by Python
 Keystone's JWS provider (decode theirs, they validate ours). Config-switch tests

@@ -16,7 +16,7 @@
 use std::net::{IpAddr, SocketAddr};
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -25,6 +25,7 @@ use validator::Validate;
 
 use cadf::Initiator;
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
+use openstack_keystone_config::Interface;
 use openstack_keystone_core::auth::ValidatedSecurityContext;
 use openstack_keystone_core_types::auth::*;
 
@@ -64,8 +65,12 @@ pub(super) async fn create(
     State(state): State<ServiceState>,
     headers: HeaderMap,
     PeerAddr(peer_addr): PeerAddr,
+    interface: Option<Extension<Interface>>,
     TracedJson(req): TracedJson<AuthRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    // Attached by the listener, never derived from the request. A missing
+    // extension means the plain public listener.
+    let interface = interface.map_or(Interface::Public, |Extension(i)| i);
     let audit_ip = resolve_audit_ip(&state, &headers, peer_addr).await;
     // Set by `create_inner` once the caller has authenticated, so a request
     // that then fails scope selection or a rescope restriction is recorded
@@ -79,6 +84,7 @@ pub(super) async fn create(
         &headers,
         peer_addr,
         audit_ip,
+        interface,
         &cid,
         &mut known_initiator,
     )
@@ -103,6 +109,7 @@ async fn create_inner(
     headers: &HeaderMap,
     peer_addr: Option<SocketAddr>,
     audit_ip: Option<IpAddr>,
+    interface: Interface,
     correlation_id: &str,
     known_initiator: &mut Option<Initiator>,
 ) -> Result<(ValidatedSecurityContext, Response), KeystoneApiError> {
@@ -128,7 +135,8 @@ async fn create_inner(
         Some(correlation_id),
     )
     .await?;
-    let ctx = SecurityContext::try_from(auth_res)?;
+    let mut ctx = SecurityContext::try_from(auth_res)?;
+    ctx.set_interface(interface);
     *known_initiator = Some(build_initiator_from_principal(ctx.principal()));
     enforce_mfa_rules(state, &ctx).await?;
     // Application credentials are bound to a single project, which is derived
@@ -208,6 +216,15 @@ async fn create_inner(
         vsc.set_peer_addr(ip.to_string());
     }
 
+    // A token presented as the credential (rescope/reauth) has an issuance
+    // channel of its own that this token must not launder or upgrade; it is
+    // not available here, so no channel is asserted and relying parties
+    // treat the token as unprivileged.
+    let issuance_channel = match ctx.authentication_context() {
+        AuthenticationContext::Token(_) => None,
+        _ => Some(ctx.interface()),
+    };
+
     let mut api_token = TokenResponse {
         token: TokenBuilder::try_from(&vsc)?.build()?,
     };
@@ -219,7 +236,7 @@ async fn create_inner(
             state
                 .provider
                 .get_token_provider()
-                .encode_token(vsc.token()?)?,
+                .encode_token_with_channel(vsc.token()?, issuance_channel)?,
         )],
         Json(api_token),
     )
@@ -508,8 +525,11 @@ mod tests {
             .expect_issue_token_context()
             .returning(move |_, _, _| Ok(vsc_clone.clone()));
         token_mock
-            .expect_encode_token()
-            .returning(|_| Ok("token".to_string()));
+            .expect_encode_token_with_channel()
+            // No listener extension: the plain public listener, and the
+            // password method asserts its channel.
+            .withf(|_, channel| *channel == Some(Interface::Public))
+            .returning(|_, _| Ok("token".to_string()));
         catalog_mock
             .expect_get_catalog()
             .returning(|_, _| Ok(Vec::new()));
@@ -1593,8 +1613,8 @@ mod tests {
             .expect_issue_token_context()
             .returning(move |_, _, _| Ok(vsc_clone.clone()));
         token_mock
-            .expect_encode_token()
-            .returning(|_| Ok("token".to_string()));
+            .expect_encode_token_with_channel()
+            .returning(|_, _| Ok("token".to_string()));
 
         let provider = Provider::mocked_builder()
             .mock_application_credential(app_cred_mock)
@@ -1930,8 +1950,8 @@ mod tests {
             .expect_issue_token_context()
             .returning(move |_, _, _| Ok(vsc_clone.clone()));
         token_mock
-            .expect_encode_token()
-            .returning(|_| Ok("token".to_string()));
+            .expect_encode_token_with_channel()
+            .returning(|_, _| Ok("token".to_string()));
 
         let provider = Provider::mocked_builder()
             .mock_application_credential(app_cred_mock)
@@ -2339,8 +2359,8 @@ mod auth_plugin_http_tests {
     fn mock_token_and_catalog() -> (MockTokenProvider, MockCatalogProvider) {
         let mut token_mock = MockTokenProvider::default();
         token_mock
-            .expect_encode_token()
-            .returning(|_| Ok("token".to_string()));
+            .expect_encode_token_with_channel()
+            .returning(|_, _| Ok("token".to_string()));
         let mut catalog_mock = MockCatalogProvider::default();
         catalog_mock
             .expect_get_catalog()

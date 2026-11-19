@@ -2144,6 +2144,12 @@ mod token {
 
             fn encode_token(&self, token: &FernetToken) -> Result<String, TokenProviderError>;
 
+            fn encode_token_with_channel(
+                &self,
+                token: &FernetToken,
+                channel: Option<openstack_keystone_config::Interface>,
+            ) -> Result<String, TokenProviderError>;
+
             async fn get_token_restriction<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,

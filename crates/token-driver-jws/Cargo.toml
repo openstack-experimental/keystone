@@ -26,6 +26,7 @@ tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
+base64.workspace = true
 config.workspace = true
 openstack-keystone-jwt-crypto.workspace = true
 tempfile.workspace = true

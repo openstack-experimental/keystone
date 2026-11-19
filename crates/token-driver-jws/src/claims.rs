@@ -24,6 +24,7 @@
 //! same product as the OP-issued `OpenStackAccessTokenClaims` later phases
 //! introduce.
 use chrono::{DateTime, TimeZone, Utc};
+use openstack_keystone_config::Interface;
 use openstack_keystone_core_types::token::{
     ApplicationCredentialPayload, DomainScopePayload, ProjectScopePayload, SystemScopePayload,
     TokenPayload, TrustPayload, UnscopedPayload,
@@ -61,6 +62,24 @@ pub struct JwsClaims {
     /// application credential.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub openstack_app_cred_id: Option<String>,
+    /// Namespaced OpenStack claims that are not part of the Python Keystone
+    /// layout. Absent on tokens minted without issuance information.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub openstack: Option<OpenStackClaims>,
+}
+
+/// The `openstack` claim object.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenStackClaims {
+    /// Interface (`public`, `internal`, `admin`) the authentication request
+    /// that produced the token arrived on.
+    ///
+    /// Lets a relying party (e.g. nova) tell a token minted over a privileged
+    /// channel from one minted over the public API, which scope alone cannot
+    /// express. Absent when the channel is unknown; consumers MUST treat an
+    /// absent value as unprivileged.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub issuance_channel: Option<String>,
 }
 
 fn to_unix(dt: DateTime<Utc>) -> i64 {
@@ -92,6 +111,7 @@ impl TryFrom<&TokenPayload> for JwsClaims {
             openstack_system: None,
             openstack_trust_id: None,
             openstack_app_cred_id: None,
+            openstack: None,
         };
 
         match token {
@@ -176,6 +196,17 @@ impl TryFrom<&TokenPayload> for JwsClaims {
 }
 
 impl JwsClaims {
+    /// Record the interface the token was issued through.
+    #[must_use]
+    pub fn with_issuance_channel(mut self, channel: Option<Interface>) -> Self {
+        if let Some(channel) = channel {
+            self.openstack = Some(OpenStackClaims {
+                issuance_channel: Some(channel.as_str().to_string()),
+            });
+        }
+        self
+    }
+
     /// Reconstruct the [`TokenPayload`] variant matching whichever
     /// `openstack_*` scope claim is present. Exactly one of
     /// `openstack_project_id`/`openstack_domain_id`/`openstack_system` must
@@ -338,6 +369,43 @@ mod tests {
             }
             other => panic!("expected Trust, got {other:?}"),
         }
+    }
+
+    fn unscoped() -> TokenPayload {
+        TokenPayload::Unscoped(UnscopedPayload {
+            user_id: "user-1".into(),
+            methods: vec!["password".into()],
+            audit_ids: vec!["abc123".into()],
+            expires_at: now(),
+            issued_at: now(),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn test_issuance_channel_serialized_as_nested_claim() {
+        let claims = JwsClaims::try_from(&unscoped())
+            .unwrap()
+            .with_issuance_channel(Some(Interface::Admin));
+        let value = serde_json::to_value(&claims).unwrap();
+        assert_eq!(
+            value["openstack"],
+            serde_json::json!({"issuance_channel": "admin"})
+        );
+        // Still decodes back to the same payload.
+        assert!(matches!(
+            claims.into_token_payload().unwrap(),
+            TokenPayload::Unscoped(_)
+        ));
+    }
+
+    #[test]
+    fn test_issuance_channel_omitted_when_unknown() {
+        let claims = JwsClaims::try_from(&unscoped())
+            .unwrap()
+            .with_issuance_channel(None);
+        let value = serde_json::to_value(&claims).unwrap();
+        assert!(value.get("openstack").is_none());
     }
 
     #[test]

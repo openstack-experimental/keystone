@@ -22,7 +22,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use jsonwebtoken::{Header, Validation, decode, encode};
-use openstack_keystone_config::{Config, TokenProviderDriver};
+use openstack_keystone_config::{Config, Interface, TokenProviderDriver};
 use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::token::TokenProviderError;
 use openstack_keystone_core::token::backend::TokenBackend;
@@ -149,8 +149,18 @@ impl TokenBackend for JwsTokenProvider {
     }
 
     fn encode(&self, token: &TokenPayload) -> Result<String, TokenProviderError> {
+        self.encode_with_channel(token, None)
+    }
+
+    fn encode_with_channel(
+        &self,
+        token: &TokenPayload,
+        channel: Option<Interface>,
+    ) -> Result<String, TokenProviderError> {
         let active = self.active().map_err(TokenProviderError::from)?;
-        let claims = JwsClaims::try_from(token).map_err(TokenProviderError::from)?;
+        let claims = JwsClaims::try_from(token)
+            .map_err(TokenProviderError::from)?
+            .with_issuance_channel(channel);
         let encoding_key = to_encoding_key(&active.primary)
             .map_err(JwsDriverError::from)
             .map_err(TokenProviderError::from)?;
@@ -227,6 +237,34 @@ mod tests {
             TokenPayload::ProjectScope(p) => assert_eq!(p.project_id, "project-1"),
             other => panic!("expected ProjectScope, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_encode_with_channel_mints_claim() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = provider_with_keys(dir.path()).await;
+        let token = TokenPayload::Unscoped(UnscopedPayload {
+            user_id: "user-1".into(),
+            methods: vec!["password".into()],
+            audit_ids: vec!["abc123".into()],
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            issued_at: chrono::Utc::now(),
+            ..Default::default()
+        });
+        let claims_of = |jwt: &str| -> serde_json::Value {
+            use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+            let payload = jwt.split('.').nth(1).unwrap();
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
+        };
+
+        let with = provider
+            .encode_with_channel(&token, Some(Interface::Admin))
+            .unwrap();
+        assert_eq!(claims_of(&with)["openstack"]["issuance_channel"], "admin");
+        assert!(provider.decode(&with).is_ok());
+
+        let without = provider.encode(&token).unwrap();
+        assert!(claims_of(&without).get("openstack").is_none());
     }
 
     #[tokio::test]

@@ -69,6 +69,20 @@ pub enum Interface {
     Metrics,
 }
 
+impl Interface {
+    /// Stable lower-case name of the interface, as used in metrics labels and
+    /// the `issuance_channel` token claim.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Admin => "admin",
+            Self::Internal => "internal",
+            Self::Public => "public",
+            Self::Metrics => "metrics",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -14,6 +14,7 @@
 //! Token provider types.
 
 use async_trait::async_trait;
+use openstack_keystone_config::Interface;
 use secrecy::SecretString;
 
 use openstack_keystone_core_types::token::*;
@@ -118,6 +119,21 @@ pub trait TokenApi: Send + Sync {
     /// # Returns
     /// - `Result<String, TokenProviderError>` - The encoded string or an error.
     fn encode_token(&self, token: &TokenPayload) -> Result<String, TokenProviderError>;
+
+    /// Encode the token, recording the interface it was issued through.
+    ///
+    /// Same as [`Self::encode_token`], but backends that can carry it embed
+    /// the interface the authentication request arrived on.
+    ///
+    /// # Parameters
+    /// - `token`: The token to encode.
+    /// - `channel`: The issuing interface, `None` when it must not be
+    ///   asserted.
+    fn encode_token_with_channel(
+        &self,
+        token: &TokenPayload,
+        channel: Option<Interface>,
+    ) -> Result<String, TokenProviderError>;
 
     /// Get the token restriction by the ID.
     ///

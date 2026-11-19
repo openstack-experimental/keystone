@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Token provider backends.
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::{Config, Interface};
 
 use openstack_keystone_core_types::token::{
     TokenPayload, TokenRestriction, TokenRestrictionCreate, TokenRestrictionListParameters,
@@ -53,6 +53,25 @@ pub trait TokenBackend: Send + Sync {
     /// # Returns
     /// - `Result<String, TokenProviderError>` - The encoded string or an error.
     fn encode(&self, token: &TokenPayload) -> Result<String, TokenProviderError>;
+
+    /// Encode the token, recording the interface it was issued through.
+    ///
+    /// Backends able to carry the information (JWS) embed it as the
+    /// `issuance_channel` claim. The default implementation drops it, which
+    /// is the right behavior for formats with no room for it (Fernet).
+    ///
+    /// # Parameters
+    /// - `token`: The token to encode.
+    /// - `channel`: The interface the authentication request arrived on, or
+    ///   `None` when it is unknown or must not be asserted.
+    fn encode_with_channel(
+        &self,
+        token: &TokenPayload,
+        channel: Option<Interface>,
+    ) -> Result<String, TokenProviderError> {
+        let _ = channel;
+        self.encode(token)
+    }
 }
 
 /// Token restrictions backend interface.
