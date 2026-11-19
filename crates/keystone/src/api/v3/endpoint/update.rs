@@ -205,6 +205,9 @@ mod tests {
         assert_eq!(
             ApiEndpoint {
                 id: "foo".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/endpoints/foo".into()
+                )),
                 interface: "public".into(),
                 region_id: None,
                 region: None,

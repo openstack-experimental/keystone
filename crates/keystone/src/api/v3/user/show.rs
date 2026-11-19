@@ -158,6 +158,9 @@ mod tests {
         assert_eq!(
             ApiUser::default()
                 .id("bar")
+                .links(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/users/bar".into()
+                ))
                 .domain_id("user_domain_id")
                 .enabled(true)
                 .name("name")

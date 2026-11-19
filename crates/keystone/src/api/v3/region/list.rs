@@ -150,6 +150,9 @@ mod tests {
         assert_eq!(
             vec![ApiRegion {
                 id: "1".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/regions/1".into()
+                )),
                 description: None,
                 parent_region_id: None,
                 extra: std::collections::HashMap::new(),

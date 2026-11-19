@@ -133,6 +133,9 @@ mod tests {
         assert_eq!(
             ApiRegion {
                 id: "foo".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/regions/foo".into()
+                )),
                 description: None,
                 parent_region_id: None,
                 extra: std::collections::HashMap::new(),

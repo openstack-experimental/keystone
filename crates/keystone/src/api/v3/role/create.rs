@@ -152,6 +152,9 @@ mod tests {
         assert_eq!(
             ApiRole {
                 id: "new_role_id".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/roles/new_role_id".into()
+                )),
                 name: "new_role".into(),
                 domain_id: Some("domain1".into()),
                 description: Some("A new role".into()),

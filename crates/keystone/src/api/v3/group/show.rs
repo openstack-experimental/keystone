@@ -156,6 +156,9 @@ mod tests {
         assert_eq!(
             ApiGroupBuilder::default()
                 .id("bar")
+                .links(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/groups/bar".into()
+                ))
                 .name("name")
                 .domain_id("did")
                 .build()

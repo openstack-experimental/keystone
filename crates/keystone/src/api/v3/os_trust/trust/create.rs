@@ -249,6 +249,9 @@ mod tests {
         assert_eq!(
             ApiTrust {
                 id: "new_trust_id".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/OS-TRUST/trusts/new_trust_id".into()
+                )),
                 trustor_user_id: "trustor".into(),
                 trustee_user_id: "trustee".into(),
                 project_id: None,

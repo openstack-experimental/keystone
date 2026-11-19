@@ -161,6 +161,9 @@ mod tests {
         assert_eq!(
             vec![ApiEndpoint {
                 id: "1".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/endpoints/1".into()
+                )),
                 interface: "public".into(),
                 region_id: None,
                 region: None,

@@ -20,6 +20,10 @@ use crate::v3::registered_limit as api_types;
 impl From<provider_types::RegisteredLimit> for api_types::RegisteredLimit {
     fn from(value: provider_types::RegisteredLimit) -> Self {
         Self {
+            links: Some(crate::ResourceLinks::new(format!(
+                "/v3/registered_limits/{}",
+                value.id
+            ))),
             id: value.id,
             service_id: value.service_id,
             region_id: value.region_id,

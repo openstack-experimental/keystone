@@ -19,6 +19,10 @@ use crate::v3::group as api_types;
 impl From<provider_types::Group> for api_types::Group {
     fn from(value: provider_types::Group) -> Self {
         Self {
+            links: Some(crate::ResourceLinks::new(format!(
+                "/v3/groups/{}",
+                value.id
+            ))),
             id: value.id,
             domain_id: value.domain_id,
             name: value.name,

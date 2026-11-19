@@ -348,6 +348,9 @@ mod tests {
             vec![
                 ApiGroupBuilder::default()
                     .id("1")
+                    .links(openstack_keystone_api_types::ResourceLinks::new(
+                        "/v3/groups/1".into()
+                    ))
                     .name("2")
                     .domain_id("did")
                     .build()

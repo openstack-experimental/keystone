@@ -19,6 +19,10 @@ use crate::v3::region as api_types;
 impl From<provider_types::Region> for api_types::Region {
     fn from(value: provider_types::Region) -> Self {
         Self {
+            links: Some(crate::ResourceLinks::new(format!(
+                "/v3/regions/{}",
+                value.id
+            ))),
             id: value.id,
             description: value.description,
             parent_region_id: value.parent_region_id,

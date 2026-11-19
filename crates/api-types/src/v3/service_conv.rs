@@ -22,6 +22,10 @@ impl From<provider_types::Service> for api_types::Service {
         let mut extra = value.extra;
         extra.remove("name");
         Self {
+            links: Some(crate::ResourceLinks::new(format!(
+                "/v3/services/{}",
+                value.id
+            ))),
             id: value.id,
             r#type: value.r#type,
             enabled: value.enabled,

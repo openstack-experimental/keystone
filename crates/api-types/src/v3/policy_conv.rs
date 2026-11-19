@@ -36,6 +36,10 @@ fn normalize_extra_keys(extra: HashMap<String, Value>) -> HashMap<String, Value>
 impl From<provider_types::Policy> for api_types::Policy {
     fn from(value: provider_types::Policy) -> Self {
         Self {
+            links: Some(crate::ResourceLinks::new(format!(
+                "/v3/policies/{}",
+                value.id
+            ))),
             id: value.id,
             r#type: value.r#type,
             blob: value.blob,

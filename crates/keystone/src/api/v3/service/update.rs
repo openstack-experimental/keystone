@@ -184,6 +184,9 @@ mod tests {
         assert_eq!(
             ApiService {
                 id: "foo".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/services/foo".into()
+                )),
                 r#type: Some("identity".into()),
                 enabled: false,
                 name: None,

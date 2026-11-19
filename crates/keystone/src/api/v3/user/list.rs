@@ -163,6 +163,9 @@ mod tests {
             vec![
                 ApiUser::default()
                     .id("1")
+                    .links(openstack_keystone_api_types::ResourceLinks::new(
+                        "/v3/users/1".into()
+                    ))
                     .name("2")
                     .domain_id("user_domain_id")
                     .enabled(true)

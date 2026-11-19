@@ -149,6 +149,9 @@ mod tests {
         assert_eq!(
             vec![ApiRole {
                 id: "1".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/roles/1".into()
+                )),
                 name: "2".into(),
                 extra: std::collections::HashMap::new(),
                 description: None,

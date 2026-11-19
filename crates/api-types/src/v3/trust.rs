@@ -53,6 +53,10 @@ pub struct Trust {
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub id: String,
 
+    /// Links of the resource.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<crate::ResourceLinks>,
+
     /// The ID of the user who created the trust, and who's authorization is
     /// being delegated.
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]

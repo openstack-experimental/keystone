@@ -36,6 +36,7 @@ impl From<provider_types::Role> for api_types::Role {
     fn from(value: provider_types::Role) -> Self {
         let opts: api_types::RoleOptions = value.options.into();
         Self {
+            links: Some(crate::ResourceLinks::new(format!("/v3/roles/{}", value.id))),
             id: value.id,
             domain_id: value.domain_id,
             name: value.name,

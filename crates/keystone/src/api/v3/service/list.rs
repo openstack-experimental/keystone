@@ -159,6 +159,9 @@ mod tests {
         assert_eq!(
             vec![ApiService {
                 id: "1".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/services/1".into()
+                )),
                 r#type: Some("identity".into()),
                 enabled: true,
                 name: None,

@@ -61,6 +61,7 @@ impl From<provider_types::UserResponse> for api_types::User {
             None
         };
         Self {
+            links: Some(crate::ResourceLinks::new(format!("/v3/users/{}", value.id))),
             default_project_id: value.default_project_id,
             domain_id: value.domain_id,
             enabled: value.enabled,
