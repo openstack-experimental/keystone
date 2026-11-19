@@ -466,8 +466,8 @@ certificate. In SPIFFE mode (`spiffe_path_prefix` defaults to
 
 The role names `voter`, `learner`, `eval-replica`, `feed-consumer`, `proxy` and
 `reservation-voter` (ADR 0045) cannot be claimed by a path: only an explicit
-binding of a full SPIFFE ID grants them, and no RPC authorises them yet, so a
-peer holding one is denied everywhere. Bind roles to the SVIDs of remote peers
+binding of a full SPIFFE ID grants them. Only the change feed authorises one of
+them (`feed-consumer`) so far; a peer holding any other is denied everywhere. Bind roles to the SVIDs of remote peers
 with `peers` entries (`site.toml`). One SVID may hold several roles, and two
 workloads of one trust domain may hold different roles:
 
@@ -1649,7 +1649,8 @@ refused.
 # Kinds that may be emitted; empty (default) disables the feed.
 feed_kinds = "registry,revocation"
 # <spiffe id>=<kinds>[@<domains>]; a request is narrowed to its entry, never
-# widened. The caller also needs the feed-consumer role (trust_domain_roles).
+# widened. The caller also needs the feed-consumer role, bound to its SVID in a
+# `peers` entry.
 feed_subscribers = "spiffe://other.example/keystone/feed=registry+revocation@d1+d2"
 feed_heartbeat_secs = 5
 feed_retention_days = 7     # 0: keep until feed_max_events
@@ -1663,3 +1664,16 @@ index and its time since leader contact; the stream ends when that exceeds
 resumed because the feed epoch changed (restore, emergency DEK rotation) or the
 event was pruned: reload from a bundle and subscribe again without a cursor.
 The leader prunes events past the retention limits every ten minutes.
+
+### Consuming a feed
+
+`feed_consumer::FeedConsumer` subscribes to another authority's voter and
+applies each event through a `FeedSink`, which maps it to mutations of the
+consumer's own keyspaces. The cursor `(epoch, index, position)` is written in the
+same transaction as the mutations of the events it covers, so an event is applied
+once, and a replay (after a restart or a reconnect) is skipped. On a `FeedReset`
+the sink's `reseed` runs, the stored cursor is cleared and the next subscription
+starts from the beginning. The node presents its own identity to the source, so
+that identity needs the `feed-consumer` role (a `peers` entry at the source) and
+a `feed_subscribers` entry. A sink must be idempotent: removing a missing record is a no-op and a set
+replaces.

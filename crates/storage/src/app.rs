@@ -159,7 +159,7 @@ pub struct Storage {
     /// The state machine store for direct reads.
     state_machine_store: Arc<StateMachineStore>,
     /// TLS client mode for Raft peer connections.
-    pub(crate) tls_client: RaftTlsClient,
+    pub tls_client: RaftTlsClient,
 }
 
 /// Outcome of the `ensure_linearizable` retry loop.

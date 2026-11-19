@@ -57,6 +57,7 @@ pub mod audit;
 pub mod bootstrap;
 pub mod config;
 mod error;
+pub mod feed_consumer;
 pub mod grpc;
 mod kek_retry;
 pub mod leader_contact;

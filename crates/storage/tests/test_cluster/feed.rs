@@ -433,3 +433,204 @@ async fn test_subscribe_inner() -> Result<()> {
     assert!(matches!(next_message(&mut stale).await?, Message::Reset(_)));
     Ok(())
 }
+
+struct Mirror;
+
+impl openstack_keystone_distributed_storage::feed_consumer::FeedSink for Mirror {
+    fn mutations(
+        &self,
+        event: &openstack_keystone_distributed_storage::feed_consumer::FeedEventData,
+    ) -> Result<Vec<Mutation>, openstack_keystone_distributed_storage::ApiStoreError> {
+        Ok(vec![if event.removed {
+            Mutation::Remove {
+                key: event.key.clone(),
+                keyspace: "mirror".into(),
+                expected_revision: None,
+            }
+        } else {
+            Mutation::Set {
+                expected_revision: None,
+                key: event.key.clone(),
+                keyspace: "mirror".into(),
+                metadata: Metadata::new(),
+                value: event.value.clone().unwrap_or_default(),
+            }
+        }])
+    }
+}
+
+/// A consumer mirrors a source's events into its own storage, applies each
+/// once, resumes from its stored cursor, and starts over after a reset.
+#[serial_test::serial]
+#[test]
+fn test_consumer_mirrors_resumes_and_reseeds() {
+    TypeConfig::run(async {
+        test_consumer_inner().await.unwrap();
+    });
+}
+
+async fn test_consumer_inner() -> Result<()> {
+    use openstack_keystone_distributed_storage::feed_consumer::{FeedConsumer, RunOutcome};
+
+    const SRC: u16 = FEED_PORT_BASE + 100;
+    const DST: u16 = FEED_PORT_BASE + 120;
+    let provider = openstack_keystone_tls_provider::provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let pki = TestPki::new()?;
+    let node_cert = pki.leaf(Some(&format!("{ROLE_SAN_PREFIX}node")))?;
+    let op_cert = pki.leaf(Some(&format!("{ROLE_SAN_PREFIX}storage-operator")))?;
+    let feed_cert = pki.leaf(Some(&format!("{ROLE_SAN_PREFIX}feed-consumer")))?;
+
+    let src = Arc::new(
+        InstanceHolder::new_with_ds_config(1, |path| DistributedStorageConfiguration {
+            tls_role_san_prefix: Some(ROLE_SAN_PREFIX.to_string()),
+            feed_kinds: vec!["registry".into()],
+            feed_subscribers: vec![format!("{ROLE_SAN_PREFIX}feed-consumer=registry")],
+            ..get_ds_config_with_port(
+                1,
+                SRC,
+                path,
+                pki.tls_configuration(&node_cert)
+                    .expect("tls configuration"),
+            )
+        })
+        .await?,
+    );
+    spawn_raft_app(&src).await;
+    // The consumer is its own single-node cluster that presents the
+    // feed-consumer identity.
+    let dst = Arc::new(
+        InstanceHolder::new_with_ds_config(1, |path| DistributedStorageConfiguration {
+            tls_role_san_prefix: Some(ROLE_SAN_PREFIX.to_string()),
+            ..get_ds_config_with_port(
+                1,
+                DST,
+                path,
+                pki.tls_configuration(&feed_cert)
+                    .expect("tls configuration"),
+            )
+        })
+        .await?,
+    );
+    spawn_raft_app(&dst).await;
+    for (port, ch_cert) in [(SRC, &op_cert), (DST, &op_cert)] {
+        let ch = connect_as(&pki, ch_cert, 1, port).await?;
+        let mut admin = ClusterAdminServiceClient::new(ch);
+        admin
+            .init(pb::raft::InitRequest {
+                nodes: vec![new_node_with_port(1, port)],
+            })
+            .await?;
+        wait_for_leader(&mut admin, 1).await;
+    }
+
+    src.storage
+        .transaction(vec![
+            emit("registry", "d1", "a", DataTier::Internal),
+            emit("registry", "d2", "b", DataTier::Internal),
+        ])
+        .await?;
+
+    serve_feed(&src, SRC + 10, &format!("{ROLE_SAN_PREFIX}feed-consumer")).await?;
+    let consumer = Arc::new(FeedConsumer::new(
+        "src",
+        get_addr_with_port(1, SRC + 10).to_string(),
+        dst.storage.tls_client.clone(),
+        dst.storage.clone(),
+        Arc::new(Mirror),
+        vec!["registry".into()],
+        vec![],
+    ));
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let runner = {
+        let consumer = consumer.clone();
+        tokio::spawn(async move {
+            consumer
+                .run(async {
+                    let _ = stop_rx.await;
+                })
+                .await;
+        })
+    };
+
+    let mirrored = |key: &'static str| {
+        let dst = dst.clone();
+        async move {
+            for _ in 0..100 {
+                if dst
+                    .storage
+                    .get_by_key(key.as_bytes(), Some("mirror"))
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some()
+                {
+                    return true;
+                }
+                TypeConfig::sleep(Duration::from_millis(100)).await;
+            }
+            false
+        }
+    };
+    assert!(mirrored("a").await, "event a was not mirrored");
+    assert!(mirrored("b").await, "event b was not mirrored");
+    src.storage
+        .transaction(vec![emit("registry", "d1", "c", DataTier::Internal)])
+        .await?;
+    assert!(mirrored("c").await, "a later event was not streamed");
+    let (cursor, _) = consumer.load_cursor().await?.expect("a stored cursor");
+    assert_eq!(
+        Some(cursor.epoch),
+        src.storage.state_machine_store().feed_epoch()?
+    );
+
+    // Applying a covered event again changes nothing.
+    let before = consumer.load_cursor().await?;
+    consumer
+        .apply(
+            cursor.epoch,
+            vec![
+                openstack_keystone_distributed_storage::feed_consumer::FeedEventData {
+                    index: cursor.index,
+                    position: cursor.position,
+                    kind: "registry".into(),
+                    domain_id: None,
+                    key: b"zz".to_vec(),
+                    removed: false,
+                    value: None,
+                },
+            ],
+        )
+        .await?;
+    assert_eq!(before, consumer.load_cursor().await?);
+    assert!(
+        dst.storage
+            .get_by_key(b"zz", Some("mirror"))
+            .await?
+            .is_none()
+    );
+
+    let _ = stop_tx.send(());
+    let _ = runner.await;
+
+    // A cursor of another epoch is reset by the source: one run reseeds and
+    // clears it, the next starts from the beginning.
+    let (record, _) = consumer.load_cursor().await?.expect("cursor");
+    dst.storage
+        .transaction(vec![Mutation::Set {
+            expected_revision: Some(consumer.load_cursor().await?.expect("cursor").1),
+            key: b"src".to_vec(),
+            keyspace: "feed_cursor".into(),
+            metadata: Metadata::new(),
+            value: rmp_serde::to_vec(
+                &openstack_keystone_distributed_storage::feed_consumer::CursorRecord {
+                    epoch: record.epoch + 1,
+                    ..record
+                },
+            )?,
+        }])
+        .await?;
+    assert_eq!(RunOutcome::Reset, consumer.run_once().await?);
+    assert!(consumer.load_cursor().await?.is_none());
+    Ok(())
+}
