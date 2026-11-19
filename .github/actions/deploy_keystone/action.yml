@@ -54,6 +54,9 @@ runs:
         relying_party_origin = https://keystone.local
         [audit]
         spool_dir = /tmp/keystone/audit
+        [api_policy]
+        engine = regorus
+        regorus_policies_path = $(pwd)/policy
         EOF
         cat etc/keystone.conf
         echo "2Rlc-npWYOGqqG1zM-bmfBj2apLacLXhIbBsdyqQ0zg=" > etc/fernet-keys/0
@@ -100,10 +103,6 @@ runs:
               user_domain_id: default
               project_domain_id: default
         EOF
-
-    - name: Start open-policy-agent
-      shell: bash
-      run: docker run -p 8181:8181 -d -v $PWD/policy:/policy --name opa openpolicyagent/opa:1.9.0 run -s /policy --log-level debug --addr :8181
 
     - name: Wait for py-keystone to bootstrap
       shell: bash

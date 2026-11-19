@@ -10,7 +10,6 @@ env:
   KEYSTONE_URL: http://localhost:8080
   KEYSTONE_DEV_KEK: 4242424242424242424242424242424242424242424242424242424242424242
   KEYSTONE_ALLOW_ENV_KEK: "1"
-  OPA_URL: http://localhost:8181
   OS_KEYSTONE_CONFIG_DIR: ${{ github.workspace }}/etc
   REGISTRY: ghcr.io
 
@@ -93,15 +92,10 @@ jobs:
           sudo apt-get install -y protobuf-compiler libtss2-dev pkg-config
 
       - name: Build Keystone
-        run: cargo build --release
+        run: cargo build --release --features openstack-keystone/regorus
 
       - name: Move artifacts to the root
         run: mv target/release/keystone* ./
-
-      - name: Setup OPA
-        uses: open-policy-agent/setup-opa@b2b258e089860efaadaaf71bf6e3aecb4a3eeff1 # v2.4.0
-        with:
-          version: latest
 
       - name: Upload built binaries
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -126,7 +120,7 @@ jobs:
       contents: read
     services:
       postgres:
-        image: postgres:17
+        image: public.ecr.aws/docker/library/postgres:18-alpine
         env:
           POSTGRES_USER: keystone
           POSTGRES_PASSWORD: '1234'
@@ -180,10 +174,6 @@ jobs:
         if: failure()
         run: cat rust.log
 
-      - name: Dump OPA log
-        if: failure()
-        run: docker logs opa
-
   k3s-test:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -198,7 +188,7 @@ jobs:
 
       - name: Start Local Registry
         run: |
-          docker run -d -p 5000:5000 --restart always --name registry registry:2
+          docker run -d -p 5000:5000 --restart always --name registry public.ecr.aws/docker/library/registry:2
 
       - name: Set up Docker Insecure Registry
         run: |
@@ -492,7 +482,7 @@ jobs:
 
       - name: Start Local Registry
         run: |
-          docker run -d -p 5000:5000 --restart always --name registry registry:2
+          docker run -d -p 5000:5000 --restart always --name registry public.ecr.aws/docker/library/registry:2
 
       - name: Set up Docker Insecure Registry
         run: |

@@ -33,7 +33,7 @@ tools/start-spire.sh
 
 docker run -d --name loadtest_postgres \
     -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=password \
-    -p 15432:5432 docker.io/postgres:17
+    -p 15432:5432 public.ecr.aws/docker/library/postgres:18-alpine
 
 for i in {1..30}; do
     if docker exec loadtest_postgres pg_isready -U postgres > /dev/null 2>&1; then

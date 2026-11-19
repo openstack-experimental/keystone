@@ -1,15 +1,15 @@
 services:
   postgres:
-    image: docker.io/postgres:16-alpine
+    image: public.ecr.aws/docker/library/postgres:18-alpine
     container_name: tools_postgres
     environment:
       POSTGRES_PASSWORD: password
-    tmpfs: /var/lib/postgresql/data
+    tmpfs: /var/lib/postgresql
     ports:
       - "15432:5432"
 
   mysql:
-    image: docker.io/mysql:8.0
+    image: public.ecr.aws/docker/library/mysql:26.10
     container_name: tools_mysql
     environment:
       MYSQL_DATABASE: test_db
