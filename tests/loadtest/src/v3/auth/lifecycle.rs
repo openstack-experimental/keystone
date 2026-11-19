@@ -29,7 +29,8 @@ pub async fn validate(user: &mut GooseUser) -> TransactionResult {
 
     let goose_request = GooseRequest::builder()
         .name("GET /v3/auth/tokens (validate token)")
-        .set_request_builder(req).build();
+        .set_request_builder(req)
+        .build();
 
     user.request(goose_request).await?;
     Ok(())

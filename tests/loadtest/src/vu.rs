@@ -1194,7 +1194,10 @@ async fn admin_read(user: &mut GooseUser) -> TransactionResult {
         9 => {
             admin_get(
                 user,
-                &format!("/v3/role_assignments?user.id={}&effective=true", seed.user_id),
+                &format!(
+                    "/v3/role_assignments?user.id={}&effective=true",
+                    seed.user_id
+                ),
                 "GET /v3/role_assignments?user.id&effective",
             )
             .await
