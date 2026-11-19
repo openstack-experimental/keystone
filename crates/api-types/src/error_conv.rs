@@ -417,6 +417,9 @@ impl From<IdentityProviderError> for KeystoneApiError {
             // A membership across two identity backends is a policy statement,
             // not a server fault (python-keystone `CrossBackendNotAllowed`).
             err @ IdentityProviderError::CrossBackendNotAllowed { .. } => Self::forbidden(err),
+            // `lock_password` user option: the user may not change its own
+            // password.
+            err @ IdentityProviderError::PasswordLocked(..) => Self::forbidden(err),
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -1149,6 +1152,17 @@ mod tests {
         assert_eq!(
             <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
             StatusCode::CONFLICT
+        );
+    }
+
+    #[test]
+    fn identity_provider_password_locked_returns_403() {
+        let err = IdentityProviderError::PasswordLocked("uid".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(api_err, KeystoneApiError::Forbidden { .. }));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::FORBIDDEN
         );
     }
 

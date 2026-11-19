@@ -139,12 +139,11 @@ pub async fn create(
         user_option::create(&txn, main_user.id.clone(), opts).await?;
     }
 
+    let default_opts = UserOptions::default();
+    let user_opts = user.options.as_ref().unwrap_or(&default_opts);
+
     let mut response_builder = UserResponseBuilder::default();
-    response_builder.merge_user_data(
-        &main_user,
-        user.options.as_ref().unwrap_or(&UserOptions::default()),
-        None,
-    );
+    response_builder.merge_user_data(&main_user, user_opts, None);
 
     if let Some(federation_data) = &user.federated {
         let mut federated_entities: Vec<db_federated_user::Model> = Vec::new();
@@ -198,8 +197,16 @@ pub async fn create(
         response_builder.merge_local_user_data(&local_user);
 
         if let Some(password) = &user.password {
-            password::set_new_password(&txn, conf, local_user.id, password.clone(), Vec::new())
-                .await?;
+            password::set_new_password(
+                &txn,
+                conf,
+                local_user.id,
+                password.clone(),
+                Vec::new(),
+                false,
+                user_opts,
+            )
+            .await?;
             response_builder.merge_passwords_data(password::list(&txn, local_user.id).await?);
         }
     }
