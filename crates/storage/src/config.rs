@@ -166,6 +166,16 @@ pub struct DistributedStorageConfiguration {
     #[serde(default)]
     pub feed_kinds: Vec<String>,
 
+    /// Days a feed event stays in the outbox. `0` keeps events until
+    /// `feed_max_events` removes them. Defaults to 7.
+    #[serde(default = "default_feed_retention_days")]
+    pub feed_retention_days: u32,
+
+    /// Most events the outbox keeps; the oldest are pruned beyond it. `0`
+    /// removes the cap. Defaults to one million.
+    #[serde(default = "default_feed_max_events")]
+    pub feed_max_events: u64,
+
     /// Directory holding the durable, fsynced audit spool for this node
     /// (ADR 0016-v2 §3.1). Defaults to `<path>/audit-spool`. An external
     /// shipper tails these files to the SIEM; records are never deleted
@@ -908,6 +918,14 @@ fn default_dek_rotation_days() -> u32 {
     90
 }
 
+fn default_feed_retention_days() -> u32 {
+    7
+}
+
+fn default_feed_max_events() -> u64 {
+    1_000_000
+}
+
 fn default_write_rate_threshold() -> u32 {
     crate::store::state_machine::DEFAULT_WRITE_RATE_THRESHOLD
 }
@@ -977,6 +995,8 @@ impl Default for DistributedStorageConfiguration {
             dek_rotation_days: default_dek_rotation_days(),
             write_rate_threshold: default_write_rate_threshold(),
             feed_kinds: Vec::new(),
+            feed_retention_days: default_feed_retention_days(),
+            feed_max_events: default_feed_max_events(),
             audit_spool_dir: None,
             audit_max_spool_bytes: default_audit_max_spool_bytes(),
             pkcs11: None,

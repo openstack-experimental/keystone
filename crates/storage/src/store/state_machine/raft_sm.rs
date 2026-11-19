@@ -653,6 +653,14 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                             }
                                         }
                                     }
+                                    if is_emergency {
+                                        self.stage_outbox_revoke(
+                                            &mut batch,
+                                            old_version,
+                                            last_applied_log.index,
+                                        )
+                                        .map_err(|e| io::Error::other(e.to_string()))?;
+                                    }
                                     pending_dek_swap = Some((new_epoch, is_emergency));
                                     tracing::info!(
                                         old_version,
@@ -907,6 +915,12 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                                 }
                                             }
 
+                                            self.stage_outbox_revoke(
+                                                &mut batch,
+                                                old_version,
+                                                last_applied_log.index,
+                                            )
+                                            .map_err(|e| io::Error::other(e.to_string()))?;
                                             pending_dek_swap = Some((new_epoch, true));
                                             tracing::warn!(
                                                 rotation_id,

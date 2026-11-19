@@ -78,6 +78,7 @@ use openstack_keystone_storage_api::Node;
 
 mod admin;
 mod dek_rotation;
+mod feed_retention;
 mod init;
 mod storage_api;
 
@@ -107,6 +108,9 @@ pub struct Storage {
     /// `[distributed_storage] dek_rotation_days`; `0` disables the age
     /// trigger of the automatic DEK rotation.
     dek_rotation_days: u32,
+    /// `[distributed_storage] feed_retention_days` and `feed_max_events`.
+    feed_retention_days: u32,
+    feed_max_events: u64,
     /// Number of attempts for the `ensure_linearizable` retry loop, from
     /// `[distributed_storage] ensure_linearizable_retries`. See
     /// [`ensure_linearizable_with_retry`](Storage::ensure_linearizable_with_retry).

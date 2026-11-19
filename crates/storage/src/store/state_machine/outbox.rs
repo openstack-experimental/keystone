@@ -18,8 +18,9 @@
 //! `_meta:outbox:<log index u64 BE><position u16 BE>` in the same batch as the
 //! mutation it describes. The log index is the same on every voter, so any
 //! voter can serve the feed and a cursor survives a leader change. The value
-//! is `dek_version u32 BE` followed by the event encrypted under that epoch
-//! with the outbox key as associated data.
+//! is `dek_version u32 BE`, `applied_at u64 BE` (Unix seconds on the applying
+//! node, for retention) and the event encrypted under that epoch with the
+//! outbox key as associated data.
 
 use openstack_keystone_storage_api::FeedOp;
 
@@ -81,6 +82,14 @@ fn cursor_from_key(key: &[u8]) -> Option<FeedCursor> {
     })
 }
 
+/// Splits a stored outbox value into `(dek_version, applied_at, ciphertext)`.
+fn split_entry(value: &[u8]) -> Result<(u32, u64, &[u8]), StoreError> {
+    let short = || StoreError::Other(eyre::eyre!("short outbox entry"));
+    let (version, rest) = value.split_first_chunk::<4>().ok_or_else(short)?;
+    let (at, body) = rest.split_first_chunk::<8>().ok_or_else(short)?;
+    Ok((u32::from_be_bytes(*version), u64::from_be_bytes(*at), body))
+}
+
 impl FjallStateMachine {
     /// Kinds that `Emit` may write; empty disables the feed.
     pub fn set_feed_kinds(&self, kinds: impl IntoIterator<Item = String>) {
@@ -107,6 +116,7 @@ impl FjallStateMachine {
         let (encrypted, dek_version) =
             self.encrypt_and_store(&self.meta, &key, OUTBOX_PARTITION, 1, &plain)?;
         let mut stored = dek_version.to_be_bytes().to_vec();
+        stored.extend_from_slice(&unix_now().to_be_bytes());
         stored.extend_from_slice(&encrypted);
         batch.insert(&self.meta, key, stored);
         Ok(())
@@ -161,6 +171,62 @@ impl FjallStateMachine {
         Ok(())
     }
 
+    /// The newest log index the retention rules allow to delete: events
+    /// applied before `now - retention_secs` (`0` disables the age rule) and
+    /// the oldest ones beyond `max_events` (`0` disables the count rule).
+    pub fn outbox_prune_point(
+        &self,
+        now: u64,
+        retention_secs: u64,
+        max_events: u64,
+    ) -> Result<Option<u64>, StoreError> {
+        let mut entries: Vec<(u64, u64)> = Vec::new();
+        for item in self.meta.prefix(OUTBOX_PREFIX.as_bytes()) {
+            let (key, value) = item.into_inner()?;
+            if let Some(c) = cursor_from_key(&key) {
+                entries.push((c.index, split_entry(&value)?.1));
+            }
+        }
+        let mut upto = None;
+        if retention_secs > 0 {
+            let cutoff = now.saturating_sub(retention_secs);
+            upto = entries
+                .iter()
+                .filter(|(_, at)| *at < cutoff)
+                .map(|(i, _)| *i)
+                .max();
+        }
+        if max_events > 0 && entries.len() as u64 > max_events {
+            let excess = entries.len() - max_events as usize;
+            let by_count = entries.get(excess - 1).map(|(i, _)| *i);
+            upto = upto.max(by_count);
+        }
+        Ok(upto)
+    }
+
+    /// Stages the removal of the events encrypted under `dek_version`, which
+    /// an emergency rotation revoked, and starts a new epoch so consumers
+    /// reload instead of resuming over the gap.
+    pub(super) fn stage_outbox_revoke(
+        &self,
+        batch: &mut fjall::OwnedWriteBatch,
+        dek_version: u32,
+        index: u64,
+    ) -> Result<(), StoreError> {
+        let mut removed = false;
+        for item in self.meta.prefix(OUTBOX_PREFIX.as_bytes()) {
+            let (key, value) = item.into_inner()?;
+            if split_entry(&value)?.0 == dek_version {
+                batch.remove(&self.meta, key);
+                removed = true;
+            }
+        }
+        if removed {
+            batch.insert(&self.meta, META_FEED_EPOCH, index.to_be_bytes());
+        }
+        Ok(())
+    }
+
     /// Starts a new feed after a restore replaced `meta`: drops the restored
     /// outbox and begins a new epoch at the restore's log index, so cursors
     /// of the old epoch are refused. A restore into an uninitialized node
@@ -200,14 +266,7 @@ impl FjallStateMachine {
             if after == Some(cursor) {
                 continue;
             }
-            let (version, body) = value
-                .split_at_checked(4)
-                .ok_or_else(|| StoreError::Other(eyre::eyre!("short outbox entry")))?;
-            let version = u32::from_be_bytes(
-                version
-                    .try_into()
-                    .map_err(|_| StoreError::Other(eyre::eyre!("short outbox entry")))?,
-            );
+            let (version, _, body) = split_entry(&value)?;
             let plain = self.decrypt_state(body, 1, OUTBOX_PARTITION, &key, Some(version))?;
             out.push((cursor, rmp_serde::from_slice(&plain)?));
         }

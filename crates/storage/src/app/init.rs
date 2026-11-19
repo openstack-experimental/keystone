@@ -840,11 +840,14 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         leader_contact: Arc::new(LeaderContact::default()),
         log_nonce,
         dek_rotation_days: ds_config.dek_rotation_days,
+        feed_retention_days: ds_config.feed_retention_days,
+        feed_max_events: ds_config.feed_max_events,
     });
 
     // Automatic DEK rotation by age and by log nonce volume (ADR 0016-v2
     // §6). Runs on every node but only the leader proposes.
     dek_rotation::spawn_dek_rotation_task(&storage);
+    feed_retention::spawn_feed_retention_task(&storage);
 
     // Best-effort background forwarding of Raft-committed quarantine events
     // (ADR 0016-v2 §10 invariant 5). The local, synchronous quarantine

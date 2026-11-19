@@ -184,3 +184,77 @@ async fn test_restore_resets_the_feed_inner() -> Result<()> {
     assert!(sm.feed_epoch()?.is_some());
     Ok(())
 }
+
+/// Retention prunes the oldest events beyond `feed_max_events`, and an
+/// emergency DEK rotation removes the events under the revoked epoch and
+/// starts a new feed epoch.
+#[serial_test::serial]
+#[test]
+fn test_retention_and_emergency_rotation() {
+    TypeConfig::run(async {
+        test_retention_and_emergency_rotation_inner().await.unwrap();
+    });
+}
+
+#[allow(unsafe_code)]
+async fn test_retention_and_emergency_rotation_inner() -> Result<()> {
+    use openstack_keystone_storage_crypto::{EnvKek, KekProvider, generate_dek};
+
+    const PORT_BASE: u16 = FEED_PORT_BASE + 60;
+    let provider = openstack_keystone_tls_provider::provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls = make_certificates()?;
+    let node = Arc::new(
+        InstanceHolder::new_with_ds_config(1, |path| DistributedStorageConfiguration {
+            feed_kinds: vec!["registry".into()],
+            feed_max_events: 2,
+            ..get_ds_config_with_port(1, PORT_BASE, path, tls.clone())
+        })
+        .await?,
+    );
+    spawn_raft_app(&node).await;
+    let tls_client = get_client_tls_config(&node.config)?;
+    let mut admin = new_admin_client(node.config.node_cluster_addr.clone(), &tls_client).await?;
+    admin
+        .init(pb::raft::InitRequest {
+            nodes: vec![new_node_with_port(1, PORT_BASE)],
+        })
+        .await?;
+    wait_for_leader(&mut admin, 1).await;
+    let sm = node.storage.state_machine_store();
+
+    for key in ["a", "b", "c"] {
+        node.storage
+            .transaction(vec![emit("registry", "d1", key, DataTier::Internal)])
+            .await?;
+    }
+    let pruned = node.storage.prune_feed_outbox().await?;
+    assert!(pruned.is_some());
+    let keys: Vec<_> = sm
+        .outbox_events_after(None, 10)?
+        .into_iter()
+        .map(|(_, e)| e.key)
+        .collect();
+    assert_eq!(vec![b"b".to_vec(), b"c".to_vec()], keys);
+    assert_eq!(None, node.storage.prune_feed_outbox().await?);
+
+    // Emergency rotation: the events under the revoked epoch go.
+    let epoch_before = sm.feed_epoch()?;
+    // SAFETY: the test is `#[serial_test::serial]`.
+    unsafe {
+        std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
+    }
+    let kek = EnvKek::from_env()?;
+    let cmd = StoreCommand::Transaction(vec![MutationInner::InstallDek {
+        wrapped_dek: kek.wrap_dek(generate_dek().as_bytes()).await?,
+        dek_version: sm.current_dek_wrapped()?.0 + 1,
+        is_emergency: true,
+    }]);
+    node.storage
+        .raft
+        .client_write(pb::api::CommandRequest::try_from(cmd)?)
+        .await?;
+    assert!(sm.outbox_events_after(None, 10)?.is_empty());
+    assert_ne!(epoch_before, sm.feed_epoch()?);
+    Ok(())
+}
