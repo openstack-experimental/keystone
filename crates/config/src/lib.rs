@@ -69,7 +69,6 @@ mod database;
 mod default;
 mod delegation;
 mod domain_config;
-mod ec2;
 mod federation;
 mod fernet_token;
 mod identity;
@@ -113,7 +112,6 @@ pub use database::*;
 pub use default::*;
 pub use delegation::*;
 pub use domain_config::*;
-pub use ec2::*;
 pub use federation::*;
 pub use fernet_token::*;
 pub use identity::*;
@@ -211,10 +209,6 @@ pub struct Config {
     /// Per-plugin `[auth_plugin.<name>]` sections - ADR 0025.
     #[serde(default)]
     pub auth_plugin: HashMap<String, DynamicPluginConfig>,
-
-    /// `POST /v3/ec2tokens` configuration.
-    #[serde(default)]
-    pub ec2: Ec2Provider,
 
     /// Federation provider configuration.
     #[serde(default)]
@@ -504,7 +498,6 @@ impl oslo_config::CoreSchema for Config {
             "domain_config",
             "auth_plugins",
             "auth_plugin",
-            "ec2",
             "federation",
             "fernet_tokens",
             "identity",

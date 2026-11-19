@@ -250,7 +250,9 @@ credential whose `type != "ec2"`, and must reject blobs carrying an
 `access_token_id` (OAuth1, unimplemented → would drop restrictions). **Why:**
 the `sha256(access) == id` invariant is load-bearing; a mislabelled or
 wrong-shaped credential redeemed here would bypass every `type=="ec2"`
-create-time guard. **Where:** `crates/keystone/src/api/v3/ec2tokens/create.rs`.
+create-time guard. **Where:**
+`crates/keystone/src/api/v3/ec2tokens/redeem.rs` (shared by `/v3/ec2tokens` and
+`/v3/s3tokens`; the latter never returns a token).
 
 ### I7 — Secrets are stripped from policy input
 

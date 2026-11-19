@@ -363,7 +363,7 @@ Captures access attempts at the boundary.
    mapped to an outcome (`2xx/3xx` success, `401`/`403`/`5xx` failure, other
    `4xx` including `429` `failure` with a client reason) and a static reason. It applies only
    to an explicit allowlist of authentication surfaces (`/v3|v4/auth/tokens`,
-   `/v3/ec2tokens`, `/v4/auth/passkey`, `/v4/vendordata`, `/SCIM/v2`,
+   `/v3/ec2tokens`, `/v3/s3tokens`, `/v4/auth/passkey`, `/v4/vendordata`, `/SCIM/v2`,
    `POST /v4/k8s_auth/{id}/auth`), so ordinary validated-token traffic does
    not swamp the perimeter channel; and only when the handler did not already
    emit its own perimeter record, so each request leaves exactly one. An

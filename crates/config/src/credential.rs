@@ -26,6 +26,13 @@ use crate::pagination::ListLimitConfig;
 /// intentionally not configurable.
 #[derive(Debug, Deserialize, Clone)]
 pub struct CredentialProvider {
+    /// Length of time in minutes for which a signed EC2 or S3 token request
+    /// is valid from the timestamp contained in the request (CVE-2020-12692).
+    /// Same option and default (15) as Python Keystone `[credential]
+    /// auth_ttl`; shared by `POST /v3/ec2tokens` and `POST /v3/s3tokens`.
+    #[serde(default = "default_auth_ttl")]
+    pub auth_ttl: i64,
+
     /// Credential provider driver.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
@@ -52,9 +59,14 @@ fn default_credential_key_repository() -> PathBuf {
     PathBuf::from("/etc/keystone/credential-keys/")
 }
 
+fn default_auth_ttl() -> i64 {
+    15
+}
+
 impl Default for CredentialProvider {
     fn default() -> Self {
         Self {
+            auth_ttl: default_auth_ttl(),
             driver: default_sql_driver(),
             key_repository: default_credential_key_repository(),
             insecure_allow_null_key: false,

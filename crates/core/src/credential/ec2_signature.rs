@@ -79,7 +79,7 @@ pub enum Ec2SignatureVersion {
     V4,
 }
 
-fn to_hex(bytes: &[u8]) -> String {
+pub(crate) fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -331,7 +331,7 @@ fn hmac_sha256_base64(secret: &str, message: &str) -> Result<String, Authenticat
     Ok(BASE64.encode(mac.finalize().into_bytes()))
 }
 
-fn hmac_sha256_raw(key: &[u8], message: &str) -> Result<Vec<u8>, AuthenticationError> {
+pub(crate) fn hmac_sha256_raw(key: &[u8], message: &str) -> Result<Vec<u8>, AuthenticationError> {
     let mut mac = <HmacSha256 as KeyInit>::new_from_slice(key)
         .map_err(|_| AuthenticationError::Ec2SignatureInvalid)?;
     mac.update(message.as_bytes());

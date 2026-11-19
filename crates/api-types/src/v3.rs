@@ -28,6 +28,7 @@ pub mod region;
 pub mod registered_limit;
 pub mod role;
 pub mod role_assignment;
+pub mod s3tokens;
 pub mod service;
 pub mod trust;
 pub mod user;

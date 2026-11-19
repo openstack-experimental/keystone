@@ -51,6 +51,7 @@ use crate::v3::role_assignment::{
     list as role_assignment_list, list_by_domain as role_assignment_list_by_domain,
     list_by_role as role_assignment_list_by_role, list_by_user as role_assignment_list_by_user,
 };
+use crate::v3::s3tokens::cycle as s3tokens_cycle;
 use crate::v3::trust::cycle as trust_cycle;
 use crate::v3::user::{
     create as user_create, delete as user_delete, list as user_list, show as user_show,
@@ -373,6 +374,12 @@ fn stress_attack(
                 .register_transaction(transaction!(credential_cycle)),
         )
         .register_scenario(
+            scenario!("S3Tokens")
+                .set_weight(weight("S3Tokens", 2))?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(s3tokens_cycle)),
+        )
+        .register_scenario(
             scenario!("TrustChurn")
                 .set_weight(weight("TrustChurn", 2))?
                 .register_transaction(transaction!(openstack_login).set_on_start())
@@ -531,7 +538,7 @@ fn weight(scenario: &str, default: usize) -> usize {
         "ValidateToken" => 45,
         "UserCRUD" | "ProjectCRUD" | "RoleCRUD" => 1,
         "GroupChurn" => 4,
-        "CatalogChurn" | "CredentialChurn" | "TrustChurn" | "IdentityChurn" => 1,
+        "CatalogChurn" | "CredentialChurn" | "S3Tokens" | "TrustChurn" | "IdentityChurn" => 1,
         "RoleList" | "RoleAssignmentList" => 3,
         "UserRead" => 8,
         "ProjectRead" => 8,

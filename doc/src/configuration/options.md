@@ -59,9 +59,8 @@ starts without telemetry.
 | `[token]`                      | `provider`, `expiration`                                                                                                         |
 | `[fernet_tokens]`              | `key_repository`, `max_active_keys`, `insecure_allow_null_key`                                                                   |
 | `[jws_tokens]`                 | `key_repository`, `insecure_allow_null_key`                                                                                      |
-| `[credential]`                 | `driver`, `key_repository`, `insecure_allow_null_key`                                                                            |
+| `[credential]`                 | `driver`, `key_repository`, `insecure_allow_null_key`, `auth_ttl`                                                                |
 | `[application_credential]`     | `driver`, `reject_unenforced_access_rules`                                                                                       |
-| `[ec2]`                        | `auth_ttl`                                                                                                                       |
 | `[trust]`                      | `driver`, `allow_redelegation`, `max_redelegation_count`                                                                         |
 | `[security_compliance]`        | inactivity, first-use password change, password-hash reporting, lockout, password age/expiry/regex, and password-history options |
 | `[rate_limit_global_ip]`       | `enabled`, `burst_size`, `replenish_rate_per_second`                                                                             |

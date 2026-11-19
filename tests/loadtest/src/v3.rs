@@ -21,6 +21,7 @@ pub(crate) mod group;
 pub(crate) mod project;
 pub(crate) mod role;
 pub(crate) mod role_assignment;
+pub(crate) mod s3tokens;
 pub(crate) mod trust;
 pub(crate) mod user;
 pub(crate) mod util;
