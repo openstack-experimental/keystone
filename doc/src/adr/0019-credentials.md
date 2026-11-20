@@ -696,12 +696,12 @@ port-stripping retry. The Python HMAC object is stateful (accumulated via
   `credentials["params"]["X-Amz-Date"]`. Format: `YYYYMMDDTHHMMSSZ`.
 
 The server must check both locations and reject any request where the timestamp
-is outside the configured TTL window. The TTL is read from `[ec2] auth_ttl` in
-the shared `keystone.conf`, **defaulting to 300 seconds (5 minutes)** — this is
-the Python Keystone default and must not be confused with the 4-hour window that
-is only an AWS SigV2 recommendation, not what Keystone implements. Keystone-NG
-must read the `[ec2] auth_ttl` config value from `keystone.conf` and apply it
-identically.
+is outside the configured TTL window. The TTL is read from
+`[credential] auth_ttl` in the shared `keystone.conf` (**in minutes, default
+15**) — this is the Python Keystone option and default and must not be confused
+with the 4-hour window that is only an AWS SigV2 recommendation, not what
+Keystone implements. Keystone-NG must read the `[credential] auth_ttl` config
+value from `keystone.conf` and apply it identically.
 
 Prior to the CVE-2020-12692 fix, SigV4 requests had no timestamp check because
 the timestamp appears in the `Authorization` header rather than a query
@@ -715,7 +715,7 @@ Keystone-NG must check both locations from the start.
 1. **Request Parsing**: Parse the JSON body; extract the `credentials` object.
    Accept the body under either the top-level `"credentials"` key, or a legacy
    `"ec2Credentials"` key (Python Keystone accepts both for backwards compat).
-2. **Policy Enforcement**: Enforce `identity:ec2tokens_validate` RBAC. **Note**:
+2. **Policy Enforcement**: Enforce `identity/ec2tokens/validate` RBAC. **Note**:
    As of CVE-2025-65073, this endpoint now requires the caller to be
    authenticated (a user in the `service` group). Earlier versions treated
    `/v3/ec2tokens` as fully unauthenticated. Keystone-NG must enforce this
@@ -736,7 +736,7 @@ Keystone-NG must check both locations from the start.
 5. **Secret Decryption**: Decrypt `encrypted_blob` via the Fernet provider to
    recover the plaintext `secret` key.
 6. **Timestamp Validation**: Extract the timestamp per the version-dependent
-   rules above. Reject with `401` if outside the `[ec2] auth_ttl` window.
+   rules above. Reject with `401` if outside the `[credential] auth_ttl` window.
 7. **Signature Verification**: Run the version-detection dispatch and
    `_check_signature` procedure described above.
 8. **Token Issuance**: On success, issue a standard Keystone token scoped to the
@@ -763,13 +763,37 @@ re-check on list). Shipping the plaintext secret to an external OPA would expose
 it to decision logging, turning the authorization channel into a secret
 exfiltration path.
 
+#### The `/v3/s3tokens` API Interface
+
+`POST /v3/s3tokens` validates the signature of a signed S3 request for S3
+gateways (e.g. Swift's `s3token` middleware). It shares the credential
+redemption flow with `/v3/ec2tokens` (lookup, type guard, enabled checks,
+delegation reconstruction, scope bounding) and differs as follows:
+
+- The body key is `credentials`, `credential` or `ec2Credentials`; the object
+  carries `access`, `signature` and `token` (urlsafe base64 of the S3
+  string-to-sign). Missing `access`/`signature` yields `401`.
+- Signature: if the string-to-sign does not start with `AWS4`,
+  `base64(HMAC-SHA1(secret, sts))`; otherwise SigV4 with exactly four lines,
+  `AWS4-HMAC-SHA256`, a four-part scope ending in `aws4_request` and service
+  `s3`, `iam` or `sts`. Comparison is constant-time.
+- Timestamp is taken from the verified string-to-sign (SigV4 line 1; SigV2 line
+  3 or the `x-amz-date:` line) and bounded by the same `[credential] auth_ttl`
+  window as `/v3/ec2tokens` (Python compatible). `X-Amz-Expires` is not part of
+  the string-to-sign and is enforced by the S3 gateway only.
+- Policy: `identity/s3tokens/validate` (admin or service), empty target.
+- **No usable token is returned**: no `X-Subject-Token` header and no token id
+  in the body. The body is rendered from the validated credential only. The
+  `ec2credential` method marker is still carried by the authentication context
+  and reported in `methods`.
+
 #### Error Codes
 
 | Status | Condition                                                                         |
 | :----- | :-------------------------------------------------------------------------------- |
 | `401`  | Access key not found, signature mismatch, missing signature, or timestamp expired |
 | `401`  | Owning user, domain, or project is disabled                                       |
-| `403`  | Policy check fails (`identity:ec2tokens_validate`)                                |
+| `403`  | Policy check fails (`identity/ec2tokens/validate`, `identity/s3tokens/validate`)  |
 | `409`  | EC2 access key hash collision (create)                                            |
 | `422`  | Invalid blob JSON structure or missing fields                                     |
 | `404`  | User or project no longer exists                                                  |

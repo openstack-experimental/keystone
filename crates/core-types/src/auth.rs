@@ -218,7 +218,7 @@ pub enum AuthenticationError {
     Ec2TimestampInvalid(String),
 
     /// `POST /v3/ec2tokens`: the replay-prevention timestamp fell outside the
-    /// `[ec2] auth_ttl` window (CVE-2020-12692).
+    /// `[credential] auth_ttl` window (CVE-2020-12692).
     #[error("EC2 request timestamp is outside the permitted window")]
     Ec2TimestampExpired,
 
