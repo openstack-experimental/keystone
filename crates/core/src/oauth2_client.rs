@@ -17,6 +17,7 @@
 //! validation only in Phase 2 -- wiring into the mapping engine's
 //! `IdentitySource` for actual `/token` issuance is Phase 3/4.
 
+pub mod assertion_replay;
 pub mod backend;
 pub mod bound_bearer;
 pub mod crypto;
@@ -32,6 +33,7 @@ pub mod id_token;
 pub mod on_behalf_of;
 pub mod pkce;
 mod provider_api;
+pub mod replay;
 pub mod service;
 pub mod token;
 pub mod token_exchange;
