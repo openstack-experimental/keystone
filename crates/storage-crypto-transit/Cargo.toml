@@ -26,6 +26,7 @@ url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+openstack-keystone-storage-crypto = { workspace = true, features = ["software-site-key"] }
 tokio = { workspace = true, features = ["rt"] }
 httpmock.workspace = true
 openstack-keystone-tls-provider.workspace = true

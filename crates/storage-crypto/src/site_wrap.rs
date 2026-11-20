@@ -22,8 +22,9 @@
 //! ([`unwrap_dek_for_site`]); the private key never leaves the site, which in
 //! production means OpenBao Transit (an `rsa-2048`/`rsa-4096` key, whose
 //! `decrypt` is RSA-OAEP with SHA-256 and no label) behind
-//! [`SiteKeyUnwrapper`]. [`SoftwareSiteKey`] is the software fallback for
-//! sites without such a key.
+//! [`SiteKeyUnwrapper`]. `SoftwareSiteKey` (feature
+//! `software-site-key`, off by default) is the software fallback for sites
+//! without such a key.
 //!
 //! The cluster id, DEK version and site name are written inside the OAEP
 //! plaintext and checked after decryption, so the scheme does not depend on
@@ -122,7 +123,7 @@ pub async fn unwrap_dek_for_site(
     Ok(out)
 }
 
-/// Software site key: an RSA private key (PKCS#8 DER) held in process memory.
+/// Software site key (feature `software-site-key`): an RSA private key (PKCS#8 DER) held in process memory.
 ///
 /// Fallback for sites without a Transit key or HSM. The key sits next to the
 /// process that uses it, so it protects the DEK only as well as the secret
@@ -132,10 +133,12 @@ pub async fn unwrap_dek_for_site(
 /// crate, whose decryption is not constant time (Marvin attack,
 /// RUSTSEC-2023-0071). Do not expose it to callers that can submit chosen
 /// ciphertexts and observe timing; prefer the `fips` build or a Transit key.
+#[cfg(feature = "software-site-key")]
 pub struct SoftwareSiteKey {
     key: rsa_oaep::PrivateKey,
 }
 
+#[cfg(feature = "software-site-key")]
 impl SoftwareSiteKey {
     /// Parse a PKCS#8 DER RSA private key of at least 2048 bits.
     ///
@@ -147,6 +150,7 @@ impl SoftwareSiteKey {
     }
 }
 
+#[cfg(feature = "software-site-key")]
 #[async_trait::async_trait]
 impl SiteKeyUnwrapper for SoftwareSiteKey {
     async fn decrypt(&self, ciphertext: &[u8]) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
@@ -155,6 +159,7 @@ impl SiteKeyUnwrapper for SoftwareSiteKey {
 }
 
 #[cfg(test)]
+#[cfg(feature = "software-site-key")]
 mod tests {
     use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
 

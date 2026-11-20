@@ -36,6 +36,11 @@ ring = ["dep:ring", "dep:rsa"]
 # validated AWS-LC module. Takes precedence over `ring`. Building it needs
 # cmake, a C compiler, clang (bindgen) and Go.
 fips = ["dep:aws-lc-rs", "aws-lc-rs/fips"]
+# `SoftwareSiteKey`: an RSA site key held in process memory. Off by default
+# because, without `fips`, its RSA-OAEP decryption is not constant time (Marvin
+# attack, RUSTSEC-2023-0071). Production sites unwrap through OpenBao Transit
+# or an HSM instead; enable this only for tests or a site with no such key.
+software-site-key = []
 
 [dependencies]
 async-trait.workspace = true
@@ -48,5 +53,7 @@ tracing.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+# Enables `software-site-key` for this crate's own tests.
+openstack-keystone-storage-crypto = { path = ".", features = ["software-site-key"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 rsa = { workspace = true, features = ["sha2"] }

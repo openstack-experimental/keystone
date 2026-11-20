@@ -5836,6 +5836,7 @@ dependencies = [
  "async-trait",
  "aws-lc-rs",
  "nix",
+ "openstack-keystone-storage-crypto",
  "ring",
  "rsa 0.9.10",
  "thiserror 2.0.21",
