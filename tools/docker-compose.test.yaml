@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: public.ecr.aws/docker/library/postgres:18-alpine
+    image: mirror.gcr.io/library/postgres:18-alpine
     container_name: tools_postgres
     environment:
       POSTGRES_PASSWORD: password
@@ -9,7 +9,7 @@ services:
       - "15432:5432"
 
   mysql:
-    image: public.ecr.aws/docker/library/mysql:26.10
+    image: mirror.gcr.io/library/mysql:26.10
     container_name: tools_mysql
     environment:
       MYSQL_DATABASE: test_db
