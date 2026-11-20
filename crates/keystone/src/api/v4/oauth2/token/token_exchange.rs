@@ -132,10 +132,6 @@ pub(super) async fn handle_token_exchange_grant(
     let issuer = format!("{base}/v4/oauth2/{domain_id}");
     let now = chrono::Utc::now().timestamp();
     let access_lifetime = i64::from(oauth2_cfg.access_token_lifetime_minutes) * 60;
-    if access_lifetime <= 0 {
-        tracing::error!("oauth2 access_token_lifetime_minutes must be greater than zero");
-        return Err(Oauth2TokenError::internal("token issuance failed"));
-    }
     let jti = uuid::Uuid::new_v4().to_string();
 
     let mut claims = openstack_keystone_core::oauth2_client::build_token_exchange_claims(
@@ -1343,22 +1339,89 @@ mod tests {
         assert!(subject_token_carries_cnf(&jwt("[1]")));
     }
 
-    #[tokio::test]
-    async fn test_exchange_error_variants() {
+    #[test]
+    fn test_exchange_error_conversion() {
         use openstack_keystone_core::oauth2_client::TokenExchangeError;
+        use openstack_keystone_core_types::token::TokenProviderError;
 
-        let client_side = [
-            TokenExchangeError::NotAUserPrincipal,
-            TokenExchangeError::NoAuthorization,
-            TokenExchangeError::NoDelegationProject,
-            TokenExchangeError::CrossDomainSubjectToken,
-            TokenExchangeError::UnsupportedDelegation("ec2"),
+        const BAD_REQUEST: StatusCode = StatusCode::BAD_REQUEST;
+        const SERVER_ERROR: StatusCode = StatusCode::INTERNAL_SERVER_ERROR;
+
+        // (input, expected status, expected OAuth2 error code).
+        // When a TokenExchangeError variant is added, add a row here.
+        let cases = [
+            // Subject or delegation unusable: RFC 8693 §2.2.2 `invalid_request`.
+            (
+                TokenExchangeError::CrossDomainSubjectToken,
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::CredentialChainExpired,
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::NoAuthorization,
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::NoDelegationProject,
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::NotAUserPrincipal,
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::NotDelegated("password".to_string()),
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::UnsupportedDelegation("trust"),
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::UnsupportedDelegation("ec2"),
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            // Token provider rejected the subject token.
+            (
+                TokenExchangeError::InvalidSubjectToken(TokenProviderError::Expired),
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::InvalidSubjectToken(TokenProviderError::TokenRevoked),
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            // Backend failures are our fault, never a client error.
+            (
+                TokenExchangeError::InvalidSubjectToken(TokenProviderError::Driver {
+                    source: Box::new(std::io::Error::other("backend down")),
+                }),
+                SERVER_ERROR,
+                "server_error",
+            ),
+            (
+                TokenExchangeError::InvalidSubjectToken(TokenProviderError::ExpiryCalculation),
+                SERVER_ERROR,
+                "server_error",
+            ),
         ];
-        for error in client_side {
+
+        for (error, status, code) in cases {
             let label = format!("{error:?}");
             let mapped = super::exchange_error(error);
-            assert_eq!(mapped.status(), StatusCode::BAD_REQUEST, "{label}");
-            assert_eq!(mapped.error_code(), "invalid_request", "{label}");
+            assert_eq!(mapped.status(), status, "{label}: status");
+            assert_eq!(mapped.error_code(), code, "{label}: error code");
         }
     }
 }
