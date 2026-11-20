@@ -41,15 +41,33 @@ const DEK_WRAP_AD: &[u8] = b"keystone-dek-wrap-v1";
 /// HKDF info for the sub-key used to derive wrap nonces.
 const DEK_WRAP_NONCE_INFO: &[u8] = b"keystone-dek-wrap-nonce-v1";
 
+/// Runs a blocking provider call (PKCS#11 module, TPM command) from async
+/// code without stalling the runtime's other tasks.
+///
+/// On a multi-thread runtime the worker is handed over to other tasks for the
+/// duration of the call. On a current-thread runtime (unit tests) the call
+/// runs inline, since there is no other worker to hand over to.
+pub fn run_blocking<T>(f: impl FnOnce() -> T) -> T {
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    match Handle::try_current() {
+        Ok(h) if h.runtime_flavor() == RuntimeFlavor::MultiThread => tokio::task::block_in_place(f),
+        _ => f(),
+    }
+}
+
 /// Object-safe trait for Key Encryption Key operations.
+///
+/// The methods are async because a provider may talk to a remote key store
+/// (OpenBao Transit). Local providers do their work without awaiting.
+#[async_trait::async_trait]
 pub trait KekProvider: Send + Sync {
     /// Unwrap (decrypt) a wrapped DEK blob produced by [`wrap_dek`].
-    fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError>;
+    async fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError>;
 
     /// Wrap (encrypt) a 256-bit DEK.
     ///
     /// Returns an opaque blob: `[12-byte nonce][ciphertext][16-byte GCM tag]`.
-    fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError>;
+    async fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -125,8 +143,9 @@ impl EnvKek {
     }
 }
 
+#[async_trait::async_trait]
 impl KekProvider for EnvKek {
-    fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
+    async fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
         // Layout: [12-byte nonce][32-byte ciphertext][16-byte tag]
         if wrapped.len() != 12 + 32 + 16 {
             return Err(CryptoError::WrappedDekSize);
@@ -164,7 +183,7 @@ impl KekProvider for EnvKek {
     /// KEK, so it is unique per distinct DEK short of a 96-bit collision.
     /// Wrapping the same DEK twice yields identical output, which reveals
     /// nothing beyond equality.
-    fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
+    async fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
         // Not called in a `fips` build: the module generates the IV.
         let derive_nonce = || {
             let mut nonce_key = Zeroizing::new([0u8; 32]);
@@ -234,44 +253,44 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_wrap_unwrap_roundtrip() {
+    #[tokio::test]
+    async fn test_wrap_unwrap_roundtrip() {
         let kek = test_kek();
         let dek = [0xABu8; 32];
-        let wrapped = kek.wrap_dek(&dek).expect("wrap");
+        let wrapped = kek.wrap_dek(&dek).await.expect("wrap");
         assert_eq!(wrapped.len(), 60); // 12 + 32 + 16
-        let unwrapped = kek.unwrap_dek(&wrapped).expect("unwrap");
+        let unwrapped = kek.unwrap_dek(&wrapped).await.expect("unwrap");
         assert_eq!(unwrapped.as_ref(), &dek);
     }
 
     #[cfg(feature = "fips")]
-    #[test]
-    fn test_wrap_uses_module_generated_iv() {
+    #[tokio::test]
+    async fn test_wrap_uses_module_generated_iv() {
         let kek = test_kek();
         let dek = [0xCDu8; 32];
-        let w1 = kek.wrap_dek(&dek).expect("wrap 1");
-        let w2 = kek.wrap_dek(&dek).expect("wrap 2");
+        let w1 = kek.wrap_dek(&dek).await.expect("wrap 1");
+        let w2 = kek.wrap_dek(&dek).await.expect("wrap 2");
         // Random IV: same DEK wraps differently, both unwrap.
         assert_ne!(w1[..12], w2[..12]);
-        assert_eq!(kek.unwrap_dek(&w1).expect("unwrap").as_ref(), &dek);
-        assert_eq!(kek.unwrap_dek(&w2).expect("unwrap").as_ref(), &dek);
+        assert_eq!(kek.unwrap_dek(&w1).await.expect("unwrap").as_ref(), &dek);
+        assert_eq!(kek.unwrap_dek(&w2).await.expect("unwrap").as_ref(), &dek);
     }
 
     #[cfg(not(feature = "fips"))]
-    #[test]
-    fn test_wrap_nonce_is_deterministic_and_dek_specific() {
+    #[tokio::test]
+    async fn test_wrap_nonce_is_deterministic_and_dek_specific() {
         let kek = test_kek();
-        let w1 = kek.wrap_dek(&[0xCDu8; 32]).expect("wrap 1");
-        let w2 = kek.wrap_dek(&[0xCDu8; 32]).expect("wrap 2");
-        let w3 = kek.wrap_dek(&[0xCEu8; 32]).expect("wrap 3");
+        let w1 = kek.wrap_dek(&[0xCDu8; 32]).await.expect("wrap 1");
+        let w2 = kek.wrap_dek(&[0xCDu8; 32]).await.expect("wrap 2");
+        let w3 = kek.wrap_dek(&[0xCEu8; 32]).await.expect("wrap 3");
         // Same DEK: identical blob (no RNG involved).
         assert_eq!(w1, w2);
         // Different DEK: different nonce.
         assert_ne!(w1[..12], w3[..12]);
     }
 
-    #[test]
-    fn test_unwrap_blob_with_foreign_nonce() {
+    #[tokio::test]
+    async fn test_unwrap_blob_with_foreign_nonce() {
         // Blobs wrapped before the nonce became deterministic (random 96-bit
         // nonce) must still unwrap: the nonce is read from the blob.
         let kek = test_kek();
@@ -282,19 +301,19 @@ mod tests {
         let mut blob = nonce.to_vec();
         blob.extend_from_slice(&buf);
         blob.extend_from_slice(&tag);
-        let out = kek.unwrap_dek(&blob).expect("unwrap legacy blob");
+        let out = kek.unwrap_dek(&blob).await.expect("unwrap legacy blob");
         assert_eq!(*out, dek);
     }
 
-    #[test]
-    fn test_unwrap_wrong_tag_fails() {
+    #[tokio::test]
+    async fn test_unwrap_wrong_tag_fails() {
         let kek = test_kek();
         let dek = [0x11u8; 32];
-        let mut wrapped = kek.wrap_dek(&dek).expect("wrap");
+        let mut wrapped = kek.wrap_dek(&dek).await.expect("wrap");
         // Corrupt the tag
         *wrapped.last_mut().expect("non-empty") ^= 0xFF;
         assert!(matches!(
-            kek.unwrap_dek(&wrapped),
+            kek.unwrap_dek(&wrapped).await,
             Err(CryptoError::AesDecrypt)
         ));
     }

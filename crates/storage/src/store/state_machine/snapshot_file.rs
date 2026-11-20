@@ -15,6 +15,7 @@
 //! On-disk snapshot and backup file format.
 
 use super::*;
+use crate::kek_retry::unwrap_dek_retrying;
 
 /// Snapshot wire/on-disk payload format version.
 ///
@@ -169,12 +170,25 @@ pub(super) fn dek_manifest_from_payload(payload: &SnapshotPayload) -> io::Result
 /// and the retired ones. Fails closed: a DEK that cannot be unwrapped means
 /// the KEK differs from the snapshotting cluster's (or the manifest is
 /// corrupt), and silently skipping it would strand records under it.
-pub(super) fn dek_epochs_from_manifest(
+/// With `retry`, a KEK that is only temporarily unavailable is waited for
+/// (apply paths); without it the error is returned (operator requests).
+pub(super) async fn dek_epochs_from_manifest(
     manifest: &DekManifest,
     kek: &dyn KekProvider,
+    retry: bool,
 ) -> Result<UnwrappedDeks, StoreError> {
-    let unwrap = |version: u32, wrapped: &[u8]| -> Result<Arc<DekEpoch>, StoreError> {
-        let raw = kek.unwrap_dek(wrapped).map_err(|e| {
+    async fn unwrap(
+        kek: &dyn KekProvider,
+        retry: bool,
+        version: u32,
+        wrapped: &[u8],
+    ) -> Result<Arc<DekEpoch>, StoreError> {
+        let raw = if retry {
+            unwrap_dek_retrying(kek, wrapped).await
+        } else {
+            kek.unwrap_dek(wrapped).await
+        }
+        .map_err(|e| {
             StoreError::Other(eyre::eyre!(
                 "cannot unwrap DEK version {version} from the snapshot: {e}; the target \
                  cluster must use the same KEK material as the cluster that produced it"
@@ -184,11 +198,11 @@ pub(super) fn dek_epochs_from_manifest(
             LockedKey::from_raw(*raw),
             version,
         )?))
-    };
-    let current = unwrap(manifest.current.0, &manifest.current.1)?;
+    }
+    let current = unwrap(kek, retry, manifest.current.0, &manifest.current.1).await?;
     let mut retired = BTreeMap::new();
     for (version, wrapped) in &manifest.retired {
-        retired.insert(*version, unwrap(*version, wrapped)?);
+        retired.insert(*version, unwrap(kek, retry, *version, wrapped).await?);
     }
     Ok((current, retired))
 }

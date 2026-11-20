@@ -62,9 +62,9 @@ pub use cipher::{
 };
 pub use dek::{BackupDek, DekEpoch, LogDek, StateDek, generate_dek};
 pub use error::CryptoError;
-pub use kek::{EnvKek, KekProvider};
+pub use kek::{EnvKek, KekProvider, run_blocking};
 pub use mlock::LockedKey;
 pub use nonce::{NonceManager, NoncePersistence};
-pub use site_wrap::{
-    SiteBinding, SiteKeyUnwrapper, SoftwareSiteKey, unwrap_dek_for_site, wrap_dek_for_site,
-};
+#[cfg(feature = "software-site-key")]
+pub use site_wrap::SoftwareSiteKey;
+pub use site_wrap::{SiteBinding, SiteKeyUnwrapper, unwrap_dek_for_site, wrap_dek_for_site};

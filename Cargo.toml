@@ -45,6 +45,7 @@ members = [
   "crates/storage-crypto",
   "crates/storage-crypto-pkcs11",
   "crates/storage-crypto-tpm",
+  "crates/storage-crypto-transit",
   "crates/telemetry",
   "crates/tls-provider",
   "crates/token-driver-fernet",
@@ -156,6 +157,7 @@ opentelemetry-otlp = { version = "0.33", default-features = false }
 opentelemetry_sdk = { version = "0.33", default-features = false }
 openstack-keystone-telemetry = { version = "0.1.0", path = "crates/telemetry" }
 openstack-keystone-tls-provider = { version = "0.1.0", path = "crates/tls-provider" }
+openstack-keystone-storage-crypto-transit = { version = "0.1.0", path = "crates/storage-crypto-transit" }
 openstack-keystone-storage-crypto-tpm = { version = "0.1.0", path = "crates/storage-crypto-tpm" }
 openstack-keystone-federation-driver-sql = { version = "0.1", path = "crates/federation-driver-sql" }
 openstack-keystone-k8s-auth-driver-sql = { version = "0.1", path = "crates/k8s-auth-driver-sql/" }

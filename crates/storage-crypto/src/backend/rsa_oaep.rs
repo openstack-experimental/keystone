@@ -26,6 +26,7 @@
 //! while `crypto-glue` (via `webauthn-rs`, currently on an `rsa` 0.10
 //! release candidate) asks for the `sha2` feature that 0.10.0 removed.
 
+#[cfg(feature = "software-site-key")]
 use zeroize::Zeroizing;
 
 use crate::error::CryptoError;
@@ -35,10 +36,9 @@ pub(crate) const MIN_RSA_BITS: usize = 2048;
 
 #[cfg(feature = "fips")]
 mod imp {
-    use aws_lc_rs::rsa::{
-        OAEP_SHA256_MGF1SHA256, OaepPrivateDecryptingKey, OaepPublicEncryptingKey,
-        PrivateDecryptingKey, PublicEncryptingKey,
-    };
+    use aws_lc_rs::rsa::{OAEP_SHA256_MGF1SHA256, OaepPublicEncryptingKey, PublicEncryptingKey};
+    #[cfg(feature = "software-site-key")]
+    use aws_lc_rs::rsa::{OaepPrivateDecryptingKey, PrivateDecryptingKey};
 
     use super::*;
 
@@ -65,8 +65,10 @@ mod imp {
     }
 
     /// A parsed RSA private key, ready for OAEP decryption.
+    #[cfg(feature = "software-site-key")]
     pub(crate) struct PrivateKey(OaepPrivateDecryptingKey);
 
+    #[cfg(feature = "software-site-key")]
     impl PrivateKey {
         pub(crate) fn from_pkcs8_der(pkcs8_der: &[u8]) -> Result<Self, CryptoError> {
             let key = PrivateDecryptingKey::from_pkcs8(pkcs8_der)
@@ -96,10 +98,14 @@ mod imp {
 
 #[cfg(all(not(feature = "fips"), feature = "ring"))]
 mod imp {
-    use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
+    #[cfg(feature = "software-site-key")]
+    use rsa::RsaPrivateKey;
+    #[cfg(feature = "software-site-key")]
+    use rsa::pkcs8::DecodePrivateKey;
+    use rsa::pkcs8::DecodePublicKey;
     use rsa::sha2::Sha256;
     use rsa::traits::PublicKeyParts;
-    use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
+    use rsa::{Oaep, RsaPublicKey};
 
     use super::*;
 
@@ -116,8 +122,10 @@ mod imp {
     }
 
     /// A parsed RSA private key, ready for OAEP decryption.
+    #[cfg(feature = "software-site-key")]
     pub(crate) struct PrivateKey(RsaPrivateKey);
 
+    #[cfg(feature = "software-site-key")]
     impl PrivateKey {
         pub(crate) fn from_pkcs8_der(pkcs8_der: &[u8]) -> Result<Self, CryptoError> {
             let key = RsaPrivateKey::from_pkcs8_der(pkcs8_der)
@@ -139,4 +147,6 @@ mod imp {
     }
 }
 
-pub(crate) use imp::{PrivateKey, encrypt};
+#[cfg(feature = "software-site-key")]
+pub(crate) use imp::PrivateKey;
+pub(crate) use imp::encrypt;

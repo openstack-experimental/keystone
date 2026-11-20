@@ -22,8 +22,9 @@
 //! ([`unwrap_dek_for_site`]); the private key never leaves the site, which in
 //! production means OpenBao Transit (an `rsa-2048`/`rsa-4096` key, whose
 //! `decrypt` is RSA-OAEP with SHA-256 and no label) behind
-//! [`SiteKeyUnwrapper`]. [`SoftwareSiteKey`] is the software fallback for
-//! sites without such a key.
+//! [`SiteKeyUnwrapper`]. `SoftwareSiteKey` (feature
+//! `software-site-key`, off by default) is the software fallback for sites
+//! without such a key.
 //!
 //! The cluster id, DEK version and site name are written inside the OAEP
 //! plaintext and checked after decryption, so the scheme does not depend on
@@ -82,9 +83,10 @@ impl SiteBinding<'_> {
 
 /// The private-key side of a site: decrypts RSA-OAEP-SHA256 ciphertexts made
 /// for the site's public key.
+#[async_trait::async_trait]
 pub trait SiteKeyUnwrapper: Send + Sync {
     /// Decrypt `ciphertext`; the plaintext is key material.
-    fn decrypt(&self, ciphertext: &[u8]) -> Result<Zeroizing<Vec<u8>>, CryptoError>;
+    async fn decrypt(&self, ciphertext: &[u8]) -> Result<Zeroizing<Vec<u8>>, CryptoError>;
 }
 
 /// Wrap `dek` for the site whose RSA public key (SubjectPublicKeyInfo DER,
@@ -100,12 +102,12 @@ pub fn wrap_dek_for_site(
 
 /// Recover a DEK from `blob` through `site_key` and check it is bound to
 /// `binding`.
-pub fn unwrap_dek_for_site(
+pub async fn unwrap_dek_for_site(
     site_key: &dyn SiteKeyUnwrapper,
     blob: &[u8],
     binding: &SiteBinding<'_>,
 ) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
-    let plaintext = site_key.decrypt(blob)?;
+    let plaintext = site_key.decrypt(blob).await?;
     // The expected plaintext without the DEK is a prefix of what was wrapped.
     let expected = binding.encode(&[0u8; 32])?;
     let prefix_len = expected.len() - 32;
@@ -121,7 +123,7 @@ pub fn unwrap_dek_for_site(
     Ok(out)
 }
 
-/// Software site key: an RSA private key (PKCS#8 DER) held in process memory.
+/// Software site key (feature `software-site-key`): an RSA private key (PKCS#8 DER) held in process memory.
 ///
 /// Fallback for sites without a Transit key or HSM. The key sits next to the
 /// process that uses it, so it protects the DEK only as well as the secret
@@ -131,10 +133,12 @@ pub fn unwrap_dek_for_site(
 /// crate, whose decryption is not constant time (Marvin attack,
 /// RUSTSEC-2023-0071). Do not expose it to callers that can submit chosen
 /// ciphertexts and observe timing; prefer the `fips` build or a Transit key.
+#[cfg(feature = "software-site-key")]
 pub struct SoftwareSiteKey {
     key: rsa_oaep::PrivateKey,
 }
 
+#[cfg(feature = "software-site-key")]
 impl SoftwareSiteKey {
     /// Parse a PKCS#8 DER RSA private key of at least 2048 bits.
     ///
@@ -146,13 +150,16 @@ impl SoftwareSiteKey {
     }
 }
 
+#[cfg(feature = "software-site-key")]
+#[async_trait::async_trait]
 impl SiteKeyUnwrapper for SoftwareSiteKey {
-    fn decrypt(&self, ciphertext: &[u8]) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
+    async fn decrypt(&self, ciphertext: &[u8]) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
         self.key.decrypt(ciphertext)
     }
 }
 
 #[cfg(test)]
+#[cfg(feature = "software-site-key")]
 mod tests {
     use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
 
@@ -184,12 +191,12 @@ mod tests {
         site: "eu-1",
     };
 
-    #[test]
-    fn round_trip() {
+    #[tokio::test]
+    async fn round_trip() {
         let (public, key) = keypair(2048);
         let dek = [7u8; 32];
         let blob = wrap_dek_for_site(&public, &dek, &B).unwrap();
-        assert_eq!(*unwrap_dek_for_site(&key, &blob, &B).unwrap(), dek);
+        assert_eq!(*unwrap_dek_for_site(&key, &blob, &B).await.unwrap(), dek);
     }
 
     #[test]
@@ -202,8 +209,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn blob_is_bound_to_cluster_version_and_site() {
+    #[tokio::test]
+    async fn blob_is_bound_to_cluster_version_and_site() {
         let (public, key) = keypair(2048);
         let blob = wrap_dek_for_site(&public, &[7u8; 32], &B).unwrap();
         for other in [
@@ -218,26 +225,26 @@ mod tests {
             SiteBinding { site: "us-1", ..B },
         ] {
             assert!(matches!(
-                unwrap_dek_for_site(&key, &blob, &other),
+                unwrap_dek_for_site(&key, &blob, &other).await,
                 Err(CryptoError::SiteBindingMismatch)
             ));
         }
     }
 
-    #[test]
-    fn other_sites_key_cannot_unwrap() {
+    #[tokio::test]
+    async fn other_sites_key_cannot_unwrap() {
         let (public, _) = keypair(2048);
         let (_, other_key) = keypair(2048);
         let blob = wrap_dek_for_site(&public, &[7u8; 32], &B).unwrap();
-        assert!(unwrap_dek_for_site(&other_key, &blob, &B).is_err());
+        assert!(unwrap_dek_for_site(&other_key, &blob, &B).await.is_err());
     }
 
-    #[test]
-    fn tampered_blob_is_rejected() {
+    #[tokio::test]
+    async fn tampered_blob_is_rejected() {
         let (public, key) = keypair(2048);
         let mut blob = wrap_dek_for_site(&public, &[7u8; 32], &B).unwrap();
         blob[10] ^= 1;
-        assert!(unwrap_dek_for_site(&key, &blob, &B).is_err());
+        assert!(unwrap_dek_for_site(&key, &blob, &B).await.is_err());
     }
 
     #[test]

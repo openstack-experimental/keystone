@@ -49,6 +49,7 @@ pub(super) async fn stage_dek_local_emergency_candidate(
     let new_raw = generate_dek();
     let wrapped_dek = kek
         .wrap_dek(new_raw.as_bytes())
+        .await
         .map_err(|e| Status::internal(format!("failed to wrap new DEK: {e}")))?;
 
     let rotation_id = uuid::Uuid::new_v4().to_string();

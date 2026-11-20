@@ -187,9 +187,10 @@ otel = ["openstack-keystone-telemetry/otel"]
 otlp-grpc = ["openstack-keystone-telemetry/otlp-grpc"]
 
 # Hardware-backed KEK providers for the distributed storage
-# (`[distributed_storage] kek_provider = "pkcs11" | "tpm"`).
+# (`[distributed_storage] kek_provider = "pkcs11" | "tpm" | "transit"`).
 pkcs11 = ["openstack-keystone-distributed-storage/pkcs11"]
 tpm = ["openstack-keystone-distributed-storage/tpm"]
+transit = ["openstack-keystone-distributed-storage/transit"]
 
 [lints]
 workspace = true

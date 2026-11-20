@@ -26,11 +26,14 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use fjall::Database;
 use openraft::RaftTypeConfig;
-use openstack_keystone_storage_crypto::{DekEpoch, KekProvider, LockedKey, generate_dek};
+use openstack_keystone_storage_crypto::{
+    CryptoError, DekEpoch, KekProvider, LockedKey, generate_dek,
+};
 
 use super::log_store::FjallLogStore;
 use super::state_machine::{FjallStateMachine, META_DEK_CURRENT};
 use crate::StoreError;
+use crate::kek_retry::unwrap_dek_retrying;
 use crate::store_command;
 
 /// Create a pair of `FjallLogStore` and `FjallStateMachine` sharing a Fjall DB.
@@ -80,18 +83,21 @@ where
     );
 
     // Bootstrap or load the DEK from the meta keyspace.
-    let initial_epoch =
-        bootstrap_dek(&db, kek.as_ref()).map_err(|e| io::Error::other(e.to_string()))?;
+    let initial_epoch = bootstrap_dek(&db, kek.as_ref())
+        .await
+        .map_err(|e| io::Error::other(e.to_string()))?;
     let current_dek: Arc<RwLock<Arc<DekEpoch>>> = Arc::new(RwLock::new(initial_epoch));
     // Load retired DEK epochs from Fjall so pre-rotation ciphertext remains
     // readable across restarts (C3: old_deks must survive process restarts).
-    let mut old_deks_map =
-        load_retired_deks(&db, kek.as_ref()).map_err(|e| io::Error::other(e.to_string()))?;
+    let mut old_deks_map = load_retired_deks(&db, kek.as_ref())
+        .await
+        .map_err(|e| io::Error::other(e.to_string()))?;
     // Load any emergency-revoked epoch whose re-encryption sweep had not
     // yet completed before this node last stopped, so the sweep can resume
     // instead of losing the key forever (ADR 0016-v2 §6.2 step 4, GitHub
     // #1299).
     let revoked_pending_map = load_revoked_pending_deks(&db, kek.as_ref())
+        .await
         .map_err(|e| io::Error::other(e.to_string()))?;
     old_deks_map.extend(revoked_pending_map.iter().map(|(v, e)| (*v, e.clone())));
     let old_deks: Arc<Mutex<BTreeMap<u32, Arc<DekEpoch>>>> = Arc::new(Mutex::new(old_deks_map));
@@ -140,6 +146,7 @@ where
         quarantine_tx,
         pending_rotations.clone(),
     )
+    .await
     .map_err(|e| io::Error::other(e.to_string()))?;
     let log_store = log_store.with_shadow_deks(sm.shadow_deks());
     sm.ensure_dek_installed_at()
@@ -214,14 +221,18 @@ const DEK_RETIRED_PREFIX: &str = "_meta:dek:retired:";
 /// wrapped DEK bytes as the value.  Any epoch that cannot be unwrapped or
 /// parsed is skipped with a `WARN` log — startup proceeds so the node
 /// remains available.
-fn load_retired_deks(
+async fn load_retired_deks(
     db: &Database,
     kek: &dyn KekProvider,
 ) -> Result<BTreeMap<u32, Arc<DekEpoch>>, StoreError> {
     let meta = db.keyspace("meta", fjall::KeyspaceCreateOptions::default)?;
     let mut map = BTreeMap::new();
-    for item in meta.prefix(DEK_RETIRED_PREFIX.as_bytes()) {
-        let (key_bytes, wrapped_bytes) = item.into_inner()?;
+    // Read everything first: the iterator must not live across an await.
+    let items = meta
+        .prefix(DEK_RETIRED_PREFIX.as_bytes())
+        .map(|item| item.into_inner())
+        .collect::<Result<Vec<_>, _>>()?;
+    for (key_bytes, wrapped_bytes) in items {
         let key_str = match std::str::from_utf8(&key_bytes) {
             Ok(s) => s.to_owned(),
             Err(_) => continue,
@@ -240,7 +251,7 @@ fn load_retired_deks(
                 continue;
             }
         };
-        match kek.unwrap_dek(&wrapped_bytes) {
+        match unwrap_dek_retrying(kek, &wrapped_bytes).await {
             Ok(raw) => {
                 let epoch_dek = LockedKey::from_raw(*raw);
                 match DekEpoch::from_raw(epoch_dek, version) {
@@ -324,14 +335,18 @@ const DEK_REVOKED_PENDING_PREFIX: &str = crate::store::state_machine::DEK_REVOKE
 /// retired chain — these entries exist only until
 /// `FjallStateMachine::finalize_if_revoked` confirms the epoch is fully
 /// migrated and deletes them for good.
-fn load_revoked_pending_deks(
+async fn load_revoked_pending_deks(
     db: &Database,
     kek: &dyn KekProvider,
 ) -> Result<BTreeMap<u32, Arc<DekEpoch>>, StoreError> {
     let meta = db.keyspace("meta", fjall::KeyspaceCreateOptions::default)?;
     let mut map = BTreeMap::new();
-    for item in meta.prefix(DEK_REVOKED_PENDING_PREFIX.as_bytes()) {
-        let (key_bytes, wrapped_bytes) = item.into_inner()?;
+    // Read everything first: the iterator must not live across an await.
+    let items = meta
+        .prefix(DEK_REVOKED_PENDING_PREFIX.as_bytes())
+        .map(|item| item.into_inner())
+        .collect::<Result<Vec<_>, _>>()?;
+    for (key_bytes, wrapped_bytes) in items {
         let Ok(key_str) = std::str::from_utf8(&key_bytes) else {
             continue;
         };
@@ -348,7 +363,7 @@ fn load_revoked_pending_deks(
                 continue;
             }
         };
-        match kek.unwrap_dek(&wrapped_bytes) {
+        match unwrap_dek_retrying(kek, &wrapped_bytes).await {
             Ok(raw) => {
                 let epoch_dek = LockedKey::from_raw(*raw);
                 match DekEpoch::from_raw(epoch_dek, version) {
@@ -377,13 +392,34 @@ fn load_revoked_pending_deks(
     Ok(map)
 }
 
+/// Adds a hint to a size error from unwrapping the stored DEK: the usual cause
+/// is a changed `kek_provider`, not corruption.
+fn explain_unwrap_error(e: CryptoError, wrapped: &[u8]) -> StoreError {
+    if matches!(e, CryptoError::WrappedDekSize) {
+        let hint = if wrapped.starts_with(b"vault:v") {
+            "it was wrapped by an OpenBao Transit key, so kek_provider must be \"transit\""
+        } else {
+            "it was not wrapped by an OpenBao Transit key; the stored DEK was written under a \
+             different kek_provider"
+        };
+        return StoreError::Other(eyre::eyre!(
+            "the stored DEK cannot be unwrapped by the configured kek_provider: {hint}"
+        ));
+    }
+    e.into()
+}
+
 /// Load the current DEK epoch from Fjall, or generate and persist a new one.
 ///
-/// On-disk format for `_meta:dek:current`:
-/// `[version_u32_BE; 4] ++ [nonce_12] ++ [ciphertext_32] ++ [tag_16]` (64 bytes
-/// total). Legacy format (60 bytes, no version prefix) is migrated to version 1
-/// on first load.
-fn bootstrap_dek(db: &Database, kek: &dyn KekProvider) -> Result<Arc<DekEpoch>, StoreError> {
+/// On-disk format for `_meta:dek:current`: `[version_u32_BE; 4] ++ wrapped`,
+/// where `wrapped` is whatever the configured KEK provider produced: 60 bytes
+/// (`[nonce_12] ++ [ciphertext_32] ++ [tag_16]`) for the env, PKCS#11 and TPM
+/// providers, or the `vault:vN:<base64>` string of an OpenBao Transit key
+/// (about 117 bytes). The record does not name its provider, so a provider
+/// switch surfaces as a size error that [`explain_unwrap_error`] annotates.
+/// Legacy format (60 bytes, no version prefix) is migrated to version 1 on
+/// first load.
+async fn bootstrap_dek(db: &Database, kek: &dyn KekProvider) -> Result<Arc<DekEpoch>, StoreError> {
     let meta = db.keyspace("meta", fjall::KeyspaceCreateOptions::default)?;
 
     if let Some(stored) = meta.get(META_DEK_CURRENT)? {
@@ -403,10 +439,10 @@ fn bootstrap_dek(db: &Database, kek: &dyn KekProvider) -> Result<Arc<DekEpoch>, 
                 "DEK stored in legacy format (no version prefix); treating as version 1"
             );
             let wrapped = stored;
-            let raw = kek.unwrap_dek(wrapped)?;
+            let raw = unwrap_dek_retrying(kek, wrapped).await?;
             let raw_bytes = *raw;
             let mut migrated = 1u32.to_be_bytes().to_vec();
-            migrated.extend_from_slice(&kek.wrap_dek(&raw_bytes)?);
+            migrated.extend_from_slice(&kek.wrap_dek(&raw_bytes).await?);
             meta.insert(META_DEK_CURRENT, &migrated)?;
             db.persist(fjall::PersistMode::SyncAll)?;
             let epoch_dek = LockedKey::from_raw(raw_bytes);
@@ -417,13 +453,15 @@ fn bootstrap_dek(db: &Database, kek: &dyn KekProvider) -> Result<Arc<DekEpoch>, 
                 stored.len()
             )));
         };
-        let raw = kek.unwrap_dek(wrapped)?;
+        let raw = unwrap_dek_retrying(kek, wrapped)
+            .await
+            .map_err(|e| explain_unwrap_error(e, wrapped))?;
         let epoch_dek = LockedKey::from_raw(*raw);
         Ok(Arc::new(DekEpoch::from_raw(epoch_dek, version)?))
     } else {
         // First boot: generate fresh DEK at version 1, wrap under KEK, persist.
         let dek = generate_dek();
-        let wrapped = kek.wrap_dek(dek.as_bytes())?;
+        let wrapped = kek.wrap_dek(dek.as_bytes()).await?;
         let version = 1u32;
         let mut persisted = version.to_be_bytes().to_vec();
         persisted.extend_from_slice(&wrapped);
@@ -436,6 +474,21 @@ fn bootstrap_dek(db: &Database, kek: &dyn KekProvider) -> Result<Arc<DekEpoch>, 
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn size_errors_name_the_provider_mismatch() {
+        use openstack_keystone_storage_crypto::CryptoError;
+
+        let transit =
+            super::explain_unwrap_error(CryptoError::WrappedDekSize, b"vault:v1:abc").to_string();
+        assert!(transit.contains("must be \"transit\""), "{transit}");
+        let other =
+            super::explain_unwrap_error(CryptoError::WrappedDekSize, &[0u8; 60]).to_string();
+        assert!(other.contains("different kek_provider"), "{other}");
+        // Other errors pass through untouched.
+        let aes = super::explain_unwrap_error(CryptoError::AesDecrypt, &[0u8; 60]).to_string();
+        assert!(!aes.contains("kek_provider"), "{aes}");
+    }
 
     use openraft::StorageError;
     use openraft::testing::log::StoreBuilder;
@@ -520,7 +573,7 @@ mod tests {
 
             let kek: Arc<dyn openstack_keystone_storage_crypto::KekProvider> =
                 Arc::new(EnvKek::from_bytes([0x42u8; 32]));
-            let wrapped = kek.wrap_dek(&[0x55u8; 32]).expect("wrap dek");
+            let wrapped = kek.wrap_dek(&[0x55u8; 32]).await.expect("wrap dek");
 
             // Simulate what `InstallDek`'s emergency branch now stages in
             // the same batch as the (permanent) revoked marker.
@@ -529,8 +582,9 @@ mod tests {
                 .expect("insert staged key material");
             db.persist(fjall::PersistMode::SyncAll).expect("persist");
 
-            let loaded =
-                super::load_revoked_pending_deks(&db, kek.as_ref()).expect("load revoked-pending");
+            let loaded = super::load_revoked_pending_deks(&db, kek.as_ref())
+                .await
+                .expect("load revoked-pending");
             assert_eq!(loaded.len(), 1);
             let epoch = loaded.get(&7u32).expect("epoch 7 present");
             assert_eq!(epoch.version, 7);

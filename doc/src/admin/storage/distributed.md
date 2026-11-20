@@ -865,6 +865,7 @@ write_rate_threshold = 1073741824
 # rejected unless dev_mode = true. See "PKCS#11 and TPM KEK Providers" below.
 # kek_provider = "pkcs11"
 # kek_provider = "tpm"
+# kek_provider = "transit"
 
 # --- Transport: SPIFFE (default) ---
 trust_domains = "example.org"
@@ -961,6 +962,78 @@ sudo apt-get install -y softhsm2
 cargo test -p openstack-keystone-storage-crypto-pkcs11
 cargo test -p openstack-keystone-distributed-storage --features pkcs11 --test test_pkcs11_cluster
 ```
+
+#### OpenBao Transit
+
+The KEK is a Transit key; it never enters the node. Build the service with the
+`transit` feature. Create the key (`type = aes256-gcm96`) and give the node's
+policy `update` on `transit/encrypt/<key>` and `transit/decrypt/<key>` only.
+
+```toml
+[distributed_storage]
+kek_provider = "transit"
+
+[distributed_storage.transit]
+transit_address  = "https://bao.site-a.example:8200"
+transit_key_name = "keystone-storage-kek"
+# transit_mount  = "transit"
+# transit_ca_file = "/etc/keystone/storage/bao-ca.pem"
+
+# Exactly one authentication method. A static token read once at start-up:
+transit_token_file = "/etc/keystone/storage/bao.token"
+# or a JWT (for example a JWT-SVID) exchanged at auth/<mount>/login; the file
+# is re-read on every login and a rejected token triggers one new login:
+# transit_jwt_file       = "/run/spire/jwt-svid"
+# transit_jwt_role       = "keystone-storage"
+# transit_jwt_auth_mount = "jwt"
+# or the node's own X.509-SVID through OpenBao's TLS certificate auth method
+# (SPIFFE TLS mode only; the SVID is fetched again on every login):
+# transit_cert_auth       = true
+# transit_cert_role       = "keystone-storage"
+# transit_cert_auth_mount = "cert"
+```
+
+Certificate login needs OpenBao's listener to terminate TLS itself and request
+client certificates, and a cert role whose `allowed_uri_sans` matches the
+node's storage SVID (for example `spiffe://<td>/keystone/storage/node`) and
+whose `certificate` holds the CA that verifies it. Keep the OpenBao listener
+certificate out of SPIRE (use the site Bao's PKI or a static certificate), or a
+cold start of OpenBao would need a SPIRE that in turn needs OpenBao. Keep a
+token or JWT file source ready for recovery after the SVIDs have lapsed (ADR
+0045 §11.4).
+
+A wrapped DEK is the Transit ciphertext (`vault:v<N>:...`), so rotating the
+Transit key keeps older DEKs readable; rewrap them with Transit's `rewrap`
+endpoint before retiring old key versions. The FIPS status of the wrap is that
+of the OpenBao build and of the TLS link (the process-wide rustls provider).
+Per-site wrapping of one DEK to several sites with RSA Transit keys builds on
+the same crate (`TransitKek::site_key`, ADR 0045 §11.2), but is not yet wired
+into join, replication or install.
+
+Every node unwraps the replicated DEK with its own Transit key, so until
+per-site blobs are stored in the state machine (#1671) all nodes of a cluster
+must use the **same** Transit key: one OpenBao, or OpenBao instances that share
+the key (for example through replication). A node whose OpenBao holds a
+different key cannot join, because it cannot unwrap the DEK it fetches.
+
+`transit_address` must be an `https://` URL (plain `http://` is accepted only
+with `dev_mode = true`): the plaintext DEK and the token travel to it. When
+`transit_ca_file` is set it is the only trust root for OpenBao. A server
+certificate that fails verification (wrong CA or host name) is a configuration
+error and stops the node at once with a message naming `transit_ca_file` and
+`transit_address`.
+
+Redirects are never followed, so the token is not sent to a host you did not
+name. A standby's redirect during a failover is treated like an outage and
+waited out; if it persists, point `transit_address` at the active node.
+
+While OpenBao is unreachable (connection refused, timeout, 5xx, 429, a
+failover, or a login that is briefly denied) the node waits and retries with a
+backoff of up to 30 seconds, with no deadline. This holds at startup, so a node
+can start before OpenBao is up, as well as when applying a DEK change
+(rotation, snapshot or restore). After five minutes the retry is logged at
+`error` level. A rejected request (wrong key, bad policy for the operation) is
+a hard error.
 
 #### TPM 2.0
 

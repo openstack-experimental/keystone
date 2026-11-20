@@ -787,10 +787,29 @@ provider.
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A site's Bao down       | its nodes keep the in-memory DEK; restart blocked until it returns; other sites unaffected; quorum unaffected while a majority of voters is healthy |
 | A site's SPIRE down     | renewal for that site stalls until leaf lifetime and margin run out; federated bundles keep other sites trusted                                     |
+| A site's Bao down, with SPIRE upstream on its PKI | SPIRE cannot renew its upstream-signed intermediate; nodes keep the in-memory DEK, but once the intermediate and then the leaf SVIDs lapse they cannot log in to Bao, even after it returns. The tolerated Bao outage is the remaining intermediate validity plus one leaf lifetime; a node restart inside that window is blocked until Bao is back. Recovery uses the break-glass token or file source (below) |
 | A core site lost        | remaining voters keep quorum (for example 2 of 3); replacement site onboarded (11.2.4) and federated before nodes join                              |
 | Partition between sites | each side keeps its own SPIRE and Bao; the quorum side continues; evaluation replicas serve to `max_staleness`                                      |
 | A site's CA compromised | remove that trust domain from all peers' bundles (trust reset scoped to one site); drop its public key from the wrap set and rotate the DEK         |
 | SPIRE DB                | one PostgreSQL/Patroni/etcd cluster per site inside the site's Tier 1 boundary; no cross-site DB replication                                        |
+
+**11.4 Authenticating to the site's Bao.** A node logs in to its own site's
+Bao with its X.509-SVID through Bao's TLS certificate auth method (a role with
+`allowed_uri_sans` for the storage SPIFFE path and the site's Bao PKI root in
+the role's `certificate`), or with a JWT-SVID through the JWT auth method. The
+Bao listener must therefore terminate TLS itself and request client
+certificates. Two rules keep the loop SPIRE, Bao, keystone from deadlocking:
+
+- **The Bao listener certificate is not issued by SPIRE.** It comes from the
+  site Bao's PKI or is static, otherwise a cold start of Bao would need a SPIRE
+  that in turn needs Bao.
+- **Bao's seal does not depend on keystone or SPIRE** (Shamir shares or an HSM;
+  for a Bao that is auto-unsealed from the root Bao, the root's own seal
+  follows the same rule).
+
+Each node keeps a break-glass token or JWT file source for recovery after an
+SVID lapse. The `transit` KEK provider supports token file, JWT login and
+X.509-SVID certificate login.
 
 ### 12. Security model for foreign principals
 

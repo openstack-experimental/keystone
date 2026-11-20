@@ -43,7 +43,7 @@ pub(super) fn make_sm(current: Arc<DekEpoch>) -> (FjallStateMachine, tempfile::T
     let (quarantine_tx, quarantine_rx) = tokio::sync::mpsc::channel(1);
     drop(quarantine_rx);
 
-    let sm = FjallStateMachine::new(
+    let sm = block_on(FjallStateMachine::new(
         db,
         td.path().join("snapshots"),
         1, // node_id
@@ -54,13 +54,18 @@ pub(super) fn make_sm(current: Arc<DekEpoch>) -> (FjallStateMachine, tempfile::T
         reencrypt_tx,
         quarantine_tx,
         Arc::new(Mutex::new(HashMap::new())),
-    )
+    ))
     .expect("construct state machine");
     (sm, td)
 }
 
 /// [`make_sm`] with a version-1 epoch filled with `seed`, also persisted
 /// as the node's current DEK (see [`seed_current_dek`]).
+/// Drive an async call to completion from a synchronous test.
+pub(super) fn block_on<F: std::future::Future>(f: F) -> F::Output {
+    futures::executor::block_on(f)
+}
+
 pub(super) fn make_seeded_sm(seed: u8) -> (FjallStateMachine, tempfile::TempDir) {
     let (sm, td) = make_sm(test_epoch(seed, 1));
     seed_current_dek(&sm, [seed; 32], 1);
@@ -72,7 +77,7 @@ pub(super) fn make_seeded_sm(seed: u8) -> (FjallStateMachine, tempfile::TempDir)
 /// snapshot building now requires (the snapshot's DEK manifest is derived
 /// from it).
 pub(super) fn seed_current_dek(sm: &FjallStateMachine, raw: [u8; 32], version: u32) {
-    let wrapped = sm.kek.wrap_dek(&raw).expect("wrap dek");
+    let wrapped = block_on(sm.kek.wrap_dek(&raw)).expect("wrap dek");
     let mut persisted = version.to_be_bytes().to_vec();
     persisted.extend_from_slice(&wrapped);
     sm.meta

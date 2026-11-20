@@ -394,14 +394,14 @@ jobs:
               cargo hack check --each-feature --no-dev-deps \
                 --exclude-no-default-features --skip fips,sdk \
                 -p openstack-keystone-tls-provider \
-                -p openstack-keystone-storage-crypto \
                 -p openstack-keystone-identity-driver-ldap \
                 -p openstack-keystone-telemetry
-              # cadf needs a crypto backend next to every other feature, so
+              # cadf and storage-crypto need a crypto backend next to every
+              # other feature (`software-site-key` has none of its own), so
               # keep `ring` on for the combinations.
               cargo hack check --each-feature --no-dev-deps \
                 --exclude-no-default-features --skip fips --features ring \
-                -p cadf
+                -p cadf -p openstack-keystone-storage-crypto
     name: Features (${{ matrix.name }})
 
     steps:

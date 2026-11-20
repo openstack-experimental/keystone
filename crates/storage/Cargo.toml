@@ -57,6 +57,7 @@ openstack-keystone-storage-crypto.workspace = true
 openstack-keystone-telemetry.workspace = true
 openstack-keystone-storage-crypto-pkcs11 = { workspace = true, optional = true }
 openstack-keystone-storage-crypto-tpm = { workspace = true, optional = true }
+openstack-keystone-storage-crypto-transit = { workspace = true, optional = true }
 oslo-config.workspace = true
 prost.workspace = true
 rand.workspace = true
@@ -112,3 +113,4 @@ mock = []
 fips = ["openstack-keystone-storage-crypto/fips"]
 pkcs11 = ["dep:openstack-keystone-storage-crypto-pkcs11"]
 tpm = ["dep:openstack-keystone-storage-crypto-tpm"]
+transit = ["dep:openstack-keystone-storage-crypto-transit"]

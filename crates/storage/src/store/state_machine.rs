@@ -397,7 +397,7 @@ impl FjallStateMachine {
     ///
     /// # Returns
     /// A `Result` containing the `FjallStateMachine`, or a `StoreError`.
-    pub fn new(
+    pub async fn new(
         db: Arc<Database>,
         snapshot_dir: PathBuf,
         node_id: u64,
@@ -422,12 +422,15 @@ impl FjallStateMachine {
             let (key, value) = item.into_inner()?;
             shadow_entries.push((key.to_vec(), value.to_vec()));
         }
-        let shadow_deks = Arc::new(Mutex::new(shadow_epochs(
-            shadow_entries
-                .iter()
-                .map(|(k, v)| (k.as_slice(), v.as_slice())),
-            kek.as_ref(),
-        )));
+        let shadow_deks = Arc::new(Mutex::new(
+            shadow_epochs(
+                shadow_entries
+                    .iter()
+                    .map(|(k, v)| (k.as_slice(), v.as_slice())),
+                kek.as_ref(),
+            )
+            .await,
+        ));
 
         Ok(Self {
             db,

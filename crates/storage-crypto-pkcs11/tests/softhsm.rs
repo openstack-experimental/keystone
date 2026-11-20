@@ -39,6 +39,15 @@ const SO_PIN: &str = "1234567890";
 const USER_PIN: &str = "fedcba0987";
 const TOKEN_LABEL: &str = "keystone-test";
 
+/// Drive an async KEK call to completion from a synchronous test.
+fn run<F: std::future::Future>(f: F) -> F::Output {
+    ok(
+        tokio::runtime::Builder::new_current_thread().build(),
+        "build runtime",
+    )
+    .block_on(f)
+}
+
 fn module_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("TEST_PKCS11_MODULE") {
         return Some(PathBuf::from(p));
@@ -162,9 +171,9 @@ fn test_wrap_unwrap_roundtrip() {
             .expect("open KEK");
 
         let dek = [0xABu8; 32];
-        let wrapped = kek.wrap_dek(&dek).expect("wrap");
+        let wrapped = run(kek.wrap_dek(&dek)).expect("wrap");
         assert_eq!(wrapped.len(), 60); // 12-byte nonce + 32-byte ciphertext + 16-byte tag
-        let unwrapped = kek.unwrap_dek(&wrapped).expect("unwrap");
+        let unwrapped = run(kek.unwrap_dek(&wrapped)).expect("unwrap");
         assert_eq!(unwrapped.as_ref(), &dek);
     });
 }
@@ -180,13 +189,13 @@ fn test_wrap_produces_different_nonces() {
             .expect("open KEK");
 
         let dek = [0xCDu8; 32];
-        let w1 = kek.wrap_dek(&dek).expect("wrap 1");
-        let w2 = kek.wrap_dek(&dek).expect("wrap 2");
+        let w1 = run(kek.wrap_dek(&dek)).expect("wrap 1");
+        let w2 = run(kek.wrap_dek(&dek)).expect("wrap 2");
         assert_ne!(w1, w2);
         // Same DEK, different nonces -> different ciphertext, but both
         // unwrap back to the same plaintext.
-        assert_eq!(kek.unwrap_dek(&w1).expect("unwrap 1").as_ref(), &dek);
-        assert_eq!(kek.unwrap_dek(&w2).expect("unwrap 2").as_ref(), &dek);
+        assert_eq!(run(kek.unwrap_dek(&w1)).expect("unwrap 1").as_ref(), &dek);
+        assert_eq!(run(kek.unwrap_dek(&w2)).expect("unwrap 2").as_ref(), &dek);
     });
 }
 
@@ -201,10 +210,10 @@ fn test_unwrap_tampered_tag_fails() {
             .expect("open KEK");
 
         let dek = [0x11u8; 32];
-        let mut wrapped = kek.wrap_dek(&dek).expect("wrap");
+        let mut wrapped = run(kek.wrap_dek(&dek)).expect("wrap");
         *wrapped.last_mut().expect("non-empty") ^= 0xFF;
         assert!(matches!(
-            kek.unwrap_dek(&wrapped),
+            run(kek.unwrap_dek(&wrapped)),
             Err(CryptoError::AesDecrypt)
         ));
     });
@@ -221,10 +230,10 @@ fn test_unwrap_tampered_ciphertext_fails() {
             .expect("open KEK");
 
         let dek = [0x22u8; 32];
-        let mut wrapped = kek.wrap_dek(&dek).expect("wrap");
+        let mut wrapped = run(kek.wrap_dek(&dek)).expect("wrap");
         wrapped[20] ^= 0xFF; // inside the ciphertext region
         assert!(matches!(
-            kek.unwrap_dek(&wrapped),
+            run(kek.unwrap_dek(&wrapped)),
             Err(CryptoError::AesDecrypt)
         ));
     });
@@ -241,7 +250,7 @@ fn test_open_reuses_existing_key_across_sessions() {
             .expect("open first session");
 
         let dek = [0x33u8; 32];
-        let wrapped = kek1.wrap_dek(&dek).expect("wrap with first session");
+        let wrapped = run(kek1.wrap_dek(&dek)).expect("wrap with first session");
         drop(kek1);
 
         // A second provider opened against the same token/label must
@@ -250,9 +259,7 @@ fn test_open_reuses_existing_key_across_sessions() {
         let kek2 = token
             .open("reuse-kek", USER_PIN.as_bytes(), false)
             .expect("reopen without auto_generate");
-        let unwrapped = kek2
-            .unwrap_dek(&wrapped)
-            .expect("unwrap with second session");
+        let unwrapped = run(kek2.unwrap_dek(&wrapped)).expect("unwrap with second session");
         assert_eq!(unwrapped.as_ref(), &dek);
     });
 }
@@ -299,7 +306,7 @@ fn test_open_slot_by_label_matches_slot_by_id() {
                 .open("slot-id-kek", USER_PIN.as_bytes(), true)
                 .expect("open by label");
             let dek = [0x44u8; 32];
-            kek_by_label.wrap_dek(&dek).expect("wrap via label session")
+            run(kek_by_label.wrap_dek(&dek)).expect("wrap via label session")
         };
 
         // Slot ids handed out by SoftHSM are only valid within the
@@ -326,9 +333,7 @@ fn test_open_slot_by_label_matches_slot_by_id() {
         })
         .expect("open by slot id");
 
-        let unwrapped = kek_by_id
-            .unwrap_dek(&wrapped)
-            .expect("unwrap via id session");
+        let unwrapped = run(kek_by_id.unwrap_dek(&wrapped)).expect("unwrap via id session");
         assert_eq!(unwrapped.as_ref(), &[0x44u8; 32]);
     });
 }
