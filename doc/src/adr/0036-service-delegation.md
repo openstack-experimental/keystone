@@ -365,7 +365,9 @@ Rules applied at creation:
   for the caller's own scope — further capped by
   `DelegationPolicy.max_role_ids`. Omitting `roles` freezes the caller's current
   effective roles, as application credentials do.
-- `expires_at` is capped by `max_grant_lifetime`.
+- `expires_at` is capped by `max_grant_lifetime`. If both `expires_at` and
+  `max_grant_lifetime` are absent, the configured
+  `[oauth2] access_token_lifetime_minutes` supplies the expiry in seconds.
 - The grantee client must exist, be enabled, and have
   `DelegationPolicy.service_grants == true`. For a grantee in another domain,
   `cross_domain` must be true. A grant naming anything else is rejected at

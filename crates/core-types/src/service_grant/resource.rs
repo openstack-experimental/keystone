@@ -128,7 +128,7 @@ pub struct ServiceGrant {
     /// Delegated role ids; never more than the grantor held at creation,
     /// and intersected with the grantor's live roles at every redemption.
     pub role_ids: Vec<String>,
-    /// Expiry; `None` = until revoked.
+    /// Expiry. Always set for grants created with a default lifetime;
     pub expires_at: Option<DateTime<Utc>>,
     /// Free-form description.
     pub description: Option<String>,
@@ -160,8 +160,8 @@ impl ServiceGrant {
 pub struct ServiceGrantCreate {
     /// Free-form description.
     pub description: Option<String>,
-    /// Expiry; defaults to the client's `max_grant_lifetime` when it has
-    /// one.
+    /// Expiry; defaults to the client's `max_grant_lifetime`, or the
+    /// configured `[oauth2] access_token_lifetime_minutes` when it has none.
     pub expires_at: Option<DateTime<Utc>>,
     /// `client_id` of the delegatable service.
     pub grantee_client_id: String,

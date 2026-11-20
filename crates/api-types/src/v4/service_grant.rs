@@ -88,7 +88,7 @@ pub struct ServiceGrant {
     /// Whether the grant may be redeemed.
     pub enabled: bool,
 
-    /// Expiry, if any.
+    /// Expiry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<DateTime<Utc>>,
 
@@ -122,7 +122,8 @@ pub struct ServiceGrantCreate {
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub description: Option<String>,
 
-    /// Expiry; defaults to the grantee's `max_grant_lifetime`, if any.
+    /// Expiry; defaults to the grantee's `max_grant_lifetime`, or the
+    /// configured `[oauth2] access_token_lifetime_minutes` when it has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<DateTime<Utc>>,
 

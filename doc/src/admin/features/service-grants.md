@@ -82,8 +82,9 @@ requires an administrator.
   id added to the ceiling must be an existing role; ids already stored are not
   re-checked, so a role deleted later simply never matches and does not block
   edits.
-- `max_grant_lifetime` (seconds) caps `expires_at`. Without it a grant may be
-  created without an expiry.
+- `max_grant_lifetime` (seconds) caps `expires_at`. Without it, an omitted
+  `expires_at` uses `[oauth2] access_token_lifetime_minutes` converted to
+  seconds; explicitly supplied expiries are not capped by this client setting.
 - `max_grants_per_project` caps live grants per (project, client). The
   `[delegation] max_grants_per_project` backstop applies on top. Exceeding
   either answers `429`.
