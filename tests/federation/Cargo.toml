@@ -39,6 +39,11 @@ path = "src/keycloak.rs"
 test = false
 
 [[test]]
+name = "keycloak_token_exchange"
+path = "src/keycloak_token_exchange.rs"
+test = false
+
+[[test]]
 name = "github"
 path = "src/github.rs"
 test = false
