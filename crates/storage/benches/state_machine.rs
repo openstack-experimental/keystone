@@ -40,7 +40,7 @@ fn bench_state_machine(c: &mut Criterion) {
     > = Arc::new(Mutex::new(HashMap::new()));
     #[allow(unused)]
     let sm = Arc::new(
-        FjallStateMachine::new(
+        futures::executor::block_on(FjallStateMachine::new(
             db,
             snapshot_dir,
             1, // node_id
@@ -51,7 +51,7 @@ fn bench_state_machine(c: &mut Criterion) {
             _reencrypt_tx,
             _quarantine_tx,
             pending_rotations,
-        )
+        ))
         .unwrap(),
     );
 

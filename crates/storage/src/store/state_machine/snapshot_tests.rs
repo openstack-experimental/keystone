@@ -340,9 +340,8 @@ async fn backup_restores_into_a_node_with_a_different_dek() {
         "precondition: the target's own DEK must not read the source's records"
     );
 
-    let (snapshot, _utc_epoch, dek_version) = target
-        .decode_backup_blob(&blob)
-        .expect("decode backup blob");
+    let (snapshot, _utc_epoch, dek_version) =
+        block_on(target.decode_backup_blob(&blob)).expect("decode backup blob");
     assert_eq!(dek_version, 1);
     target
         .install_snapshot(&snapshot.meta, snapshot.snapshot)
@@ -377,7 +376,7 @@ async fn backup_with_foreign_kek_is_rejected() {
 
     let (mut target, _td2) = make_sm();
     Arc::get_mut(&mut target).expect("unique").kek = Arc::new(EnvKek::from_bytes([0x24u8; 32]));
-    assert!(target.decode_backup_blob(&blob).is_err());
+    assert!(block_on(target.decode_backup_blob(&blob)).is_err());
 }
 
 /// A live restore replaces the data and DEKs but keeps the node's own
@@ -424,8 +423,7 @@ async fn live_restore_keeps_local_raft_bookkeeping() {
             .insert(restore_stage_key("r1", seq as u32), *chunk)
             .expect("stage chunk");
     }
-    target
-        .apply_restore("r1", chunks.len() as u32, blob.len() as u64)
+    block_on(target.apply_restore("r1", chunks.len() as u32, blob.len() as u64))
         .expect("live restore");
 
     assert!(target.data().get(b"stale").expect("get").is_none());
@@ -513,7 +511,7 @@ async fn backup_without_dek_manifest_still_decodes() {
     let mut legacy = blob[..LEGACY_SNAPSHOT_HEADER_LEN].to_vec();
     legacy.extend_from_slice(encrypted);
 
-    sm.decode_backup_blob(&legacy).expect("legacy layout");
+    block_on(sm.decode_backup_blob(&legacy)).expect("legacy layout");
 }
 
 /// A restore rejected on apply leaves the state alone and discards its
@@ -524,9 +522,7 @@ fn rejected_live_restore_is_not_fatal() {
     sm.meta
         .insert(restore_stage_key("r1", 0), b"not a backup")
         .expect("stage chunk");
-    let err = sm
-        .apply_restore("r1", 1, 12)
-        .expect_err("garbage must be rejected");
+    let err = block_on(sm.apply_restore("r1", 1, 12)).expect_err("garbage must be rejected");
     assert!(matches!(err, RestoreError::Rejected(_)), "{err:?}");
     assert_eq!(sm.meta.prefix(RESTORE_STAGE_PREFIX.as_bytes()).count(), 0);
 }
@@ -553,7 +549,7 @@ async fn live_restore_with_missing_chunk_is_rejected() {
         .insert(restore_stage_key("r2", 0), &blob[..half])
         .expect("stage chunk 0");
     // chunk 1 never arrives
-    assert!(target.apply_restore("r2", 2, blob.len() as u64).is_err());
+    assert!(block_on(target.apply_restore("r2", 2, blob.len() as u64)).is_err());
     assert!(target.data().get(b"keep").expect("get").is_some());
     assert_eq!(
         target.meta.prefix(RESTORE_STAGE_PREFIX.as_bytes()).count(),

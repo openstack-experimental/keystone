@@ -15,6 +15,9 @@
 //! The [`RaftStateMachine`] implementation: applying committed entries.
 
 use super::*;
+use zeroize::Zeroizing;
+
+use crate::kek_retry::unwrap_dek_retrying;
 
 impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
     type SnapshotBuilder = Self;
@@ -59,6 +62,44 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             // function, which now covers the whole stream rather than one
             // entry.
             let apply_start = Instant::now();
+            let last_applied_log = entry.log_id();
+            // Everything that may call the KEK provider runs here, before
+            // the lifecycle lock is taken and before any write is staged: a
+            // provider can be a remote key store, and a lock must not be
+            // held across a network call. An unreachable key store is waited
+            // for, not treated as a failed entry, so every node ends up
+            // with the same state.
+            let command = entry
+                .app_data
+                .as_ref()
+                .map(|raw| StoreCommand::unpack(raw))
+                .transpose()?;
+            let mut restore_outcome: Option<Result<(), RestoreError>> = None;
+            let mut unwrapped_deks: HashMap<Vec<u8>, Zeroizing<[u8; 32]>> = HashMap::new();
+            let mut unwrap_failures: HashMap<Vec<u8>, String> = HashMap::new();
+            match &command {
+                Some(StoreCommand::RestoreApply {
+                    restore_id,
+                    chunks,
+                    total_len,
+                }) => {
+                    restore_outcome =
+                        Some(self.apply_restore(restore_id, *chunks, *total_len).await);
+                }
+                Some(StoreCommand::Transaction(mutations)) => {
+                    for wrapped in self.deks_to_unwrap(mutations) {
+                        match unwrap_dek_retrying(self.kek.as_ref(), &wrapped).await {
+                            Ok(raw) => {
+                                unwrapped_deks.insert(wrapped, raw);
+                            }
+                            Err(e) => {
+                                unwrap_failures.insert(wrapped, e.to_string());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
             // Held for this entry's whole processing+commit (there is no
             // further `.await` in this loop body until the next iteration),
             // so a concurrent `drop_keyspace` can't observe a keyspace as
@@ -70,7 +111,6 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                     .read()
                     .unwrap_or_else(|p| p.into_inner()),
             );
-            let last_applied_log = entry.log_id();
             let mut batch = self.db.batch();
             let mut has_violations = false;
             let mut pending_dek_swap: Option<(Arc<DekEpoch>, bool)> = None;
@@ -81,8 +121,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             // commits, once the lifecycle read guard is released.
             let mut pending_keyspace_drops: Vec<String> = Vec::new();
 
-            let response = if let Some(store_req) = entry.app_data {
-                match StoreCommand::unpack(&store_req)? {
+            let response = if let Some(command) = command {
+                match command {
                     StoreCommand::RestoreChunk {
                         restore_id,
                         seq,
@@ -107,13 +147,11 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                         }
                         (None, vec![])
                     }
-                    StoreCommand::RestoreApply {
-                        restore_id,
-                        chunks,
-                        total_len,
-                    } => {
+                    StoreCommand::RestoreApply { restore_id, .. } => {
                         drop(lifecycle_guard.take());
-                        let violations = match self.apply_restore(&restore_id, chunks, total_len) {
+                        let violations = match restore_outcome.take().unwrap_or_else(|| {
+                            Err(RestoreError::Fatal(io::Error::other("restore not run")))
+                        }) {
                             Ok(()) => vec![],
                             Err(RestoreError::Rejected(description)) => {
                                 tracing::error!(
@@ -491,10 +529,11 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         violations.push(v);
                                         continue;
                                     }
-                                    let raw_dek = self
-                                        .kek
-                                        .unwrap_dek(&wrapped_dek)
-                                        .map_err(|e| io::Error::other(e.to_string()))?;
+                                    let raw_dek = take_unwrapped_dek(
+                                        &unwrapped_deks,
+                                        &unwrap_failures,
+                                        &wrapped_dek,
+                                    )?;
                                     let locked_dek = LockedKey::from_raw(*raw_dek);
                                     let new_epoch = Arc::new(
                                         DekEpoch::from_raw(locked_dek, dek_version)
@@ -770,10 +809,11 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                                 format!("{PENDING_ROTATION_PREFIX}{rotation_id}");
                                             batch.remove(&self.meta, meta_key.as_bytes());
 
-                                            let raw_dek =
-                                                self.kek
-                                                    .unwrap_dek(&entry.wrapped_dek)
-                                                    .map_err(|e| io::Error::other(e.to_string()))?;
+                                            let raw_dek = take_unwrapped_dek(
+                                                &unwrapped_deks,
+                                                &unwrap_failures,
+                                                &entry.wrapped_dek,
+                                            )?;
                                             let locked_dek = LockedKey::from_raw(*raw_dek);
                                             let new_epoch = Arc::new(
                                                 DekEpoch::from_raw(locked_dek, entry.dek_version)
@@ -1183,10 +1223,12 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
         let last_membership_bytes = serialize(&meta.last_membership)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-        let manifest = self.install_payload(
-            payload,
-            RaftBookkeeping::Install(last_applied_bytes, last_membership_bytes),
-        )?;
+        let manifest = self
+            .install_payload(
+                payload,
+                RaftBookkeeping::Install(last_applied_bytes, last_membership_bytes),
+            )
+            .await?;
 
         let snapshot_idx: u64 = rand::rng().random_range(0..1000);
         let snapshot_id = if let Some(last) = meta.last_log_id.as_ref() {
@@ -1212,5 +1254,46 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
         self.persist_snapshot_file(&snapshot_id, &file_bytes, &manifest)?;
 
         Ok(())
+    }
+}
+
+/// The DEK unwrapped ahead of the apply loop for `wrapped`.
+fn take_unwrapped_dek(
+    unwrapped: &HashMap<Vec<u8>, Zeroizing<[u8; 32]>>,
+    failures: &HashMap<Vec<u8>, String>,
+    wrapped: &[u8],
+) -> io::Result<Zeroizing<[u8; 32]>> {
+    if let Some(raw) = unwrapped.get(wrapped) {
+        return Ok(Zeroizing::new(**raw));
+    }
+    Err(io::Error::other(match failures.get(wrapped) {
+        Some(e) => e.clone(),
+        None => "wrapped DEK was not unwrapped before apply".to_string(),
+    }))
+}
+
+impl FjallStateMachine {
+    /// The wrapped DEKs that applying `mutations` will unwrap: those of
+    /// `InstallDek` mutations and of the pending rotations that
+    /// `ConfirmPendingRotation` mutations would execute.
+    fn deks_to_unwrap(&self, mutations: &[MutationInner]) -> Vec<Vec<u8>> {
+        let mut out: Vec<Vec<u8>> = Vec::new();
+        for mutation in mutations {
+            match mutation {
+                MutationInner::InstallDek { wrapped_dek, .. } => out.push(wrapped_dek.clone()),
+                MutationInner::ConfirmPendingRotation { rotation_id, .. } => {
+                    if let Some(entry) = self
+                        .pending_rotations
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .get(rotation_id)
+                    {
+                        out.push(entry.wrapped_dek.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
     }
 }

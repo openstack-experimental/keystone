@@ -14,11 +14,13 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
+async-trait.workspace = true
 cryptoki.workspace = true
 openstack-keystone-storage-crypto.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["rt"] }
 tempfile.workspace = true
 temp-env.workspace = true

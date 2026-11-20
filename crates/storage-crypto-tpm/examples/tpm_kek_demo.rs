@@ -45,7 +45,8 @@ use openstack_keystone_storage_crypto::kek::KekProvider;
 use openstack_keystone_storage_crypto_tpm::{KeyReference, TpmKek, TpmKekParams};
 
 #[allow(clippy::print_stdout)]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tcti = std::env::var("TPM_KEK_TCTI")
         .unwrap_or_else(|_| "swtpm:host=127.0.0.1,port=2321".to_string());
     let context_file = std::env::var("TPM_KEK_CONTEXT_FILE")
@@ -75,14 +76,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let dek = [0x42u8; 32];
-    let wrapped = kek.wrap_dek(&dek)?;
+    let wrapped = kek.wrap_dek(&dek).await?;
     println!(
         "wrapped a 32-byte DEK into {} bytes: {}",
         wrapped.len(),
         hex_encode(&wrapped)
     );
 
-    let unwrapped = kek.unwrap_dek(&wrapped)?;
+    let unwrapped = kek.unwrap_dek(&wrapped).await?;
     assert_eq!(unwrapped.as_ref(), &dek, "round-trip must recover the DEK");
     println!("unwrapped successfully — round-trip verified");
 
@@ -90,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(last) = tampered.last_mut() {
         *last ^= 0xFF;
     }
-    match kek.unwrap_dek(&tampered) {
+    match kek.unwrap_dek(&tampered).await {
         Err(e) => println!("tampered ciphertext correctly rejected: {e}"),
         Ok(_) => return Err("tampered ciphertext was NOT rejected".into()),
     }

@@ -38,6 +38,7 @@ ring = ["dep:ring", "dep:rsa"]
 fips = ["dep:aws-lc-rs", "aws-lc-rs/fips"]
 
 [dependencies]
+async-trait.workspace = true
 aws-lc-rs = { workspace = true, optional = true }
 nix = { workspace = true, features = ["mman", "feature"] }
 ring = { workspace = true, optional = true }
@@ -47,4 +48,5 @@ tracing.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
 rsa = { workspace = true, features = ["sha2"] }

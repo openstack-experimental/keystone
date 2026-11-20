@@ -128,7 +128,22 @@ pub enum CryptoError {
     #[error("per-site DEK blob is not bound to this cluster, version and site")]
     SiteBindingMismatch,
 
+    /// The key store behind the KEK could not be reached or could not serve
+    /// the request now (network error, timeout, `5xx`, `429`, or a login that
+    /// stays denied). Retrying later may succeed.
+    #[error("key store is unavailable: {0}")]
+    KekUnavailable(String),
+
     /// The wrapped DEK blob has an unexpected size.
     #[error("wrapped DEK has wrong format or size")]
     WrappedDekSize,
+}
+
+impl CryptoError {
+    /// Whether the same operation may succeed if repeated later, because the
+    /// failure came from a remote key store being unreachable rather than from
+    /// the key or the input.
+    pub fn is_transient(&self) -> bool {
+        matches!(self, Self::KekUnavailable(_))
+    }
 }

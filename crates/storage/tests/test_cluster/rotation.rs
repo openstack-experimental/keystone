@@ -255,7 +255,7 @@ async fn test_emergency_dek_rotation_preserves_data_across_restart_inner() -> Re
     // path for `CreatePendingRotation`/`ConfirmPendingRotation`.
     let kek = EnvKek::from_bytes([0u8; 32]); // matches TEST_KEK_HEX
     let new_raw = generate_dek();
-    let wrapped_dek = kek.wrap_dek(new_raw.as_bytes())?;
+    let wrapped_dek = kek.wrap_dek(new_raw.as_bytes()).await?;
     let new_version = old_version + 1;
     let rotation_id = "test-emergency-rotation".to_string();
     let expires_at = std::time::SystemTime::now()
@@ -544,7 +544,7 @@ async fn test_rotation_under_concurrent_writes_never_reverts_a_write_inner() -> 
     for n in 1..=ROTATIONS {
         TypeConfig::sleep(Duration::from_millis(150)).await;
         let cmd = StoreCommand::Transaction(vec![MutationInner::InstallDek {
-            wrapped_dek: kek.wrap_dek(generate_dek().as_bytes())?,
+            wrapped_dek: kek.wrap_dek(generate_dek().as_bytes()).await?,
             dek_version: start_version + n,
             is_emergency: false,
         }]);
@@ -663,7 +663,7 @@ async fn test_automatic_dek_rotation_inner() -> Result<()> {
     // A rotation that lost the race for `version` must not replace it.
     let kek = EnvKek::from_bytes([0u8; 32]); // matches TEST_KEK_HEX
     let cmd = StoreCommand::Transaction(vec![MutationInner::InstallDek {
-        wrapped_dek: kek.wrap_dek(generate_dek().as_bytes())?,
+        wrapped_dek: kek.wrap_dek(generate_dek().as_bytes()).await?,
         dek_version: version,
         is_emergency: false,
     }]);

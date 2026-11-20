@@ -263,8 +263,9 @@ fn generate_key(session: &Session, label: &str) -> Result<ObjectHandle, CryptoEr
         .map_err(|e| CryptoError::Pkcs11(format!("generating PKCS#11 AES key: {e}")))
 }
 
+#[async_trait::async_trait]
 impl KekProvider for Pkcs11Kek {
-    fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
+    async fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
         // Layout: [12-byte nonce][32-byte ciphertext][16-byte tag]
         if wrapped.len() != 12 + 32 + 16 {
             return Err(CryptoError::WrappedDekSize);
@@ -296,7 +297,7 @@ impl KekProvider for Pkcs11Kek {
         Ok(out)
     }
 
-    fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
+    async fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
         if self.token_generated_iv {
             return self.wrap_token_iv(dek);
         }

@@ -5832,11 +5832,13 @@ dependencies = [
 name = "openstack-keystone-storage-crypto"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "aws-lc-rs",
  "nix",
  "ring",
  "rsa 0.9.10",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
  "zeroize",
 ]
@@ -5845,10 +5847,12 @@ dependencies = [
 name = "openstack-keystone-storage-crypto-pkcs11"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "cryptoki",
  "openstack-keystone-storage-crypto",
  "temp-env",
  "tempfile",
+ "tokio",
  "tracing",
  "zeroize",
 ]
@@ -5857,10 +5861,12 @@ dependencies = [
 name = "openstack-keystone-storage-crypto-tpm"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "openstack-keystone-storage-crypto",
  "rand 0.10.3",
  "subtle",
  "tempfile",
+ "tokio",
  "tracing",
  "tss-esapi",
  "zeroize",

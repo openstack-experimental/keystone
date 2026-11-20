@@ -835,6 +835,7 @@ pub(crate) async fn adopt_cluster_dek(
         )
     })?;
     sm.install_fetched_dek(fetch_resp.dek_version, &fetch_resp.wrapped_dek)
+        .await
         .map_err(|e| {
             StoreError::Other(eyre!(
                 "failed to adopt cluster DEK version {}: {e}; this node's KEK material \
@@ -850,6 +851,7 @@ pub(crate) async fn adopt_cluster_dek(
     // fetch above.
     for retired in &fetch_resp.retired {
         sm.install_fetched_retired_dek(retired.dek_version, &retired.wrapped_dek)
+            .await
             .map_err(|e| {
                 StoreError::Other(eyre!(
                     "failed to adopt retired cluster DEK version {}: {e}",

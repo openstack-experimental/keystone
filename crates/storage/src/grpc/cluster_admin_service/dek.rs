@@ -339,6 +339,7 @@ impl ClusterAdminServiceImpl {
         let wrapped_dek = self
             .kek
             .wrap_dek(new_raw.as_bytes())
+            .await
             .map_err(|e| Status::internal(format!("failed to wrap new DEK: {e}")))?;
 
         if req.emergency {

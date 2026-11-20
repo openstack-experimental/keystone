@@ -425,8 +425,9 @@ fn write_key_blob(path: &Path, private: &Private, public: &Public) -> Result<(),
         .map_err(|e| CryptoError::Tpm(format!("writing TPM key context file {path:?}: {e}")))
 }
 
+#[async_trait::async_trait]
 impl KekProvider for TpmKek {
-    fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
+    async fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
         // Layout: [16-byte iv][32-byte ciphertext][32-byte HMAC tag]
         if wrapped.len() != 16 + 32 + 32 {
             return Err(CryptoError::WrappedDekSize);
@@ -472,7 +473,7 @@ impl KekProvider for TpmKek {
         Ok(out)
     }
 
-    fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
+    async fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
         let iv_bytes: [u8; 16] = rand::rng().random();
         let mut context = self
             .context

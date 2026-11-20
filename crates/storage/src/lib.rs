@@ -58,6 +58,7 @@ pub mod bootstrap;
 pub mod config;
 mod error;
 pub mod grpc;
+mod kek_retry;
 pub mod leader_contact;
 pub mod local_emergency;
 #[cfg(feature = "mock")]

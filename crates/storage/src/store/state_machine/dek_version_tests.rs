@@ -111,7 +111,7 @@ fn fetch_and_install_retired_dek_round_trips() {
     //     epoch 2 and persist epoch 1's wrapped bytes as retired, the
     //     same way `InstallDek`'s apply() does.
     let raw_v1 = [0xAAu8; 32];
-    let wrapped_v1 = kek.wrap_dek(&raw_v1).expect("wrap v1");
+    let wrapped_v1 = block_on(kek.wrap_dek(&raw_v1)).expect("wrap v1");
     let epoch_v1 =
         Arc::new(DekEpoch::from_raw(LockedKey::from_raw(raw_v1), 1).expect("construct epoch 1"));
     let (leader_sm, _td1) = make_sm(epoch_v1);
@@ -138,8 +138,7 @@ fn fetch_and_install_retired_dek_round_trips() {
     let (joiner_sm, _td2) = make_sm(test_epoch(0x11, 2));
     assert!(joiner_sm.old_deks.lock().unwrap().is_empty());
 
-    joiner_sm
-        .install_fetched_retired_dek(1, &wrapped_v1)
+    block_on(joiner_sm.install_fetched_retired_dek(1, &wrapped_v1))
         .expect("install fetched retired DEK");
     assert!(joiner_sm.old_deks.lock().unwrap().contains_key(&1));
 

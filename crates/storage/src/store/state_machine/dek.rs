@@ -16,6 +16,7 @@
 //! encryption.
 
 use super::*;
+use crate::kek_retry::unwrap_dek_retrying;
 
 impl FjallStateMachine {
     /// Returns this node's currently-installed DEK epoch in its on-disk
@@ -367,7 +368,7 @@ impl FjallStateMachine {
     /// unwrapped with this node's own KEK — which signals the KEK material
     /// differs from the leader's (ADR 0016-v2 §2.5), a misconfiguration that
     /// must abort the join rather than silently fall back to a private DEK.
-    pub fn install_fetched_dek(
+    pub async fn install_fetched_dek(
         &self,
         dek_version: u32,
         wrapped_dek: &[u8],
@@ -379,7 +380,7 @@ impl FjallStateMachine {
                  node registers as a learner, while `data` is still empty)"
             )));
         }
-        let raw = self.kek.unwrap_dek(wrapped_dek)?;
+        let raw = unwrap_dek_retrying(self.kek.as_ref(), wrapped_dek).await?;
         let locked = LockedKey::from_raw(*raw);
         let epoch = Arc::new(DekEpoch::from_raw(locked, dek_version)?);
 
@@ -410,7 +411,7 @@ impl FjallStateMachine {
     ///
     /// Fails closed, without writing anything, if `wrapped_dek` cannot be
     /// unwrapped with this node's own KEK.
-    pub fn install_fetched_retired_dek(
+    pub async fn install_fetched_retired_dek(
         &self,
         dek_version: u32,
         wrapped_dek: &[u8],
@@ -422,7 +423,7 @@ impl FjallStateMachine {
                  a learner, while `data` is still empty)"
             )));
         }
-        let raw = self.kek.unwrap_dek(wrapped_dek)?;
+        let raw = unwrap_dek_retrying(self.kek.as_ref(), wrapped_dek).await?;
         let locked = LockedKey::from_raw(*raw);
         let epoch = Arc::new(DekEpoch::from_raw(locked, dek_version)?);
 

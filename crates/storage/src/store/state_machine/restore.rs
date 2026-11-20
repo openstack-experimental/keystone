@@ -15,6 +15,7 @@
 //! Restore of operator backups and snapshot installation.
 
 use super::*;
+use crate::kek_retry::unwrap_dek_retrying;
 
 /// `meta` key prefix under which the chunks of an in-flight live restore are
 /// staged (`<prefix><restore_id>:<seq u32 BE>`). Staged chunks travel in
@@ -82,7 +83,7 @@ pub(super) fn shadow_key_version(key: &[u8]) -> Option<u32> {
 /// Unwraps the shadow DEK entries among `entries` (`meta` key/value pairs).
 /// Entries that cannot be unwrapped are skipped with a warning: they only
 /// affect the readability of pre-restore history.
-pub(super) fn shadow_epochs<'a>(
+pub(super) async fn shadow_epochs<'a>(
     entries: impl Iterator<Item = (&'a [u8], &'a [u8])>,
     kek: &dyn KekProvider,
 ) -> Vec<Arc<DekEpoch>> {
@@ -91,8 +92,8 @@ pub(super) fn shadow_epochs<'a>(
         let Some(version) = shadow_key_version(key) else {
             continue;
         };
-        match kek
-            .unwrap_dek(wrapped)
+        match unwrap_dek_retrying(kek, wrapped)
+            .await
             .map_err(|e| e.to_string())
             .and_then(|raw| {
                 DekEpoch::from_raw(LockedKey::from_raw(*raw), version).map_err(|e| e.to_string())
@@ -130,13 +131,15 @@ impl FjallStateMachine {
     /// untouched. An I/O error while writing is [`RestoreError::Fatal`].
     ///
     /// Must be called without `keyspace_lifecycle` held.
-    pub(super) fn apply_restore(
+    pub(super) async fn apply_restore(
         &self,
         restore_id: &str,
         chunks: u32,
         total_len: u64,
     ) -> Result<(), RestoreError> {
-        let outcome = self.restore_from_staged(restore_id, chunks, total_len);
+        let outcome = self
+            .restore_from_staged(restore_id, chunks, total_len)
+            .await;
         // On success the install already wiped `meta` (staging included);
         // on rejection the chunks must still go.
         if matches!(outcome, Err(RestoreError::Rejected(_))) {
@@ -152,11 +155,12 @@ impl FjallStateMachine {
     /// The blob format is `[dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8] ++
     /// AES-256-GCM(snapshot_file_msgpack)`.  Returns the decoded `Snapshot`
     /// together with the (utc_epoch, dek_version) pair for audit logging.
-    pub fn decode_backup_blob(
+    pub async fn decode_backup_blob(
         &self,
         bytes: &[u8],
     ) -> Result<(crate::types::Snapshot, u64, u32), crate::StoreError> {
-        let (snapshot_file, dek_version, utc_epoch) = self.decrypt_backup_file(bytes)?;
+        let (snapshot_file, dek_version, utc_epoch) =
+            self.decrypt_backup_file(bytes, false).await?;
 
         let data_bytes = rmp_serde::to_vec(&snapshot_file.payload)
             .map_err(|e| crate::StoreError::Other(eyre::eyre!("snapshot re-serialize: {e}")))?;
@@ -172,13 +176,15 @@ impl FjallStateMachine {
     /// trying the DEK epochs the backup's own manifest carries (unwrapped
     /// with this node's KEK): this node usually holds a different DEK than
     /// the cluster that produced the backup.
-    pub(super) fn decrypt_backup_file(
+    pub(super) async fn decrypt_backup_file(
         &self,
         bytes: &[u8],
+        retry: bool,
     ) -> Result<(SnapshotFile, u32, u64), crate::StoreError> {
         let extra: Vec<Arc<DekEpoch>> = match read_dek_manifest(bytes) {
             Ok(manifest) => {
-                let (current, retired) = dek_epochs_from_manifest(&manifest, self.kek.as_ref())?;
+                let (current, retired) =
+                    dek_epochs_from_manifest(&manifest, self.kek.as_ref(), retry).await?;
                 std::iter::once(current)
                     .chain(retired.into_values())
                     .collect()
@@ -264,7 +270,7 @@ impl FjallStateMachine {
     /// [`io::ErrorKind::InvalidData`]; anything else happened while writing.
     ///
     /// Returns the payload's [`DekManifest`].
-    pub(super) fn install_payload(
+    pub(super) async fn install_payload(
         &self,
         payload: SnapshotPayload,
         bookkeeping: RaftBookkeeping,
@@ -278,7 +284,8 @@ impl FjallStateMachine {
         let manifest = dek_manifest_from_payload(&payload)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         let (new_current_dek, new_old_deks) =
-            dek_epochs_from_manifest(&manifest, self.kek.as_ref())
+            dek_epochs_from_manifest(&manifest, self.kek.as_ref(), true)
+                .await
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         let new_revoked: HashSet<u32> = payload
             .keyspaces
@@ -293,6 +300,43 @@ impl FjallStateMachine {
                     .ok()
             })
             .collect();
+
+        // The DEK epochs this node keeps readable are unwrapped here, before
+        // the lifecycle lock is taken: unwrapping may call a remote key store
+        // and must not run while the lock is held. `apply()` and installs are
+        // serialised by Raft, so nothing changes the DEK entries meanwhile.
+        let displaced = if keep_local {
+            self.displaced_dek_entries()?
+        } else {
+            Vec::new()
+        };
+        let installed_shadow: Vec<(&[u8], &[u8])> = if keep_local {
+            Vec::new()
+        } else {
+            payload
+                .keyspaces
+                .iter()
+                .filter(|(name, _)| name == "meta")
+                .flat_map(|(_, entries)| entries.iter())
+                .filter(|(key, _)| {
+                    !self.is_node_local_meta_key(key, false)
+                        && key.starts_with(DEK_SHADOW_PREFIX.as_bytes())
+                })
+                .map(|(k, v)| (k.as_slice(), v.as_slice()))
+                .collect()
+        };
+        let shadow = match &bookkeeping {
+            RaftBookkeeping::Keep => {
+                shadow_epochs(
+                    displaced.iter().map(|(k, v)| (k.as_slice(), v.as_slice())),
+                    self.kek.as_ref(),
+                )
+                .await
+            }
+            RaftBookkeeping::Install(..) => {
+                shadow_epochs(installed_shadow.iter().copied(), self.kek.as_ref()).await
+            }
+        };
 
         // Guards the whole clear-and-repopulate sweep below against a
         // concurrent `apply()`/`drop_keyspace` — same rationale as
@@ -329,7 +373,6 @@ impl FjallStateMachine {
         // live cluster additionally keeps the Raft bookkeeping and the DEK
         // epochs it displaces.
         let mut kept: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-        let mut shadow: Vec<Arc<DekEpoch>> = Vec::new();
         for key in self.node_local_meta_keys(keep_local) {
             if let Some(value) = self
                 .meta
@@ -347,14 +390,7 @@ impl FjallStateMachine {
                 kept.push((key.to_vec(), value.to_vec()));
             }
         }
-        if keep_local {
-            let displaced = self.displaced_dek_entries()?;
-            shadow = shadow_epochs(
-                displaced.iter().map(|(k, v)| (k.as_slice(), v.as_slice())),
-                self.kek.as_ref(),
-            );
-            kept.extend(displaced);
-        }
+        kept.extend(displaced);
 
         let mut batch = self.db.batch();
 
@@ -369,7 +405,6 @@ impl FjallStateMachine {
             }
         }
 
-        let mut installed_shadow: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         for (name, entries) in payload.keyspaces {
             if SNAPSHOT_SKIP_KEYSPACES.contains(&name.as_str()) {
                 continue;
@@ -386,9 +421,6 @@ impl FjallStateMachine {
                     if self.is_node_local_meta_key(&key, keep_local) {
                         continue;
                     }
-                    if !keep_local && key.starts_with(DEK_SHADOW_PREFIX.as_bytes()) {
-                        installed_shadow.push((key.clone(), value.clone()));
-                    }
                 }
                 batch.insert(&ks, key, value);
             }
@@ -400,12 +432,6 @@ impl FjallStateMachine {
                     batch.insert(&self.meta, KEY_LAST_APPLIED_LOG, bytes);
                 }
                 batch.insert(&self.meta, KEY_LAST_MEMBERSHIP, last_membership_bytes);
-                shadow = shadow_epochs(
-                    installed_shadow
-                        .iter()
-                        .map(|(k, v)| (k.as_slice(), v.as_slice())),
-                    self.kek.as_ref(),
-                );
             }
             RaftBookkeeping::Keep => {}
         }
@@ -500,7 +526,7 @@ impl FjallStateMachine {
         vec![nonce_meta_prefix(self.node_id).into_bytes()]
     }
 
-    pub(super) fn restore_from_staged(
+    pub(super) async fn restore_from_staged(
         &self,
         restore_id: &str,
         chunks: u32,
@@ -556,10 +582,14 @@ impl FjallStateMachine {
         }
 
         let (file, _, _) = self
-            .decrypt_backup_file(&blob)
+            .decrypt_backup_file(&blob, true)
+            .await
             .map_err(|e| rejected(format!("invalid backup blob: {e}")))?;
         drop(blob);
-        match self.install_payload(file.payload, RaftBookkeeping::Keep) {
+        match self
+            .install_payload(file.payload, RaftBookkeeping::Keep)
+            .await
+        {
             Ok(_) => Ok(()),
             Err(e) if e.kind() == io::ErrorKind::InvalidData => {
                 Err(rejected(format!("installing backup: {e}")))
@@ -574,14 +604,15 @@ impl FjallStateMachine {
     ///
     /// The leader runs this before proposing a live restore so a bad backup
     /// is rejected up front rather than committed and rejected on every node.
-    pub fn validate_backup_payload(&self, payload_bytes: &[u8]) -> io::Result<()> {
+    pub async fn validate_backup_payload(&self, payload_bytes: &[u8]) -> io::Result<()> {
         let payload: SnapshotPayload = deserialize(payload_bytes)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         check_snapshot_format_version(payload.version)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let manifest = dek_manifest_from_payload(&payload)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        dek_epochs_from_manifest(&manifest, self.kek.as_ref())
+        dek_epochs_from_manifest(&manifest, self.kek.as_ref(), false)
+            .await
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         Ok(())
     }

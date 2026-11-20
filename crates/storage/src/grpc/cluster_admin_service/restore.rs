@@ -380,6 +380,7 @@ impl ClusterAdminServiceImpl {
             let (snapshot, utc_epoch, dek_version) = self
                 .sm
                 .decode_backup_blob(&buf)
+                .await
                 .map_err(|e| Status::invalid_argument(format!("invalid backup blob: {e}")))?;
             // The decrypted snapshot is all that is installed.
             drop(buf);
@@ -387,6 +388,7 @@ impl ClusterAdminServiceImpl {
             // written.
             self.sm
                 .validate_backup_payload(&snapshot.snapshot)
+                .await
                 .map_err(|e| Status::invalid_argument(format!("backup cannot be restored: {e}")))?;
             self.restore_uninitialized(snapshot, elect).await?;
             ("disaster_recovery", Some(utc_epoch), Some(dek_version))

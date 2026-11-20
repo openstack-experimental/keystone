@@ -129,6 +129,7 @@ impl Storage {
         let wrapped_dek = self
             .kek
             .wrap_dek(generate_dek().as_bytes())
+            .await
             .map_err(|e| StoreError::Other(eyre!("failed to wrap new DEK: {e}")))?;
         let cmd = StoreCommand::Transaction(vec![MutationInner::InstallDek {
             wrapped_dek,
