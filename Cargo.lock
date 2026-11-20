@@ -5378,6 +5378,7 @@ dependencies = [
  "openstack-keystone-storage-crypto",
  "openstack-keystone-storage-crypto-pkcs11",
  "openstack-keystone-storage-crypto-tpm",
+ "openstack-keystone-storage-crypto-transit",
  "openstack-keystone-telemetry",
  "openstack-keystone-tls-provider",
  "oslo-config",
@@ -5869,6 +5870,26 @@ dependencies = [
  "tokio",
  "tracing",
  "tss-esapi",
+ "zeroize",
+]
+
+[[package]]
+name = "openstack-keystone-storage-crypto-transit"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "httpmock",
+ "openstack-keystone-storage-crypto",
+ "openstack-keystone-tls-provider",
+ "rcgen",
+ "reqwest",
+ "rsa 0.9.10",
+ "secrecy",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
  "zeroize",
 ]
 

@@ -26,7 +26,7 @@ use eyre::{Context, Report};
 use http::Uri;
 use openstack_keystone_config::{ConfigManager, LoadedConfig};
 use oslo_config::{ConfigError, ConfigSection, LoadCtx, SectionBag, register_section};
-use secrecy::SecretSlice;
+use secrecy::{SecretSlice, SecretString};
 use serde::Deserialize;
 use validator::Validate;
 
@@ -234,6 +234,12 @@ pub struct DistributedStorageConfiguration {
     #[serde(default)]
     #[validate(nested)]
     pub tpm: Option<TpmKekConfiguration>,
+
+    /// OpenBao Transit KEK configuration (ADR 0045 §11.2). Required when
+    /// `kek_provider = "transit"`.
+    #[serde(default)]
+    #[validate(nested)]
+    pub transit: Option<TransitKekConfiguration>,
 }
 
 /// `local_read_max_staleness_ms` must exceed two heartbeat intervals: a
@@ -287,6 +293,56 @@ fn validate_kek_selection(
                 );
             }
         }
+        KekProvider::Transit => match &cfg.transit {
+            None => {
+                return Err(validator::ValidationError::new(
+                    "kek_provider_transit_missing_section",
+                )
+                .with_message(std::borrow::Cow::Borrowed(
+                    "kek_provider = \"transit\" requires a [distributed_storage.transit] section",
+                )));
+            }
+            Some(t) => {
+                let jwt = t.transit_jwt_file.is_some() || t.transit_jwt_role.is_some();
+                let token = t.transit_token_file.is_some();
+                let methods =
+                    usize::from(token) + usize::from(jwt) + usize::from(t.transit_cert_auth);
+                if methods != 1 {
+                    return Err(validator::ValidationError::new(
+                        "kek_provider_transit_auth",
+                    )
+                    .with_message(std::borrow::Cow::Borrowed(
+                        "[distributed_storage.transit] requires exactly one of transit_token_file, transit_jwt_file with transit_jwt_role, or transit_cert_auth",
+                    )));
+                }
+                if t.transit_cert_auth
+                    && !matches!(cfg.tls_configuration, RaftTlsConfiguration::Spiffe(_))
+                {
+                    return Err(validator::ValidationError::new(
+                        "kek_provider_transit_cert_needs_spiffe",
+                    )
+                    .with_message(std::borrow::Cow::Borrowed(
+                        "transit_cert_auth needs the SPIFFE TLS mode (trust_domains)",
+                    )));
+                }
+                if t.transit_cert_role.is_some() && !t.transit_cert_auth {
+                    return Err(
+                        validator::ValidationError::new("kek_provider_transit_cert_role")
+                            .with_message(std::borrow::Cow::Borrowed(
+                                "transit_cert_role is only used with transit_cert_auth = true",
+                            )),
+                    );
+                }
+                if jwt && (t.transit_jwt_file.is_none() || t.transit_jwt_role.is_none()) {
+                    return Err(validator::ValidationError::new(
+                        "kek_provider_transit_jwt",
+                    )
+                    .with_message(std::borrow::Cow::Borrowed(
+                        "[distributed_storage.transit] JWT login needs both transit_jwt_file and transit_jwt_role",
+                    )));
+                }
+            }
+        },
         KekProvider::Tpm => match &cfg.tpm {
             None => {
                 return Err(
@@ -437,6 +493,8 @@ pub enum KekProvider {
     Pkcs11,
     /// TPM 2.0 resident-key-backed KEK (ADR 0016-v2 §2.5.2).
     Tpm,
+    /// OpenBao Transit key (ADR 0045 §11.2). The KEK never leaves OpenBao.
+    Transit,
 }
 
 /// Which reads may be served from the local state machine without a
@@ -449,6 +507,104 @@ pub enum LocalReadsMode {
     Disabled,
     /// Tier 0/1 records may be read locally when the consumer asks for it.
     LocalForPublic,
+}
+
+/// OpenBao Transit KEK provider configuration (ADR 0045 §11.2).
+#[derive(Debug, Deserialize, Clone, Validate)]
+pub struct TransitKekConfiguration {
+    /// Base URL of OpenBao, for example `https://bao.site-a.example:8200`.
+    #[validate(length(min = 1))]
+    pub transit_address: String,
+
+    /// PEM CA bundle that verifies OpenBao's certificate. When set it is the
+    /// only trust root for OpenBao: the system and built-in roots are not
+    /// used, so a certificate from another CA is refused.
+    #[serde(default)]
+    pub transit_ca_file: Option<PathBuf>,
+
+    /// Log in with the node's own X.509-SVID through OpenBao's TLS certificate
+    /// auth method (needs the SPIFFE TLS mode). OpenBao's listener must
+    /// request client certificates. Mutually exclusive with the token and JWT
+    /// methods.
+    #[serde(default)]
+    pub transit_cert_auth: bool,
+
+    /// Certificate auth mount. Defaults to `cert`.
+    #[serde(default = "default_transit_cert_mount")]
+    pub transit_cert_auth_mount: String,
+
+    /// Certificate role to log in as; unset lets OpenBao try every role.
+    #[serde(default)]
+    pub transit_cert_role: Option<String>,
+
+    /// JWT auth mount used with `transit_jwt_file`. Defaults to `jwt`.
+    #[serde(default = "default_transit_jwt_mount")]
+    pub transit_jwt_auth_mount: String,
+
+    /// File holding the JWT (for example a JWT-SVID) exchanged for a token.
+    /// Read on every login, so a rotated file is picked up.
+    #[serde(default)]
+    pub transit_jwt_file: Option<PathBuf>,
+
+    /// Role to log in as with `transit_jwt_file`.
+    #[serde(default)]
+    pub transit_jwt_role: Option<String>,
+
+    /// Name of the Transit key used as the KEK.
+    #[validate(length(min = 1))]
+    pub transit_key_name: String,
+
+    /// Transit secrets engine mount. Defaults to `transit`.
+    #[serde(default = "default_transit_mount")]
+    pub transit_mount: String,
+
+    /// OpenBao namespace, if any.
+    #[serde(default)]
+    pub transit_namespace: Option<String>,
+
+    /// Per-request timeout in seconds. Defaults to 10.
+    #[serde(default = "default_transit_timeout_secs")]
+    #[validate(range(min = 1))]
+    pub transit_timeout_secs: u64,
+
+    /// The token content, populated by [`Self::load_secrets`]. Never
+    /// serialised and never logged.
+    #[serde(skip)]
+    pub transit_token_content: Option<SecretString>,
+
+    /// File holding a static OpenBao token, read once at startup. Mutually
+    /// exclusive with JWT login.
+    #[serde(default)]
+    pub transit_token_file: Option<PathBuf>,
+}
+
+fn default_transit_mount() -> String {
+    "transit".to_string()
+}
+
+fn default_transit_cert_mount() -> String {
+    "cert".to_string()
+}
+
+fn default_transit_jwt_mount() -> String {
+    "jwt".to_string()
+}
+
+fn default_transit_timeout_secs() -> u64 {
+    10
+}
+
+impl TransitKekConfiguration {
+    /// Read `transit_token_file` (if configured) into
+    /// [`Self::transit_token_content`].
+    pub fn load_secrets(&mut self) -> Result<(), Report> {
+        if let Some(path) = &self.transit_token_file {
+            let raw = std::fs::read_to_string(path)
+                .wrap_err_with(|| format!("reading Transit token file {path:?}"))?;
+            self.transit_token_content = Some(SecretString::from(raw.trim().to_owned()));
+        }
+        Ok(())
+    }
 }
 
 /// PKCS#11 KEK provider configuration (ADR 0016-v2 §2.5.1).
@@ -689,6 +845,7 @@ impl Default for DistributedStorageConfiguration {
             tls_configuration: RaftTlsConfiguration::Tls(TlsConfiguration::default()),
             tls_role_san_prefix: None,
             tpm: None,
+            transit: None,
         }
     }
 }
@@ -840,6 +997,11 @@ impl ConfigSection for DistributedStorageConfiguration {
             pkcs11
                 .load_secrets()
                 .wrap_err("reading distributed storage PKCS#11 configuration")?;
+        }
+        if let Some(ref mut transit) = self.transit {
+            transit
+                .load_secrets()
+                .wrap_err("reading distributed storage Transit configuration")?;
         }
         if let Some(ref mut tpm) = self.tpm {
             tpm.load_secrets()
@@ -1254,6 +1416,110 @@ roles = ["reservation-voter"]
         }))
         .unwrap();
         cfg.validate().expect("valid pkcs11 section must validate");
+    }
+
+    fn transit_cfg(transit: serde_json::Value) -> DistributedStorageConfiguration {
+        serde_json::from_value(json!({
+            "node_cluster_addr": "http://1.2.3.4:5678",
+            "node_id": 1,
+            "path": "/tmp",
+            "tls_cert_file": "/tmp/tls.cert",
+            "tls_key_file": "/tmp/tls.key",
+            "dev_mode": true,
+            "kek_provider": "transit",
+            "transit": transit,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn test_kek_provider_transit_requires_section() {
+        let cfg: DistributedStorageConfiguration = serde_json::from_value(json!({
+            "node_cluster_addr": "http://1.2.3.4:5678",
+            "node_id": 1,
+            "path": "/tmp",
+            "tls_cert_file": "/tmp/tls.cert",
+            "tls_key_file": "/tmp/tls.key",
+            "kek_provider": "transit",
+        }))
+        .unwrap();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(
+            err.contains("requires a [distributed_storage.transit]"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn test_kek_provider_transit_auth_selection() {
+        let base = json!({
+            "transit_address": "https://bao:8200",
+            "transit_key_name": "kek",
+        });
+        let with = |extra: serde_json::Value| {
+            let mut v = base.clone();
+            v.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            transit_cfg(v)
+        };
+        // No auth, or both, is rejected.
+        assert!(transit_cfg(base.clone()).validate().is_err());
+        assert!(
+            with(json!({
+                "transit_token_file": "/t",
+                "transit_jwt_file": "/j",
+                "transit_jwt_role": "r"
+            }))
+            .validate()
+            .is_err()
+        );
+        // JWT needs both file and role.
+        assert!(with(json!({"transit_jwt_file": "/j"})).validate().is_err());
+        // A certificate role without certificate auth would be ignored.
+        let err = with(json!({"transit_token_file": "/t", "transit_cert_role": "r"}))
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("transit_cert_role"), "{err}");
+        // Either valid form passes.
+        with(json!({"transit_token_file": "/t"}))
+            .validate()
+            .expect("token auth");
+        with(json!({"transit_jwt_file": "/j", "transit_jwt_role": "r"}))
+            .validate()
+            .expect("jwt auth");
+    }
+
+    #[test]
+    fn test_kek_provider_transit_cert_auth_needs_spiffe() {
+        let base = json!({
+            "transit_address": "https://bao:8200",
+            "transit_key_name": "kek",
+            "transit_cert_auth": true,
+        });
+        let err = transit_cfg(base.clone())
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("needs the SPIFFE TLS mode"), "{err}");
+
+        let cfg: DistributedStorageConfiguration = serde_json::from_value(json!({
+            "node_cluster_addr": "http://1.2.3.4:5678",
+            "node_id": 1,
+            "path": "/tmp",
+            "dev_mode": true,
+            "trust_domains": "example.org",
+            "kek_provider": "transit",
+            "transit": base,
+        }))
+        .unwrap();
+        cfg.validate().expect("cert auth with SPIFFE mTLS");
+
+        // Cert auth together with a token is ambiguous.
+        let mut both = base;
+        both["transit_token_file"] = json!("/t");
+        assert!(transit_cfg(both).validate().is_err());
     }
 
     #[test]

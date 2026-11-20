@@ -394,11 +394,16 @@ async fn load_revoked_pending_deks(
 
 /// Adds a hint to a size error from unwrapping the stored DEK: the usual cause
 /// is a changed `kek_provider`, not corruption.
-fn explain_unwrap_error(e: CryptoError) -> StoreError {
+fn explain_unwrap_error(e: CryptoError, wrapped: &[u8]) -> StoreError {
     if matches!(e, CryptoError::WrappedDekSize) {
+        let hint = if wrapped.starts_with(b"vault:v") {
+            "it was wrapped by an OpenBao Transit key, so kek_provider must be \"transit\""
+        } else {
+            "it was not wrapped by an OpenBao Transit key; the stored DEK was written under a \
+             different kek_provider"
+        };
         return StoreError::Other(eyre::eyre!(
-            "the stored DEK cannot be unwrapped by the configured kek_provider: it was written \
-             under a different kek_provider"
+            "the stored DEK cannot be unwrapped by the configured kek_provider: {hint}"
         ));
     }
     e.into()
@@ -409,9 +414,9 @@ fn explain_unwrap_error(e: CryptoError) -> StoreError {
 /// On-disk format for `_meta:dek:current`: `[version_u32_BE; 4] ++ wrapped`,
 /// where `wrapped` is whatever the configured KEK provider produced: 60 bytes
 /// (`[nonce_12] ++ [ciphertext_32] ++ [tag_16]`) for the env, PKCS#11 and TPM
-/// providers, or a longer remote-key-store blob. The record does not name its
-/// provider, so a provider switch surfaces as a size error that
-/// [`explain_unwrap_error`] annotates.
+/// providers, or the `vault:vN:<base64>` string of an OpenBao Transit key
+/// (about 117 bytes). The record does not name its provider, so a provider
+/// switch surfaces as a size error that [`explain_unwrap_error`] annotates.
 /// Legacy format (60 bytes, no version prefix) is migrated to version 1 on
 /// first load.
 async fn bootstrap_dek(db: &Database, kek: &dyn KekProvider) -> Result<Arc<DekEpoch>, StoreError> {
@@ -450,7 +455,7 @@ async fn bootstrap_dek(db: &Database, kek: &dyn KekProvider) -> Result<Arc<DekEp
         };
         let raw = unwrap_dek_retrying(kek, wrapped)
             .await
-            .map_err(explain_unwrap_error)?;
+            .map_err(|e| explain_unwrap_error(e, wrapped))?;
         let epoch_dek = LockedKey::from_raw(*raw);
         Ok(Arc::new(DekEpoch::from_raw(epoch_dek, version)?))
     } else {
@@ -474,10 +479,14 @@ mod tests {
     fn size_errors_name_the_provider_mismatch() {
         use openstack_keystone_storage_crypto::CryptoError;
 
-        let other = super::explain_unwrap_error(CryptoError::WrappedDekSize).to_string();
+        let transit =
+            super::explain_unwrap_error(CryptoError::WrappedDekSize, b"vault:v1:abc").to_string();
+        assert!(transit.contains("must be \"transit\""), "{transit}");
+        let other =
+            super::explain_unwrap_error(CryptoError::WrappedDekSize, &[0u8; 60]).to_string();
         assert!(other.contains("different kek_provider"), "{other}");
         // Other errors pass through untouched.
-        let aes = super::explain_unwrap_error(CryptoError::AesDecrypt).to_string();
+        let aes = super::explain_unwrap_error(CryptoError::AesDecrypt, &[0u8; 60]).to_string();
         assert!(!aes.contains("kek_provider"), "{aes}");
     }
 

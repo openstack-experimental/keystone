@@ -24,7 +24,7 @@ default and should be turned on.
 | --- | --- | --- | --- |
 | `[fernet_tokens] insecure_allow_null_key`, `[credential] insecure_allow_null_key` | `false` | Keystone refuses to start with the well-known Null Key. | Keep `false`; set `true` only during a controlled key migration. |
 | `[distributed_storage] dev_mode` | `false` | KEK source and process hardening pre-flight checks are enforced. | Never set in production. |
-| `[distributed_storage] kek_provider` | `env` | The `env` KEK is accepted **only** with `dev_mode = true`, so a production node does not start until `pkcs11` or `tpm` is set explicitly. | `pkcs11` or `tpm`. |
+| `[distributed_storage] kek_provider` | `env` | The `env` KEK is accepted **only** with `dev_mode = true`, so a production node does not start until `pkcs11`, `tpm` or `transit` is set explicitly. | `pkcs11`, `tpm` or `transit`. |
 | `[distributed_storage] local_reads_mode` | `disabled` | Every read is linearizable; no stale reads. | Keep `disabled` unless a consumer needs stale `PUBLIC`/`INTERNAL` reads. |
 | `[api_policy]` | `engine = opa`, OPA at `http://localhost:8181` | Every authorised endpoint is evaluated by the selected engine: OPA over HTTP, or in-process `regorus` (experimental, `engine = regorus`, reloaded on `SIGHUP`). | Run OPA beside Keystone; see [policy](policy.md). |
 | `[rate_limit_global_ip]`, `[rate_limit_user_auth]` | `enabled = true`, `burst_size = 100`, `replenish_rate_per_second = 10` | Both limiters are active without configuration. Limits are per node and held in memory (ADR 0022). Enabled values outside `1..=100000` stop startup. | Size the buckets for the deployment; set `enabled = false` only when a proxy already limits. |

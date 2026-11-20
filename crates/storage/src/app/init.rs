@@ -173,7 +173,7 @@ async fn verify_node_id_uniqueness_live(
 
 /// Build the Key Encryption Key provider selected by `ds_config.kek_provider`
 /// (ADR 0016-v2 §2.1 / §2.5).
-fn build_kek(
+async fn build_kek(
     ds_config: &DistributedStorageConfiguration,
 ) -> Result<Arc<dyn KekProvider>, StoreError> {
     use crate::config::KekProvider as KekProviderKind;
@@ -199,6 +199,7 @@ fn build_kek(
         }
         KekProviderKind::Pkcs11 => build_pkcs11_kek(ds_config),
         KekProviderKind::Tpm => build_tpm_kek(ds_config),
+        KekProviderKind::Transit => build_transit_kek(ds_config).await,
     }
 }
 
@@ -257,6 +258,120 @@ fn build_pkcs11_kek(
     Err(StoreError::Other(eyre!(
         "kek_provider = \"pkcs11\" was selected but this build was compiled without the \
          `pkcs11` feature"
+    )))
+}
+
+/// Connect to the OpenBao Transit KEK from `ds_config.transit` (ADR 0045
+/// §11.2). Nothing is sent to OpenBao until the DEK is wrapped or unwrapped.
+#[cfg(feature = "transit")]
+async fn build_transit_kek(
+    ds_config: &DistributedStorageConfiguration,
+) -> Result<Arc<dyn KekProvider>, StoreError> {
+    use secrecy::SecretString;
+
+    use openstack_keystone_storage_crypto::error::CryptoError;
+    use openstack_keystone_storage_crypto_transit::{
+        TransitAuth, TransitKek, TransitParams, pem_identity,
+    };
+
+    let cfg = ds_config.transit.as_ref().ok_or_else(|| {
+        StoreError::Other(eyre!(
+            "kek_provider = \"transit\" requires a [distributed_storage.transit] section"
+        ))
+    })?;
+    let auth = if cfg.transit_cert_auth {
+        let RaftTlsConfiguration::Spiffe(spiffe_cfg) = &ds_config.tls_configuration else {
+            return Err(StoreError::Other(eyre!(
+                "transit_cert_auth needs the SPIFFE TLS mode (trust_domains)"
+            )));
+        };
+        // The node logs in with the same SVID it presents to Raft peers.
+        let source = crate::spiffe_wait::wait_for_spiffe_source(
+            "Transit certificate login",
+            spiffe::X509SourceBuilder::new()
+                .picker(crate::spiffe_wait::PathSvidPicker::new(
+                    spiffe_cfg.own_svid_path(),
+                ))
+                .build(),
+        )
+        .await
+        .map_err(StoreError::Other)?;
+        TransitAuth::Cert {
+            mount: cfg.transit_cert_auth_mount.clone(),
+            role: cfg.transit_cert_role.clone(),
+            identity: Box::new(move || {
+                let svid = source
+                    .svid()
+                    .map_err(|e| CryptoError::Transit(format!("no X.509-SVID: {e}")))?;
+                let chain: Vec<&[u8]> = svid.cert_chain().iter().map(|c| c.as_bytes()).collect();
+                Ok(pem_identity(&chain, svid.private_key().as_bytes()))
+            }),
+        }
+    } else {
+        match (
+            &cfg.transit_token_content,
+            &cfg.transit_jwt_file,
+            &cfg.transit_jwt_role,
+        ) {
+            (Some(token), None, None) => TransitAuth::Token(token.clone()),
+            (None, Some(file), Some(role)) => {
+                let file = file.clone();
+                TransitAuth::Jwt {
+                    mount: cfg.transit_jwt_auth_mount.clone(),
+                    role: role.clone(),
+                    jwt: Box::new(move || {
+                        std::fs::read_to_string(&file)
+                            .map(|s| SecretString::from(s.trim().to_owned()))
+                            .map_err(|e| CryptoError::Transit(format!("reading JWT file: {e}")))
+                    }),
+                }
+            }
+            (None, None, None) if cfg.transit_token_file.is_some() => {
+                return Err(StoreError::Other(eyre!(
+                    "transit_token_file is set but the token was not loaded; the configuration \
+                     secrets must be loaded before the Transit KEK is built"
+                )));
+            }
+            _ => {
+                return Err(StoreError::Other(eyre!(
+                    "[distributed_storage.transit] requires exactly one of transit_token_file, \
+                     transit_jwt_file with transit_jwt_role, or transit_cert_auth"
+                )));
+            }
+        }
+    };
+    let ca_pem = cfg
+        .transit_ca_file
+        .as_ref()
+        .map(std::fs::read)
+        .transpose()
+        .map_err(|e| StoreError::Other(eyre!("reading transit_ca_file: {e}")))?;
+    let address = cfg
+        .transit_address
+        .parse()
+        .map_err(|e| StoreError::Other(eyre!("invalid transit_address: {e}")))?;
+    let kek = TransitKek::new(
+        TransitParams {
+            address,
+            auth,
+            ca_pem,
+            mount: cfg.transit_mount.clone(),
+            namespace: cfg.transit_namespace.clone(),
+            timeout: std::time::Duration::from_secs(cfg.transit_timeout_secs),
+        },
+        cfg.transit_key_name.clone(),
+    )
+    .map_err(|e| StoreError::Other(eyre!("failed to set up Transit KEK: {e}")))?;
+    Ok(Arc::new(kek))
+}
+
+#[cfg(not(feature = "transit"))]
+async fn build_transit_kek(
+    _ds_config: &DistributedStorageConfiguration,
+) -> Result<Arc<dyn KekProvider>, StoreError> {
+    Err(StoreError::Other(eyre!(
+        "kek_provider = \"transit\" was selected but this build was compiled without the \
+         `transit` feature"
     )))
 }
 
@@ -364,7 +479,7 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         path = %ds_config.path.display(),
         "Initializing distributed storage: loading KEK..."
     );
-    let kek: Arc<dyn KekProvider> = build_kek(&ds_config)?;
+    let kek: Arc<dyn KekProvider> = build_kek(&ds_config).await?;
     tracing::debug!("KEK loaded; running preflight checks...");
 
     // Run OS-level security pre-flight checks after key material is cleared.

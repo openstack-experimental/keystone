@@ -128,11 +128,20 @@ pub enum CryptoError {
     #[error("per-site DEK blob is not bound to this cluster, version and site")]
     SiteBindingMismatch,
 
+    /// An OpenBao Transit request failed for a reason retrying will not fix
+    /// (rejected input, unknown key, bad response).
+    #[error("OpenBao Transit operation failed: {0}")]
+    Transit(String),
+
     /// The key store behind the KEK could not be reached or could not serve
     /// the request now (network error, timeout, `5xx`, `429`, or a login that
     /// stays denied). Retrying later may succeed.
     #[error("key store is unavailable: {0}")]
     KekUnavailable(String),
+
+    /// OpenBao answered `403`; the caller may log in again and retry.
+    #[error("OpenBao Transit request was forbidden")]
+    TransitForbidden,
 
     /// The wrapped DEK blob has an unexpected size.
     #[error("wrapped DEK has wrong format or size")]
