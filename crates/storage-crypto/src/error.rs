@@ -114,6 +114,20 @@ pub enum CryptoError {
     #[error("TPM operation failed: {0}")]
     Tpm(String),
 
+    /// Wrapping a DEK to a site's public key failed.
+    #[error("per-site DEK wrap failed: {0}")]
+    SiteWrap(String),
+
+    /// Unwrapping a per-site DEK blob with the site's private key failed (bad
+    /// key, corrupt blob or blob made for another site).
+    #[error("per-site DEK unwrap failed: {0}")]
+    SiteUnwrap(String),
+
+    /// The unwrapped per-site blob is not bound to the expected cluster, DEK
+    /// version and site.
+    #[error("per-site DEK blob is not bound to this cluster, version and site")]
+    SiteBindingMismatch,
+
     /// The wrapped DEK blob has an unexpected size.
     #[error("wrapped DEK has wrong format or size")]
     WrappedDekSize,

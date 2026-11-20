@@ -53,6 +53,7 @@ pub mod error;
 pub mod kek;
 pub mod mlock;
 pub mod nonce;
+pub mod site_wrap;
 
 pub use audit::AuditHmacKey;
 pub use backend::{FIPS_BUILD, assert_fips, random_bytes};
@@ -64,3 +65,6 @@ pub use error::CryptoError;
 pub use kek::{EnvKek, KekProvider};
 pub use mlock::LockedKey;
 pub use nonce::{NonceManager, NoncePersistence};
+pub use site_wrap::{
+    SiteBinding, SiteKeyUnwrapper, SoftwareSiteKey, unwrap_dek_for_site, wrap_dek_for_site,
+};

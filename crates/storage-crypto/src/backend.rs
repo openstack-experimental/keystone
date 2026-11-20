@@ -11,13 +11,13 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-// Crypto inventory: STO-1, STO-2, STO-3, STO-4, STO-5; see
+// Crypto inventory: STO-1, STO-2, STO-3, STO-4, STO-5, STO-13; see
 // doc/src/contributor/crypto-inventory.md
 //! # Cryptographic backend selection
 //!
-//! Every AES-256-GCM, HKDF-SHA256, HMAC-SHA256 and random-bytes operation of
-//! this crate goes through the handful of functions below, so the primitive
-//! provider can be swapped without touching the call sites:
+//! Every AES-256-GCM, HKDF-SHA256, HMAC-SHA256, random-bytes and RSA-OAEP
+//! operation of this crate goes through the handful of functions below, so
+//! the primitive provider can be swapped without touching the call sites:
 //!
 //! * default (`ring` feature): the `ring` crate ([`ringlike`]);
 //! * `fips` feature: `aws-lc-rs` built against the FIPS 140-3 validated AWS-LC
@@ -51,6 +51,7 @@ use crate::error::CryptoError;
 compile_error!("enable either the `ring` (default) or the `fips` feature");
 
 mod ringlike;
+pub(crate) mod rsa_oaep;
 
 pub(crate) use ringlike::{fill_random, gcm_open, hkdf_expand, hkdf_extract_expand, hmac_sha256};
 // Sealing with a caller-supplied IV is a non-approved service in the FIPS
