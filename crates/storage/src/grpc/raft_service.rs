@@ -29,6 +29,7 @@ use tonic::Streaming;
 use tracing::trace;
 
 use crate::grpc::authz::{PeerAuthz, PeerRole};
+use crate::leader_contact::LeaderContact;
 use crate::protobuf as pb;
 use crate::protobuf::raft::VoteRequest;
 use crate::protobuf::raft::VoteResponse;
@@ -53,6 +54,8 @@ pub struct RaftServiceImpl {
     authz: Arc<PeerAuthz>,
     /// The local Raft node instance that this service operates on.
     pub(crate) raft_node: Raft,
+    /// Updated on every accepted `AppendEntries` from a leader.
+    leader_contact: Arc<LeaderContact>,
 }
 
 impl RaftServiceImpl {
@@ -61,11 +64,29 @@ impl RaftServiceImpl {
     /// # Parameters
     /// - `raft_node`: The Raft node instance this service will operate on.
     /// - `authz`: Peer role resolver; every RPC requires the node role.
+    /// - `leader_contact`: Shared with the storage so local reads can bound
+    ///   their staleness by the last accepted `AppendEntries`.
     ///
     /// # Returns
     /// A new `RaftServiceImpl` instance.
-    pub fn new(raft_node: Raft, authz: Arc<PeerAuthz>) -> Self {
-        Self { raft_node, authz }
+    pub fn new(raft_node: Raft, authz: Arc<PeerAuthz>, leader_contact: Arc<LeaderContact>) -> Self {
+        Self {
+            raft_node,
+            authz,
+            leader_contact,
+        }
+    }
+}
+
+/// Record leader contact for an `AppendEntries` response.
+///
+/// A response that neither rejects the leader nor reports a log conflict
+/// proves the leader's log, and so this node's, is current. A conflict
+/// proves the leader is alive but the logs diverge: the node is not current
+/// until the leader has repaired it, so it does not count as contact.
+fn note_leader_contact(leader_contact: &LeaderContact, resp: &pb::raft::AppendEntriesResponse) {
+    if resp.rejected_by.is_none() && !resp.conflict {
+        leader_contact.touch();
     }
 }
 
@@ -100,9 +121,11 @@ impl RaftService for RaftServiceImpl {
                 })?)
                 .await
                 .map_err(|e| Status::internal(format!("Append entries operation failed: {}", e)))?;
+        let append_resp: pb::raft::AppendEntriesResponse = append_resp.into();
+        note_leader_contact(&self.leader_contact, &append_resp);
 
         trace!("Append entries request processed successfully");
-        Ok(Response::new(append_resp.into()))
+        Ok(Response::new(append_resp))
     }
 
     /// Handles snapshot installation requests for state transfer using
@@ -211,9 +234,14 @@ impl RaftService for RaftServiceImpl {
         let output = self.raft_node.stream_append(input_stream);
 
         // Convert StreamAppendResult to pb::AppendEntriesResponse
+        let leader_contact = self.leader_contact.clone();
         #[allow(clippy::result_large_err)]
-        let output_stream = output.map(|result| match result {
-            Ok(stream_result) => Ok(stream_result.into()),
+        let output_stream = output.map(move |result| match result {
+            Ok(stream_result) => {
+                let resp: pb::raft::AppendEntriesResponse = stream_result.into();
+                note_leader_contact(&leader_contact, &resp);
+                Ok(resp)
+            }
             Err(fatal) => Err(Status::internal(format!("Fatal Raft error: {}", fatal))),
         });
 

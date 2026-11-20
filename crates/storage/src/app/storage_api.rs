@@ -25,6 +25,45 @@ impl Storage {
     fn local_read_allowed(&self, consistency: ReadConsistency) -> bool {
         consistency == ReadConsistency::Local
             && self.local_reads_mode == LocalReadsMode::LocalForPublic
+            && self.within_max_staleness()
+    }
+
+    /// How stale this node's local state may be, `None` when that cannot be
+    /// bounded (ADR 0045 §2).
+    ///
+    /// - `None` whenever the state machine has not applied up to the
+    ///   committed index.
+    /// - Leader: the age of the last quorum acknowledgement. A leader cut off
+    ///   from its quorum keeps `current_leader == self` until it sees a higher
+    ///   term, so the role alone proves nothing. `None` before the first ack.
+    /// - Follower or learner: the time since the last accepted
+    ///   `AppendEntries`, or `None` if there was none. Contact only proves the
+    ///   log was current, so a node whose state machine has not applied up to
+    ///   the committed index is `None` too.
+    pub fn staleness(&self) -> Option<Duration> {
+        let metrics = self.raft.metrics().borrow_watched().clone();
+        // Applies to the leader too: a leader that has not applied up to its
+        // committed index serves an older state machine.
+        let applied = metrics.last_applied.map(|id| id.index);
+        let committed = metrics.local_committed.map(|id| id.index);
+        if committed > applied {
+            return None;
+        }
+        if metrics.current_leader == Some(self.node_id) {
+            return metrics
+                .last_quorum_acked
+                .map(|acked| openraft::async_runtime::Instant::elapsed(&*acked));
+        }
+        self.leader_contact.age()
+    }
+
+    /// Whether local state is fresh enough for a local read:
+    /// `local_read_max_staleness` is unset, or the staleness is within it.
+    fn within_max_staleness(&self) -> bool {
+        match self.local_read_max_staleness {
+            None => true,
+            Some(max) => self.staleness().is_some_and(|age| age <= max),
+        }
     }
 
     /// Reads one record from the local state machine without any

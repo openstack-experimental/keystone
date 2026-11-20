@@ -26,6 +26,10 @@ use crate::common::make_sensitive_env;
 
 const LOCAL_READ_ENABLED_PORT_BASE: u16 = 2300;
 const LOCAL_READ_DISABLED_PORT_BASE: u16 = 2350;
+const LOCAL_READ_STALENESS_PORT_BASE: u16 = 2400;
+/// Generous so slow node shutdown on a loaded CI host cannot expire it
+/// before the "within the bound" assertion runs.
+const STALENESS_BOUND_MS: u64 = 8000;
 
 /// Builds a three node cluster, writes one Internal and one Sensitive record
 /// plus a prefix of each, waits until node 3 applied them and kills nodes 1
@@ -34,8 +38,18 @@ async fn quorumless_survivor(
     port: u16,
     mode: LocalReadsMode,
 ) -> Result<(Vec<RestartableNode>, std::sync::Arc<Storage>)> {
+    quorumless_survivor_with(port, mode, None).await
+}
+
+/// [`quorumless_survivor`] with `local_read_max_staleness_ms` set.
+async fn quorumless_survivor_with(
+    port: u16,
+    mode: LocalReadsMode,
+    max_staleness_ms: Option<u64>,
+) -> Result<(Vec<RestartableNode>, std::sync::Arc<Storage>)> {
     let mut nodes = start_three_node_cluster_with(port, |config| {
         config.local_reads_mode = mode;
+        config.local_read_max_staleness_ms = max_staleness_ms;
         // Keep a failing linearizable read from retrying for seconds.
         config.ensure_linearizable_retries = 2;
         config.ensure_linearizable_retry_delay_ms = 50;
@@ -146,6 +160,64 @@ async fn test_local_read_ignored_when_disabled_inner() -> Result<()> {
             .get_by_key_with_consistency(b"pub:a", None, ReadConsistency::Local)
             .await
             .is_err()
+    );
+    assert!(
+        survivor
+            .prefix_with_consistency(b"pub:", None, ReadConsistency::Local)
+            .await
+            .is_err()
+    );
+    Ok(())
+}
+
+/// With `local_read_max_staleness_ms` set, a follower that lost its leader
+/// serves local reads only until the bound passes, then falls back to
+/// `ReadIndex`, which fails without a quorum (ADR 0045 §2).
+#[serial_test::serial]
+#[test]
+fn test_local_read_refused_beyond_max_staleness() {
+    TypeConfig::run(test_local_read_refused_beyond_max_staleness_inner()).unwrap();
+}
+
+async fn test_local_read_refused_beyond_max_staleness_inner() -> Result<()> {
+    let (_nodes, survivor) = quorumless_survivor_with(
+        LOCAL_READ_STALENESS_PORT_BASE,
+        LocalReadsMode::LocalForPublic,
+        Some(STALENESS_BOUND_MS),
+    )
+    .await?;
+
+    // The helper above only waits for the log index; the state machine may
+    // still be applying, and `staleness()` is `None` until it catches up.
+    assert!(
+        poll_until(Duration::from_millis(100), 100, || survivor
+            .staleness()
+            .is_some())
+        .await,
+        "follower should reach a bounded-staleness state after applying from the leader"
+    );
+    // Still within the bound.
+    assert!(
+        survivor
+            .get_by_key_with_consistency(b"pub:a", None, ReadConsistency::Local)
+            .await?
+            .is_some()
+    );
+
+    let bound = Duration::from_millis(STALENESS_BOUND_MS);
+    assert!(
+        poll_until(Duration::from_millis(250), 80, || {
+            survivor.staleness().is_none_or(|age| age > bound)
+        })
+        .await,
+        "contact age never exceeded the bound"
+    );
+    assert!(
+        survivor
+            .get_by_key_with_consistency(b"pub:a", None, ReadConsistency::Local)
+            .await
+            .is_err(),
+        "a read beyond max_staleness must fall back to ReadIndex"
     );
     assert!(
         survivor

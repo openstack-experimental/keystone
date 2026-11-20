@@ -60,6 +60,7 @@ use crate::grpc::authz::{PeerAuthz, resolve_svid_roles};
 use crate::grpc::cluster_admin_service::ClusterAdminServiceImpl;
 use crate::grpc::raft_service::RaftServiceImpl;
 use crate::grpc::storage_service::StorageServiceImpl;
+use crate::leader_contact::LeaderContact;
 use crate::local_emergency::FjallLocalEmergencyStore;
 use crate::network::{
     CertExpiryWatchdog, ChannelCache, NetworkManager, RaftTlsClient, init_tls_watcher,
@@ -116,6 +117,10 @@ pub struct Storage {
     /// `[distributed_storage] local_reads_mode`: whether a consumer's
     /// `ReadConsistency::Local` request is honored for Tier 0/1 records.
     pub(crate) local_reads_mode: LocalReadsMode,
+    /// `[distributed_storage] local_read_max_staleness_ms`.
+    pub(crate) local_read_max_staleness: Option<Duration>,
+    /// Last contact with a Raft leader, fed by the Raft gRPC service.
+    pub(crate) leader_contact: Arc<LeaderContact>,
     /// Key Encryption Key for wrapping new DEKs during rotation.
     kek: Arc<dyn KekProvider>,
     /// `[local_emergency]` config, snapshotted at storage init. Config

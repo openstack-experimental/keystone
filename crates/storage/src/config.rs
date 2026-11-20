@@ -36,6 +36,7 @@ use oslo_config::{TlsConfiguration, csv, option_u32_from_str_or_int};
 #[derive(Debug, Deserialize, Clone, Validate)]
 #[validate(schema(function = "validate_kek_selection"))]
 #[validate(schema(function = "validate_peer_authz"))]
+#[validate(schema(function = "validate_local_read_staleness"))]
 pub struct DistributedStorageConfiguration {
     /// Enable development mode.
     ///
@@ -102,6 +103,14 @@ pub struct DistributedStorageConfiguration {
     /// are always read linearizably.
     #[serde(default)]
     pub local_reads_mode: LocalReadsMode,
+
+    /// Upper bound, in milliseconds, on how long a non-leader node may have
+    /// gone without contact from a leader and still serve a
+    /// `ReadConsistency::Local` read (ADR 0045 §2). Past it the read falls
+    /// back to the linearizable path. Unset (default) means no bound. Must be
+    /// at least twice `raft_heartbeat_interval_ms`.
+    #[serde(default)]
+    pub local_read_max_staleness_ms: Option<u64>,
 
     /// Raft leader heartbeat interval in milliseconds. Must be well below
     /// `raft_election_timeout_min_ms`. Raise it for clusters spanning
@@ -225,6 +234,31 @@ pub struct DistributedStorageConfiguration {
     #[serde(default)]
     #[validate(nested)]
     pub tpm: Option<TpmKekConfiguration>,
+}
+
+/// `local_read_max_staleness_ms` must exceed two heartbeat intervals: a
+/// follower's contact age sweeps from 0 to one interval between heartbeats
+/// (and a lost one doubles it), so a tighter bound silently turns follower
+/// local reads into `ReadIndex` reads.
+fn validate_local_read_staleness(
+    cfg: &DistributedStorageConfiguration,
+) -> Result<(), validator::ValidationError> {
+    let Some(max) = cfg.local_read_max_staleness_ms else {
+        return Ok(());
+    };
+    let min = cfg.raft_heartbeat_interval_ms.saturating_mul(2);
+    if max < min {
+        return Err(
+            validator::ValidationError::new("local_read_max_staleness_too_small").with_message(
+                format!(
+                    "local_read_max_staleness_ms ({max}) must be at least twice \
+                     raft_heartbeat_interval_ms ({min})"
+                )
+                .into(),
+            ),
+        );
+    }
+    Ok(())
 }
 
 /// Cross-field validation for the `kek_provider` selection (ADR 0016-v2
@@ -638,6 +672,7 @@ impl Default for DistributedStorageConfiguration {
             ensure_linearizable_retries: default_ensure_linearizable_retries(),
             ensure_linearizable_retry_delay_ms: default_ensure_linearizable_retry_delay_ms(),
             local_reads_mode: LocalReadsMode::default(),
+            local_read_max_staleness_ms: None,
             raft_heartbeat_interval_ms: default_raft_heartbeat_interval_ms(),
             raft_election_timeout_min_ms: default_raft_election_timeout_min_ms(),
             raft_election_timeout_max_ms: default_raft_election_timeout_max_ms(),
@@ -867,6 +902,22 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use super::*;
+
+    #[test]
+    fn local_read_staleness_must_be_at_least_two_heartbeats() {
+        let mut cfg = DistributedStorageConfiguration {
+            raft_heartbeat_interval_ms: 500,
+            ..Default::default()
+        };
+        cfg.local_read_max_staleness_ms = None;
+        assert!(validate_local_read_staleness(&cfg).is_ok());
+        cfg.local_read_max_staleness_ms = Some(0);
+        assert!(validate_local_read_staleness(&cfg).is_err());
+        cfg.local_read_max_staleness_ms = Some(999);
+        assert!(validate_local_read_staleness(&cfg).is_err());
+        cfg.local_read_max_staleness_ms = Some(1000);
+        assert!(validate_local_read_staleness(&cfg).is_ok());
+    }
 
     #[test]
     fn test_deser() {
