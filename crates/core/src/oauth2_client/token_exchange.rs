@@ -56,13 +56,10 @@ pub enum TokenExchangeError {
     #[error("subject_token's context has no resolved authorization scope")]
     NoAuthorization,
 
-    /// The validated subject token has no expiry to bound the exchanged token.
-    #[error("subject_token has no expiration")]
-    MissingSubjectTokenExpiry,
-
-    /// The credential-chain expiry is not later than the new token's issue
-    /// time. Subject token/App Cred has either already expired or expires
-    /// at/before the new token's issue time.
+    /// The resulting expiry is not later than the new token's issue time:
+    /// the subject token or application credential has already expired (or
+    /// expires at/before the issue time), or the default lifetime passed in
+    /// leaves no positive lifetime.
     #[error("credential-chain expiry does not leave a positive token lifetime")]
     CredentialChainExpired,
 
@@ -158,6 +155,14 @@ pub async fn validate_subject_token(
 /// [`DelegationContext`]. `aud` is [`Audience::control_plane`] unless the
 /// request narrowed it to service types (ADR 0036 §7.1).
 ///
+/// `default_exp` is the default expiry (`iat` + configured access-token
+/// lifetime).
+/// The issued `exp` is the minimum of it, the subject token's expiry and the
+/// application credential's expiry, ignoring any of the latter two that are
+/// absent. A token is therefore always issued with an expiration, and the
+/// token endpoint reports `expires_in` from the resulting `exp` (RFC 6749
+/// §5.1, as used by RFC 8693 §2.2.1).
+///
 /// # Errors
 /// See [`TokenExchangeError`] for each rejection reason.
 #[allow(clippy::too_many_arguments)]
@@ -169,7 +174,7 @@ pub fn build_token_exchange_claims(
     issuer: &str,
     jti: String,
     iat: i64,
-    exp: i64,
+    default_exp: i64,
     aud: Audience,
 ) -> Result<OpenStackAccessTokenClaims, TokenExchangeError> {
     let principal = vsc.inner().principal();
@@ -200,13 +205,10 @@ pub fn build_token_exchange_claims(
         return Err(TokenExchangeError::CrossDomainSubjectToken);
     }
 
-    let subject_expires_at = vsc
-        .inner()
-        .expires_at()
-        .ok_or(TokenExchangeError::MissingSubjectTokenExpiry)?
-        .timestamp();
-
-    let mut exp = exp.min(subject_expires_at);
+    let mut exp = default_exp;
+    if let Some(subject_expires_at) = vsc.inner().expires_at() {
+        exp = exp.min(subject_expires_at.timestamp());
+    }
     if let Some(credential_expires_at) = credential_expiration {
         exp = exp.min(credential_expires_at.timestamp());
     }
@@ -482,7 +484,7 @@ mod tests {
     fn build_claims_with_expiries(
         subject_expires_at: Option<chrono::DateTime<chrono::Utc>>,
         app_cred_expires_at: Option<chrono::DateTime<chrono::Utc>>,
-        requested_exp: i64,
+        default_exp: i64,
     ) -> Result<OpenStackAccessTokenClaims, TokenExchangeError> {
         let ctx = app_cred_context("project-1", app_cred_expires_at);
         let (delegation, credential_expiration) = derive_delegation_context(&ctx).unwrap();
@@ -495,7 +497,7 @@ mod tests {
             "https://ks.example/v4/oauth2/domain-1",
             "jti-1".to_string(),
             1000,
-            requested_exp,
+            default_exp,
             Audience::control_plane(),
         )
     }
@@ -537,11 +539,25 @@ mod tests {
     }
 
     #[test]
-    fn test_build_token_exchange_claims_rejects_missing_subject_expiry() {
-        let app_cred_expiry = Some(chrono::DateTime::from_timestamp(2000, 0).unwrap());
+    fn test_build_token_exchange_claims_applies_default_when_no_expiry_present() {
+        let at = |ts| Some(chrono::DateTime::from_timestamp(ts, 0).unwrap());
+
+        // Neither subject token nor app cred expires; default applied.
+        let claims = build_claims_with_expiries(None, None, 1900).unwrap();
+        assert_eq!(claims.exp, 1900);
+
+        // No subject expiry, app cred expires later than the default.
+        let claims = build_claims_with_expiries(None, at(2100), 1900).unwrap();
+        assert_eq!(claims.exp, 1900);
+
+        // No subject expiry, app cred expires sooner than the default.
+        let claims = build_claims_with_expiries(None, at(1500), 1900).unwrap();
+        assert_eq!(claims.exp, 1500);
+
+        // An already-expired app cred is still rejected without a subject expiry.
         assert!(matches!(
-            build_claims_with_expiries(None, app_cred_expiry, 1900),
-            Err(TokenExchangeError::MissingSubjectTokenExpiry)
+            build_claims_with_expiries(None, at(1000), 1900),
+            Err(TokenExchangeError::CredentialChainExpired)
         ));
     }
 

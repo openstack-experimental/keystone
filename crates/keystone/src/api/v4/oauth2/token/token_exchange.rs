@@ -172,8 +172,9 @@ pub(super) async fn handle_token_exchange_grant(
     Ok((StatusCode::OK, Json(response)).into_response())
 }
 
-/// RFC 8693 §2.2.2: invalid subjects use invalid_request; provider failures
-/// are server errors rather than evidence of invalid credentials.
+/// RFC 8693 §2.2.2: a request whose subject_token is invalid for any reason
+/// (expired, revoked, not delegated, outside policy) is `invalid_request`.
+/// Provider failures are server errors, not evidence of a bad credential.
 fn exchange_error(
     error: openstack_keystone_core::oauth2_client::TokenExchangeError,
 ) -> Oauth2TokenError {
@@ -199,9 +200,6 @@ fn exchange_error(
         TokenExchangeError::CrossDomainSubjectToken => Oauth2TokenError::invalid_request(
             "subject_token's scope belongs to a different domain than this token endpoint",
         ),
-        TokenExchangeError::MissingSubjectTokenExpiry => Oauth2TokenError::invalid_request(
-            "subject_token is missing an expiry claim, cannot be exchanged",
-        ),
         TokenExchangeError::CredentialChainExpired => Oauth2TokenError::invalid_request(
             "subject_token or application credential expiry does not permit token exchange",
         ),
@@ -216,7 +214,6 @@ fn exchange_error(
         _ => Oauth2TokenError::internal("token issuance failed"),
     }
 }
-
 /// Whether `token` is a JWT whose payload has a `cnf` claim, or one whose
 /// payload cannot be read. The payload is read without verifying anything:
 /// the caller has already validated the token and only uses this to fail
@@ -1340,5 +1337,91 @@ mod tests {
         assert!(subject_token_carries_cnf("h.!!!.s"));
         assert!(subject_token_carries_cnf(&jwt("not json")));
         assert!(subject_token_carries_cnf(&jwt("[1]")));
+    }
+
+    #[test]
+    fn test_exchange_error_conversion() {
+        use openstack_keystone_core::oauth2_client::TokenExchangeError;
+        use openstack_keystone_core_types::token::TokenProviderError;
+
+        const BAD_REQUEST: StatusCode = StatusCode::BAD_REQUEST;
+        const SERVER_ERROR: StatusCode = StatusCode::INTERNAL_SERVER_ERROR;
+
+        // (input, expected status, expected OAuth2 error code).
+        // When a TokenExchangeError variant is added, add a row here.
+        let cases = [
+            // Subject or delegation unusable: RFC 8693 §2.2.2 `invalid_request`.
+            (
+                TokenExchangeError::CrossDomainSubjectToken,
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::CredentialChainExpired,
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::NoAuthorization,
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::NoDelegationProject,
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::NotAUserPrincipal,
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::NotDelegated("password".to_string()),
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::UnsupportedDelegation("trust"),
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::UnsupportedDelegation("ec2"),
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            // Token provider rejected the subject token.
+            (
+                TokenExchangeError::InvalidSubjectToken(TokenProviderError::Expired),
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                TokenExchangeError::InvalidSubjectToken(TokenProviderError::TokenRevoked),
+                BAD_REQUEST,
+                "invalid_request",
+            ),
+            // Backend failures are our fault, never a client error.
+            (
+                TokenExchangeError::InvalidSubjectToken(TokenProviderError::Driver {
+                    source: Box::new(std::io::Error::other("backend down")),
+                }),
+                SERVER_ERROR,
+                "server_error",
+            ),
+            (
+                TokenExchangeError::InvalidSubjectToken(TokenProviderError::ExpiryCalculation),
+                SERVER_ERROR,
+                "server_error",
+            ),
+        ];
+
+        for (error, status, code) in cases {
+            let label = format!("{error:?}");
+            let mapped = super::exchange_error(error);
+            assert_eq!(mapped.status(), status, "{label}: status");
+            assert_eq!(mapped.error_code(), code, "{label}: error code");
+        }
     }
 }
