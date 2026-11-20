@@ -22,6 +22,7 @@ use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::resource::{ResourceProviderError, backend::ResourceBackend};
+use openstack_keystone_core::table_watermark;
 use openstack_keystone_core::{
     SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
 };
@@ -29,6 +30,7 @@ use openstack_keystone_core_types::resource::*;
 
 mod domain;
 pub mod entity;
+pub mod migration;
 mod project;
 mod project_option;
 mod project_tag;
@@ -549,6 +551,12 @@ impl SqlDriver for SqlBackend {
                 context: "creating null domain during setup".to_string(),
             })?;
         }
+        table_watermark::install(connection, table_watermark::PROJECT_TABLES).await?;
         Ok(())
+    }
+
+    /// Return the ordered list of database migrations for this driver.
+    fn migrations(&self) -> Vec<Box<dyn sea_orm_migration::MigrationTrait>> {
+        crate::migration::migrations()
     }
 }

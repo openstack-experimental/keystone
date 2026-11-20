@@ -159,3 +159,4 @@ ______________________________________________________________________
     - [Single-Use Credential Registry](adr/0044-single-use-credential-registry.md)
     - [Global IAM Mesh](adr/0045-global-iam-mesh.md)
     - [Domain Member Invitations](adr/0046-domain-member-invitations.md)
+    - [Table Version Watermarks](adr/0047-table-version-watermarks.md)

@@ -44,6 +44,7 @@ mod revoke;
 mod role;
 mod scim_realm;
 mod service_grant;
+mod table_watermark;
 mod token;
 mod trust;
 

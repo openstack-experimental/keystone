@@ -61,6 +61,22 @@ pub struct DatabaseSection {
     /// per-connection. See `db_spiffe`'s module doc for the full disclosure.
     #[serde(default)]
     pub spiffe_managed: bool,
+
+    /// Interval in milliseconds between two polls of the `table_version`
+    /// watermark table. `0` (default) disables the poller.
+    ///
+    /// The SQL drivers of the catalog, role and resource providers keep a
+    /// version counter per table in `table_version`, bumped by database
+    /// triggers. With the poller enabled the process-wide caches of these
+    /// providers are validated against the counters instead of expiring
+    /// after `cache_time`: an unchanged table serves the cache without any
+    /// query, and a change made by another process (replica,
+    /// `keystone-manage`, direct SQL) is noticed within one interval. When
+    /// a poll fails, or the triggers are not installed, the caches fall
+    /// back to their TTL. Requires a SQL backend with the watermark
+    /// triggers installed (`keystone-manage db sync` or `db up`).
+    #[serde(default)]
+    pub table_watermark_interval_ms: u64,
 }
 
 impl DatabaseSection {

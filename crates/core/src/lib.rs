@@ -129,6 +129,7 @@ pub mod scim_resource;
 pub mod service_grant;
 pub mod single_use;
 pub mod spiffe_key;
+pub mod table_watermark;
 pub mod token;
 pub mod trust;
 

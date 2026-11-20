@@ -23,6 +23,12 @@
 //! replicas, `keystone-manage`) become visible once the TTL expires, which
 //! is therefore also the upper bound of staleness.
 //!
+//! With `[database] table_watermark_interval_ms` enabled the entry is instead
+//! valid for as long as the watermark of the `service` and `endpoint` tables
+//! is unchanged (see [`crate::table_watermark`]), so foreign changes become
+//! visible within one poll interval and an unchanged catalog is never
+//! reloaded. The TTL remains the fallback while the poller is not healthy.
+//!
 //! Each slot is guarded by an async mutex that is held while the value is
 //! loaded. That coalesces concurrent misses into a single backend call and
 //! makes invalidation race-free: an invalidation issued after a write has
@@ -39,6 +45,7 @@ use openstack_keystone_core_types::catalog::{Endpoint, Service};
 
 use crate::catalog::CatalogProviderError;
 use crate::request_cache::CACHE_METRICS;
+use crate::table_watermark::{CATALOG_TABLES, TableWatermarks};
 
 /// Metric namespace of the catalog cache.
 const NAMESPACE: &str = "catalog";
@@ -47,7 +54,8 @@ const NAMESPACE: &str = "catalog";
 pub type CatalogEntries = Vec<(Service, Vec<Endpoint>)>;
 
 struct Slot {
-    value: Option<(Instant, Arc<CatalogEntries>)>,
+    /// Load time, watermark stamp taken before the load, value.
+    value: Option<(Instant, Option<u64>, Arc<CatalogEntries>)>,
 }
 
 /// TTL cache of the `get_catalog` result.
@@ -56,12 +64,19 @@ pub struct CatalogCache {
     ttl: Duration,
     /// Slot for `enabled = false` at index 0 and `enabled = true` at index 1.
     slots: [Mutex<Slot>; 2],
+    watermarks: Arc<TableWatermarks>,
 }
 
 impl CatalogCache {
     /// Create a cache whose entries live for `ttl`; zero disables caching.
     pub fn new(ttl: Duration) -> Self {
+        Self::with_watermarks(ttl, TableWatermarks::global())
+    }
+
+    /// Create a cache validated against the given watermarks.
+    pub fn with_watermarks(ttl: Duration, watermarks: Arc<TableWatermarks>) -> Self {
         Self {
+            watermarks,
             ttl,
             slots: [
                 Mutex::new(Slot { value: None }),
@@ -86,15 +101,20 @@ impl CatalogCache {
             return Ok(Arc::new(load().await?));
         }
         let mut slot = self.slots[usize::from(enabled)].lock().await;
-        if let Some((loaded_at, value)) = &slot.value
-            && loaded_at.elapsed() < self.ttl
+        if let Some((loaded_at, stamp, value)) = &slot.value
+            && self
+                .watermarks
+                .is_fresh(CATALOG_TABLES, *loaded_at, *stamp, self.ttl)
         {
             CACHE_METRICS.record(NAMESPACE, true);
             return Ok(value.clone());
         }
         CACHE_METRICS.record(NAMESPACE, false);
+        // The stamp is taken before the load: a change committed meanwhile
+        // moves the stamp on and the value is reloaded once more.
+        let stamp = self.watermarks.stamp(CATALOG_TABLES);
         let value = Arc::new(load().await?);
-        slot.value = Some((Instant::now(), value.clone()));
+        slot.value = Some((Instant::now(), stamp, value.clone()));
         Ok(value)
     }
 
@@ -169,6 +189,55 @@ mod tests {
         cache.get_or_load(true, || load(&calls)).await.unwrap();
         cache.get_or_load(true, || load(&calls)).await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    fn watermarks(versions: &[(&str, i64)]) -> Arc<TableWatermarks> {
+        let wm = Arc::new(TableWatermarks::new());
+        wm.configure(Duration::from_secs(1));
+        wm.publish(versions.iter().map(|(k, v)| (k.to_string(), *v)).collect());
+        wm
+    }
+
+    #[tokio::test]
+    async fn test_watermark_overrides_ttl() {
+        let wm = watermarks(&[("service", 1), ("endpoint", 1)]);
+        // The TTL is far too short to hold the entry.
+        let cache = CatalogCache::with_watermarks(Duration::from_millis(1), wm.clone());
+        let calls = AtomicUsize::new(0);
+        cache.get_or_load(true, || load(&calls)).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        cache.get_or_load(true, || load(&calls)).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // A foreign change moves the watermark.
+        wm.publish(
+            [("service".to_string(), 1), ("endpoint".to_string(), 2)]
+                .into_iter()
+                .collect(),
+        );
+        cache.get_or_load(true, || load(&calls)).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        cache.get_or_load(true, || load(&calls)).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_unrelated_table_does_not_invalidate() {
+        let wm = watermarks(&[("service", 1), ("endpoint", 1), ("role", 1)]);
+        let cache = CatalogCache::with_watermarks(Duration::from_secs(60), wm.clone());
+        let calls = AtomicUsize::new(0);
+        cache.get_or_load(true, || load(&calls)).await.unwrap();
+        wm.publish(
+            [
+                ("service".to_string(), 1),
+                ("endpoint".to_string(), 1),
+                ("role".to_string(), 9),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        cache.get_or_load(true, || load(&calls)).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

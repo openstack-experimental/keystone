@@ -154,3 +154,87 @@ async fn test_list_roles_ids_combine_with_other_filters() {
             .len()
     );
 }
+
+mod watermark {
+    use openstack_keystone_core::SqlDriver;
+    use openstack_keystone_core::table_watermark::{ROLE_TABLES, TableWatermarks};
+    use sea_orm_migration::SchemaManager;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::SqlBackend;
+
+    async fn stamp(db: &DatabaseConnection) -> u64 {
+        let wm = TableWatermarks::new();
+        wm.configure(Duration::from_secs(1));
+        wm.poll(db).await.unwrap();
+        wm.stamp(ROLE_TABLES).expect("counters of all role tables")
+    }
+
+    #[tokio::test]
+    async fn test_setup_installs_triggers_on_all_role_tables() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        SqlBackend::default()
+            .setup(&db, &Schema::new(DatabaseBackend::Sqlite))
+            .await
+            .unwrap();
+
+        let mut last = stamp(&db).await;
+        for sql in [
+            "INSERT INTO role (id, name, domain_id) VALUES ('a', 'a', '<<null>>')",
+            "INSERT INTO role (id, name, domain_id) VALUES ('b', 'b', '<<null>>')",
+            "INSERT INTO implied_role (prior_role_id, implied_role_id) VALUES ('a', 'b')",
+            "INSERT INTO role_option (role_id, option_id, option_value) VALUES ('a', 'x', '1')",
+            "UPDATE role SET name = 'c' WHERE id = 'a'",
+            "DELETE FROM implied_role",
+        ] {
+            db.execute_unprepared(sql).await.unwrap();
+            let now = stamp(&db).await;
+            assert!(now > last, "`{sql}` did not move the watermark");
+            last = now;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_migration_installs_and_removes_triggers() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        let schema = Schema::new(DatabaseBackend::Sqlite);
+        // Tables only, as on a database that predates the watermarks.
+        for entity in [
+            schema.create_table_from_entity(role::Entity),
+            schema.create_table_from_entity(implied_role::Entity),
+            schema.create_table_from_entity(role_option::Entity),
+        ] {
+            db.execute(&entity).await.unwrap();
+        }
+        let manager = SchemaManager::new(&db);
+        let migrations = crate::migration::migrations();
+        assert_eq!(1, migrations.len());
+
+        migrations[0].up(&manager).await.unwrap();
+        // Re-running is harmless.
+        migrations[0].up(&manager).await.unwrap();
+        let before = stamp(&db).await;
+        db.execute_unprepared("INSERT INTO role (id, name, domain_id) VALUES ('a', 'a', 'd')")
+            .await
+            .unwrap();
+        assert!(stamp(&db).await > before);
+
+        migrations[0].down(&manager).await.unwrap();
+        let wm = TableWatermarks::new();
+        wm.configure(Duration::from_secs(1));
+        wm.poll(&db).await.unwrap();
+        assert!(wm.stamp(ROLE_TABLES).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_migration_skips_missing_tables() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        let manager = SchemaManager::new(&db);
+        // No role tables at all (e.g. another role driver in use).
+        crate::migration::migrations()[0]
+            .up(&manager)
+            .await
+            .unwrap();
+    }
+}

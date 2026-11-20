@@ -24,10 +24,18 @@
 //! replicas, `keystone-manage`) become visible once the TTL expires, which
 //! is therefore also the upper bound of staleness.
 //!
+//! With `[database] table_watermark_interval_ms` enabled an entry is instead
+//! valid for as long as the watermark of the `role`, `role_option` and
+//! `implied_role` tables is unchanged (see [`crate::table_watermark`]), so
+//! foreign changes become visible within one poll interval and unchanged
+//! roles are never reloaded. The TTL remains the fallback while the poller is
+//! not healthy.
+//!
 //! Invalidation is race-free without holding a lock across the load: every
 //! invalidation bumps a generation counter, and a value loaded before the
 //! bump is not stored.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -36,6 +44,7 @@ use dashmap::DashMap;
 use openstack_keystone_core_types::role::{Role, RoleImply};
 
 use crate::request_cache::CACHE_METRICS;
+use crate::table_watermark::{ROLE_TABLES, TableWatermarks};
 
 /// Upper bound of the entries of a single map. A map that reached it stops
 /// admitting new entries until it is invalidated or entries expire.
@@ -49,14 +58,17 @@ struct TtlMap<V> {
     namespace: &'static str,
     ttl: Duration,
     generation: AtomicU64,
-    entries: DashMap<String, (Instant, V)>,
+    watermarks: Arc<TableWatermarks>,
+    /// Load time, watermark stamp taken before the load, value.
+    entries: DashMap<String, (Instant, Option<u64>, V)>,
 }
 
 impl<V: Clone> TtlMap<V> {
-    fn new(namespace: &'static str, ttl: Duration) -> Self {
+    fn new(namespace: &'static str, ttl: Duration, watermarks: Arc<TableWatermarks>) -> Self {
         Self {
             namespace,
             ttl,
+            watermarks,
             generation: AtomicU64::new(0),
             entries: DashMap::new(),
         }
@@ -67,12 +79,25 @@ impl<V: Clone> TtlMap<V> {
         self.generation.load(Ordering::Acquire)
     }
 
+    /// The token to hand to [`Self::insert`]; take it before loading.
+    fn begin(&self) -> Loaded {
+        Loaded {
+            generation: self.generation(),
+            stamp: self.watermarks.stamp(ROLE_TABLES),
+        }
+    }
+
+    fn is_fresh(&self, loaded_at: Instant, stamp: Option<u64>) -> bool {
+        self.watermarks
+            .is_fresh(ROLE_TABLES, loaded_at, stamp, self.ttl)
+    }
+
     fn get(&self, key: &str) -> Option<V> {
         if self.ttl.is_zero() {
             return None;
         }
         let value = match self.entries.get(key) {
-            Some(entry) if entry.0.elapsed() < self.ttl => Some(entry.1.clone()),
+            Some(entry) if self.is_fresh(entry.0, entry.1) => Some(entry.2.clone()),
             Some(_) => {
                 // Release the read guard before removing.
                 None
@@ -80,8 +105,9 @@ impl<V: Clone> TtlMap<V> {
             None => None,
         };
         if value.is_none() {
-            self.entries
-                .remove_if(key, |_, (loaded_at, _)| loaded_at.elapsed() >= self.ttl);
+            self.entries.remove_if(key, |_, (loaded_at, stamp, _)| {
+                !self.is_fresh(*loaded_at, *stamp)
+            });
         }
         CACHE_METRICS.record(self.namespace, value.is_some());
         value
@@ -89,7 +115,8 @@ impl<V: Clone> TtlMap<V> {
 
     /// Store a value loaded while the map was at `generation`; it is dropped
     /// when the map was invalidated since.
-    fn insert(&self, key: &str, value: V, generation: u64) {
+    fn insert(&self, key: &str, value: V, loaded: &Loaded) {
+        let generation = loaded.generation;
         if self.ttl.is_zero() || self.generation() != generation {
             return;
         }
@@ -97,7 +124,7 @@ impl<V: Clone> TtlMap<V> {
             return;
         }
         self.entries
-            .insert(key.to_string(), (Instant::now(), value));
+            .insert(key.to_string(), (Instant::now(), loaded.stamp, value));
         // An invalidation that ran between the check and the insert has
         // already cleared the map: take the stale value out again.
         if self.generation() != generation {
@@ -118,6 +145,8 @@ impl<V: Clone> TtlMap<V> {
 /// [`RoleCache::role`].
 pub struct Loaded {
     generation: u64,
+    /// Watermark stamp at the start of the load.
+    stamp: Option<u64>,
 }
 
 /// TTL cache of roles and role imply rules.
@@ -131,11 +160,16 @@ pub struct RoleCache {
 impl RoleCache {
     /// Create a cache whose entries live for `ttl`; zero disables caching.
     pub fn new(ttl: Duration) -> Self {
+        Self::with_watermarks(ttl, TableWatermarks::global())
+    }
+
+    /// Create a cache validated against the given watermarks.
+    pub fn with_watermarks(ttl: Duration, watermarks: Arc<TableWatermarks>) -> Self {
         Self {
-            roles: TtlMap::new("role.process.role", ttl),
-            names: TtlMap::new("role.process.name", ttl),
-            imply_by_prior: TtlMap::new("role.process.imply_by_prior", ttl),
-            imply_all: TtlMap::new("role.process.imply_all", ttl),
+            roles: TtlMap::new("role.process.role", ttl, watermarks.clone()),
+            names: TtlMap::new("role.process.name", ttl, watermarks.clone()),
+            imply_by_prior: TtlMap::new("role.process.imply_by_prior", ttl, watermarks.clone()),
+            imply_all: TtlMap::new("role.process.imply_all", ttl, watermarks),
         }
     }
 
@@ -146,14 +180,12 @@ impl RoleCache {
 
     /// Take the generation before loading a role.
     pub fn begin_role(&self) -> Loaded {
-        Loaded {
-            generation: self.roles.generation(),
-        }
+        self.roles.begin()
     }
 
     /// Store a role loaded after [`Self::begin_role`].
     pub fn put_role(&self, role: &Role, loaded: &Loaded) {
-        self.roles.insert(&role.id, role.clone(), loaded.generation);
+        self.roles.insert(&role.id, role.clone(), loaded);
     }
 
     /// The cached role without options, as used for the name resolution.
@@ -163,14 +195,12 @@ impl RoleCache {
 
     /// Take the generation before loading role names.
     pub fn begin_name(&self) -> Loaded {
-        Loaded {
-            generation: self.names.generation(),
-        }
+        self.names.begin()
     }
 
     /// Store a role loaded after [`Self::begin_name`].
     pub fn put_name(&self, role: &Role, loaded: &Loaded) {
-        self.names.insert(&role.id, role.clone(), loaded.generation);
+        self.names.insert(&role.id, role.clone(), loaded);
     }
 
     /// The cached direct imply rules of a prior role.
@@ -180,16 +210,13 @@ impl RoleCache {
 
     /// Take the generation before loading imply rules by prior role.
     pub fn begin_imply_by_prior(&self) -> Loaded {
-        Loaded {
-            generation: self.imply_by_prior.generation(),
-        }
+        self.imply_by_prior.begin()
     }
 
     /// Store the rules of a prior role loaded after
     /// [`Self::begin_imply_by_prior`].
     pub fn put_imply_by_prior(&self, prior_role_id: &str, rules: Vec<RoleImply>, loaded: &Loaded) {
-        self.imply_by_prior
-            .insert(prior_role_id, rules, loaded.generation);
+        self.imply_by_prior.insert(prior_role_id, rules, loaded);
     }
 
     /// The cached complete imply rule table.
@@ -199,14 +226,12 @@ impl RoleCache {
 
     /// Take the generation before loading the complete rule table.
     pub fn begin_imply_all(&self) -> Loaded {
-        Loaded {
-            generation: self.imply_all.generation(),
-        }
+        self.imply_all.begin()
     }
 
     /// Store the complete rule table loaded after [`Self::begin_imply_all`].
     pub fn put_imply_all(&self, rules: Vec<RoleImply>, loaded: &Loaded) {
-        self.imply_all.insert(ALL, rules, loaded.generation);
+        self.imply_all.insert(ALL, rules, loaded);
     }
 
     /// Drop everything cached.
@@ -274,6 +299,70 @@ mod tests {
     fn test_zero_ttl_disables_cache() {
         let cache = RoleCache::new(Duration::ZERO);
         let loaded = cache.begin_role();
+        cache.put_role(&role("a"), &loaded);
+        assert!(cache.get_role("a").is_none());
+    }
+
+    fn watermarks(role: i64) -> Arc<TableWatermarks> {
+        let wm = Arc::new(TableWatermarks::new());
+        wm.configure(Duration::from_secs(1));
+        publish(&wm, role, 1);
+        wm
+    }
+
+    fn publish(wm: &TableWatermarks, role: i64, other: i64) {
+        wm.publish(
+            [
+                ("role".to_string(), role),
+                ("role_option".to_string(), other),
+                ("implied_role".to_string(), other),
+                ("project".to_string(), other),
+            ]
+            .into_iter()
+            .collect(),
+        );
+    }
+
+    #[test]
+    fn test_watermark_overrides_ttl() {
+        let wm = watermarks(1);
+        let cache = RoleCache::with_watermarks(Duration::from_millis(1), wm.clone());
+        let loaded = cache.begin_role();
+        cache.put_role(&role("a"), &loaded);
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(cache.get_role("a").is_some());
+
+        // A foreign change moves the watermark.
+        publish(&wm, 2, 1);
+        assert!(cache.get_role("a").is_none());
+    }
+
+    #[test]
+    fn test_watermark_of_other_tables_is_ignored() {
+        let wm = watermarks(1);
+        let cache = RoleCache::with_watermarks(Duration::from_secs(60), wm.clone());
+        let loaded = cache.begin_role();
+        cache.put_role(&role("a"), &loaded);
+        wm.publish(
+            [
+                ("role".to_string(), 1),
+                ("role_option".to_string(), 1),
+                ("implied_role".to_string(), 1),
+                ("project".to_string(), 50),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        assert!(cache.get_role("a").is_some());
+    }
+
+    #[test]
+    fn test_value_loaded_before_foreign_change_is_not_served() {
+        let wm = watermarks(1);
+        let cache = RoleCache::with_watermarks(Duration::from_secs(60), wm.clone());
+        let loaded = cache.begin_role();
+        // The change lands (and is polled) while the load is in flight.
+        publish(&wm, 2, 1);
         cache.put_role(&role("a"), &loaded);
         assert!(cache.get_role("a").is_none());
     }
