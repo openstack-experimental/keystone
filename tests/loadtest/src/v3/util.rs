@@ -49,6 +49,15 @@ impl Undo {
     }
 }
 
+/// Whether `LOADTEST_NO_KEEPALIVE=1` is set: send `Connection: close` with
+/// every request. Needed against servers that drop the connection after each
+/// response (uwsgi behind `--http-socket`), where reusing a pooled connection
+/// fails on the client side.
+fn no_keepalive() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("LOADTEST_NO_KEEPALIVE").is_ok_and(|v| v == "1"))
+}
+
 /// Admin token of the virtual user.
 pub(crate) fn admin_token(user: &GooseUser) -> String {
     user.get_session_data_unchecked::<Session>().token.clone()
@@ -66,6 +75,9 @@ pub(crate) async fn call(
     token: Option<&str>,
 ) -> Result<Option<Reply>, Box<TransactionError>> {
     let mut req = user.get_request_builder(&method, path)?;
+    if no_keepalive() {
+        req = req.header("connection", "close");
+    }
     if let Some(token) = token {
         req = req.header("x-auth-token", token);
     }

@@ -22,6 +22,7 @@ use sha1::Sha1;
 use sha2::Sha256;
 use uuid::Uuid;
 
+use crate::v3::role_assignment::auth_role_id;
 use crate::v3::user::auth_project_id;
 use crate::v3::util::{Undo, admin_token, call, create, create_user};
 
@@ -84,6 +85,27 @@ async fn run(user: &mut GooseUser, undo: &mut Undo) -> TransactionResult {
     let Some((user_id, _)) = create_user(user, undo).await? else {
         return Ok(());
     };
+    // The credential owner needs a role on the project, otherwise the
+    // signature check is rejected with ActorHasNoRolesOnTarget (401).
+    if let Some(role_id) = auth_role_id() {
+        let path = format!("/v3/projects/{project_id}/users/{user_id}/roles/{role_id}");
+        if call(
+            user,
+            GooseMethod::Put,
+            &path,
+            "PUT /v3/projects/:id/users/:id/roles/:id (s3tokens)",
+            None,
+            Some(&token),
+        )
+        .await?
+        .is_some()
+        {
+            undo.push(
+                path,
+                "DELETE /v3/projects/:id/users/:id/roles/:id (s3tokens)",
+            );
+        }
+    }
     let Some(_) = create(
         user,
         undo,
@@ -166,5 +188,146 @@ async fn run(user: &mut GooseUser, undo: &mut Undo) -> TransactionResult {
             None,
         )?,
     }
+    Ok(())
+}
+
+/// Credential of one virtual user of the `S3TokensHot` scenario.
+#[derive(Clone)]
+pub struct HotCred {
+    access: String,
+    secret: String,
+    user_id: String,
+    credential_id: String,
+}
+
+/// on_start: user, role on the project and EC2 credential, created once.
+pub async fn hot_setup(user: &mut GooseUser) -> TransactionResult {
+    let (Some(project_id), Some(role_id)) = (auth_project_id(), auth_role_id()) else {
+        return Ok(());
+    };
+    let token = admin_token(user);
+    let access = Uuid::new_v4().as_simple().to_string();
+    let secret = Uuid::new_v4().as_simple().to_string();
+    // The users are removed in hot_teardown, not by the throwaway `Undo`.
+    let mut undo = Undo::default();
+    let Some((user_id, _)) = create_user(user, &mut undo).await? else {
+        return Ok(());
+    };
+    let path = format!("/v3/projects/{project_id}/users/{user_id}/roles/{role_id}");
+    call(
+        user,
+        GooseMethod::Put,
+        &path,
+        "PUT /v3/projects/:id/users/:id/roles/:id (s3tokens)",
+        None,
+        Some(&token),
+    )
+    .await?;
+    // A server without HTTP keep-alive (uwsgi behind `--http-socket`) makes
+    // the first request on a reused connection fail on the client side, so
+    // retry a few times.
+    let mut credential_id = None;
+    for _ in 0..5 {
+        let mut cred_undo = Undo::default();
+        credential_id = create(
+            user,
+            &mut cred_undo,
+            "credentials",
+            "credential",
+            json!({"credential": {
+                "user_id": user_id,
+                "project_id": project_id,
+                "type": "ec2",
+                "blob": json!({"access": access, "secret": secret}).to_string(),
+            }}),
+            "POST /v3/credentials",
+            "DELETE /v3/credentials/:id",
+        )
+        .await?;
+        if credential_id.is_some() {
+            break;
+        }
+    }
+    let Some(credential_id) = credential_id else {
+        return Ok(());
+    };
+    user.get_session_data_unchecked_mut::<crate::Session>()
+        .s3_hot = Some(HotCred {
+        access,
+        secret,
+        user_id,
+        credential_id,
+    });
+    Ok(())
+}
+
+/// on_stop: remove the credential and the user.
+pub async fn hot_teardown(user: &mut GooseUser) -> TransactionResult {
+    let Some(cred) = user
+        .get_session_data_unchecked_mut::<crate::Session>()
+        .s3_hot
+        .take()
+    else {
+        return Ok(());
+    };
+    let token = admin_token(user);
+    for (path, name) in [
+        (
+            format!("/v3/credentials/{}", cred.credential_id),
+            "DELETE /v3/credentials/:id",
+        ),
+        (
+            format!("/v3/users/{}", cred.user_id),
+            "DELETE /v3/users/:id (churn)",
+        ),
+    ] {
+        let _ = call(user, GooseMethod::Delete, &path, name, None, Some(&token)).await;
+    }
+    Ok(())
+}
+
+/// One SigV2 (v1) and one SigV4 validation, nothing else.
+pub async fn hot_cycle(user: &mut GooseUser) -> TransactionResult {
+    let Some(cred) = user
+        .get_session_data_unchecked::<crate::Session>()
+        .s3_hot
+        .clone()
+    else {
+        // Setup failed; do not spin.
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        return Ok(());
+    };
+    let token = admin_token(user);
+    let now = chrono::Utc::now();
+    let v1_sts = format!("GET\n\n\n{}\n/bucket/key", now.timestamp());
+    let v1 = body(&cred.access, &sign_v1(&cred.secret, &v1_sts), &v1_sts);
+    call(
+        user,
+        GooseMethod::Post,
+        "/v3/s3tokens",
+        "POST /v3/s3tokens (v1)",
+        Some(&v1),
+        Some(&token),
+    )
+    .await?;
+    let date = now.format("%Y%m%d").to_string();
+    let v4_sts = format!(
+        "AWS4-HMAC-SHA256\n{}\n{date}/RegionOne/s3/aws4_request\ndeadbeef",
+        now.format("%Y%m%dT%H%M%SZ")
+    );
+    let v4 = body(
+        &cred.access,
+        &sign_v4(&cred.secret, &date, "RegionOne", &v4_sts),
+        &v4_sts,
+    );
+    call(
+        user,
+        GooseMethod::Post,
+        "/v3/s3tokens",
+        "POST /v3/s3tokens (SigV4)",
+        Some(&v4),
+        Some(&token),
+    )
+    .await?;
     Ok(())
 }

@@ -51,7 +51,10 @@ use crate::v3::role_assignment::{
     list as role_assignment_list, list_by_domain as role_assignment_list_by_domain,
     list_by_role as role_assignment_list_by_role, list_by_user as role_assignment_list_by_user,
 };
-use crate::v3::s3tokens::cycle as s3tokens_cycle;
+use crate::v3::s3tokens::{
+    cycle as s3tokens_cycle, hot_cycle as s3tokens_hot_cycle, hot_setup as s3tokens_hot_setup,
+    hot_teardown as s3tokens_hot_teardown,
+};
 use crate::v3::trust::cycle as trust_cycle;
 use crate::v3::user::{
     create as user_create, delete as user_delete, list as user_list, show as user_show,
@@ -100,6 +103,8 @@ pub struct Session {
     /// provider_id of the OAuth2 client created in on_start for
     /// OAuth2ClientCRUD scenario (raft-backed, ADR 0026).
     pub oauth2_client_id: Option<String>,
+    /// EC2 credential created in on_start for the S3TokensHot scenario.
+    pub s3_hot: Option<crate::v3::s3tokens::HotCred>,
 }
 
 #[tokio::main]
@@ -379,6 +384,17 @@ fn stress_attack(
                 .register_transaction(transaction!(openstack_login).set_on_start())
                 .register_transaction(transaction!(s3tokens_cycle)),
         )
+        // Throughput of POST /v3/s3tokens alone: one credential per virtual
+        // user, then only signed requests. Select with
+        // `--scenarios s3tokenshot`.
+        .register_scenario(
+            scenario!("S3TokensHot")
+                .set_weight(weight("S3TokensHot", 1))?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(s3tokens_hot_setup).set_on_start())
+                .register_transaction(transaction!(s3tokens_hot_cycle))
+                .register_transaction(transaction!(s3tokens_hot_teardown).set_on_stop()),
+        )
         .register_scenario(
             scenario!("TrustChurn")
                 .set_weight(weight("TrustChurn", 2))?
@@ -588,6 +604,7 @@ pub async fn openstack_login(user: &mut GooseUser) -> TransactionResult {
         api_key_client_id: None,
         mapping_id: None,
         oauth2_client_id: None,
+        s3_hot: None,
     });
     Ok(())
 }
