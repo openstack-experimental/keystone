@@ -15,10 +15,9 @@
 
 use serde_json::Value;
 
-use openstack_keystone_core::api::common::{get_authz_info, get_domain};
 use openstack_keystone_core_types::auth::AuthenticationError;
+use openstack_keystone_core_types::auth::ScopeInfo;
 use openstack_keystone_core_types::credential::Credential as CoreCredential;
-use openstack_keystone_core_types::scope::{Project as ScopeProject, Scope as ProviderScope};
 
 use crate::api::error::KeystoneApiError;
 use crate::auth::*;
@@ -123,7 +122,17 @@ pub(crate) async fn redeem_ec2_credential(
     if !user.enabled {
         return Err(AuthenticationError::UserDisabled(user.id.clone()).into());
     }
-    let user_domain = get_domain(state, Some(&user.domain_id), None::<&str>).await?;
+    // The reference form (no domain options) is all that is needed here, and
+    // the request cache makes the repeated lookups of the same domain below
+    // (the project domain is usually the user domain) free.
+    let resource_provider = state.provider.get_resource_provider();
+    let user_domain = resource_provider
+        .get_domain_ref(&exec, &user.domain_id)
+        .await?
+        .ok_or_else(|| KeystoneApiError::NotFound {
+            resource: "domain".into(),
+            identifier: user.domain_id.clone(),
+        })?;
     if !user_domain.enabled {
         return Err(AuthenticationError::UserDomainDisabled.into());
     }
@@ -172,12 +181,24 @@ pub(crate) async fn redeem_ec2_credential(
         .build()?;
 
     let ctx = SecurityContext::try_from(auth_result)?;
-    let provider_scope = ProviderScope::Project(ScopeProject {
-        id: Some(project_id),
-        name: None,
-        domain: None,
-    });
-    let authz_info = get_authz_info(state, Some(&provider_scope)).await?;
+    // The token scope only carries the short form of the project and of its
+    // domain, so neither the project options nor the tags are loaded.
+    let project = resource_provider
+        .get_project_ref(&exec, &project_id)
+        .await?
+        .ok_or(KeystoneApiError::UnauthorizedNoContext)?;
+    let project_domain = resource_provider
+        .get_domain_ref(&exec, &project.domain_id)
+        .await?
+        .ok_or_else(|| KeystoneApiError::NotFound {
+            resource: "domain".into(),
+            identifier: project.domain_id.clone(),
+        })?;
+    let authz_info = ScopeInfo::Project {
+        project,
+        project_domain,
+    };
+    authz_info.validate()?;
 
     let vsc = state
         .provider

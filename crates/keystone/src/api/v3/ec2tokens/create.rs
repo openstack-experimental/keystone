@@ -175,7 +175,7 @@ mod tests {
     };
     use openstack_keystone_core_types::credential::{Credential, CredentialBuilder};
     use openstack_keystone_core_types::identity::UserResponseBuilder;
-    use openstack_keystone_core_types::resource::{Domain, Project};
+    use openstack_keystone_core_types::resource::{DomainRef, ProjectRef};
 
     use super::super::openapi_router;
     use crate::api::tests::{get_mocked_state, test_fixture_scoped};
@@ -302,10 +302,10 @@ mod tests {
     fn resource_mock() -> MockResourceProvider {
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
-            .expect_get_project()
+            .expect_get_project_ref()
             .withf(|_, id: &'_ str| id == "pid")
             .returning(|_, _| {
-                Ok(Some(Project {
+                Ok(Some(ProjectRef {
                     id: "pid".into(),
                     domain_id: "pdid".into(),
                     enabled: true,
@@ -313,20 +313,20 @@ mod tests {
                 }))
             });
         resource_mock
-            .expect_get_domain()
+            .expect_get_domain_ref()
             .withf(|_, id: &'_ str| id == "user_domain_id")
             .returning(|_, _| {
-                Ok(Some(Domain {
+                Ok(Some(DomainRef {
                     id: "user_domain_id".into(),
                     enabled: true,
                     ..Default::default()
                 }))
             });
         resource_mock
-            .expect_get_domain()
+            .expect_get_domain_ref()
             .withf(|_, id: &'_ str| id == "pdid")
             .returning(|_, _| {
-                Ok(Some(Domain {
+                Ok(Some(DomainRef {
                     id: "pdid".into(),
                     enabled: true,
                     ..Default::default()
