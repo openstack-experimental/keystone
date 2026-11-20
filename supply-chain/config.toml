@@ -211,14 +211,6 @@ criteria = "safe-to-deploy"
 version = "0.14.3"
 criteria = "safe-to-deploy"
 
-[[exemptions.aws-lc-rs]]
-version = "1.18.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.aws-lc-sys]]
-version = "0.46.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.axum-core]]
 version = "0.5.6"
 criteria = "safe-to-deploy"
@@ -1401,10 +1393,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.portable-atomic]]
 version = "1.15.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.portable-atomic-util]]
-version = "0.2.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.potential_utf]]

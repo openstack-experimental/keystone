@@ -57,6 +57,20 @@ user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
 
+[[publisher.aws-lc-rs]]
+version = "1.19.0"
+when = "2026-10-28"
+user-id = 156764
+user-login = "justsmth"
+user-name = "Justin W Smith"
+
+[[publisher.aws-lc-sys]]
+version = "0.47.0"
+when = "2026-10-28"
+user-id = 156764
+user-login = "justsmth"
+user-name = "Justin W Smith"
+
 [[publisher.axum]]
 version = "0.8.9"
 when = "2026-04-14"
@@ -2230,6 +2244,12 @@ change.
 who = "Chris Fallin <chris@cfallin.org>"
 criteria = "safe-to-deploy"
 delta = "0.3.29 -> 0.3.32"
+
+[[audits.bytecode-alliance.audits.portable-atomic-util]]
+who = "Alex Crichton <alex@alexcrichton.com>"
+criteria = "safe-to-deploy"
+version = "0.2.8"
+notes = "Lots of unsafe code, as to be expected, but mostly a copy of the standard library's `arc.rs` and otherwise nothing awry here."
 
 [[audits.bytecode-alliance.audits.postcard]]
 who = "Alex Crichton <alex@alexcrichton.com>"
