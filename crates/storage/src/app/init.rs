@@ -302,7 +302,7 @@ async fn build_transit_kek(
             identity: Box::new(move || {
                 let svid = source
                     .svid()
-                    .map_err(|e| CryptoError::Transit(format!("no X.509-SVID: {e}")))?;
+                    .map_err(|e| CryptoError::KekUnavailable(format!("no X.509-SVID: {e}")))?;
                 let chain: Vec<&[u8]> = svid.cert_chain().iter().map(|c| c.as_bytes()).collect();
                 Ok(pem_identity(&chain, svid.private_key().as_bytes()))
             }),
@@ -322,7 +322,9 @@ async fn build_transit_kek(
                     jwt: Box::new(move || {
                         std::fs::read_to_string(&file)
                             .map(|s| SecretString::from(s.trim().to_owned()))
-                            .map_err(|e| CryptoError::Transit(format!("reading JWT file: {e}")))
+                            .map_err(|e| {
+                                CryptoError::KekUnavailable(format!("reading JWT file: {e}"))
+                            })
                     }),
                 }
             }

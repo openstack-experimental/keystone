@@ -325,6 +325,14 @@ fn validate_kek_selection(
                         "transit_cert_auth needs the SPIFFE TLS mode (trust_domains)",
                     )));
                 }
+                if !cfg.dev_mode && !t.transit_address.starts_with("https://") {
+                    return Err(
+                        validator::ValidationError::new("kek_provider_transit_https")
+                            .with_message(std::borrow::Cow::Borrowed(
+                                "transit_address must be an https:// URL: the plaintext DEK and the token travel to it (http:// is only allowed with dev_mode = true)",
+                            )),
+                    );
+                }
                 if t.transit_cert_role.is_some() && !t.transit_cert_auth {
                     return Err(
                         validator::ValidationError::new("kek_provider_transit_cert_role")
@@ -1489,6 +1497,23 @@ roles = ["reservation-voter"]
         with(json!({"transit_jwt_file": "/j", "transit_jwt_role": "r"}))
             .validate()
             .expect("jwt auth");
+    }
+
+    #[test]
+    fn test_kek_provider_transit_requires_https() {
+        let transit = json!({
+            "transit_address": "http://bao:8200",
+            "transit_key_name": "kek",
+            "transit_token_file": "/t",
+        });
+        // Plain http is a development convenience only.
+        transit_cfg(transit.clone())
+            .validate()
+            .expect("http in dev_mode");
+        let mut cfg = transit_cfg(transit);
+        cfg.dev_mode = false;
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("https://"), "{err}");
     }
 
     #[test]

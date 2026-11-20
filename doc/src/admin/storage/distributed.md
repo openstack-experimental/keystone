@@ -1016,12 +1016,24 @@ must use the **same** Transit key: one OpenBao, or OpenBao instances that share
 the key (for example through replication). A node whose OpenBao holds a
 different key cannot join, because it cannot unwrap the DEK it fetches.
 
-OpenBao is contacted over HTTPS and redirects are never followed; point
-`transit_address` at the active node (a standby's redirect is reported as an
-error). When `transit_ca_file` is set it is the only trust root for OpenBao.
-Applying a DEK change (rotation, snapshot or restore) waits and retries while
-OpenBao is unreachable instead of stopping the node; a rejected request (wrong
-key, bad policy for the operation) is still a hard error.
+`transit_address` must be an `https://` URL (plain `http://` is accepted only
+with `dev_mode = true`): the plaintext DEK and the token travel to it. When
+`transit_ca_file` is set it is the only trust root for OpenBao. A server
+certificate that fails verification (wrong CA or host name) is a configuration
+error and stops the node at once with a message naming `transit_ca_file` and
+`transit_address`.
+
+Redirects are never followed, so the token is not sent to a host you did not
+name. A standby's redirect during a failover is treated like an outage and
+waited out; if it persists, point `transit_address` at the active node.
+
+While OpenBao is unreachable (connection refused, timeout, 5xx, 429, a
+failover, or a login that is briefly denied) the node waits and retries with a
+backoff of up to 30 seconds, with no deadline. This holds at startup, so a node
+can start before OpenBao is up, as well as when applying a DEK change
+(rotation, snapshot or restore). After five minutes the retry is logged at
+`error` level. A rejected request (wrong key, bad policy for the operation) is
+a hard error.
 
 #### TPM 2.0
 

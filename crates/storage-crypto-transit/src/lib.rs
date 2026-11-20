@@ -263,15 +263,22 @@ impl Session {
         if let Some(ns) = &self.params.namespace {
             req = req.header("X-Vault-Namespace", ns);
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| unavailable(format!("request failed: {e}")))?;
+        let mut resp = req.send().await.map_err(request_error)?;
         let status = resp.status();
-        let text = resp
-            .text()
+        let mut body = Vec::new();
+        while let Some(chunk) = resp
+            .chunk()
             .await
-            .map_err(|e| unavailable(format!("reading response: {e}")))?;
+            .map_err(|e| unavailable(format!("reading response: {e}")))?
+        {
+            if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
+                return Err(transit_err(format!(
+                    "response larger than {MAX_RESPONSE_BYTES} bytes"
+                )));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let text = String::from_utf8_lossy(&body);
         if status == reqwest::StatusCode::FORBIDDEN {
             return Err(CryptoError::TransitForbidden);
         }
@@ -279,8 +286,12 @@ impl Session {
             return Err(unavailable(format!("HTTP {status}: {}", truncate(&text))));
         }
         if status.is_redirection() {
-            return Err(transit_err(format!(
-                "HTTP {status}: redirects are not followed; point the address at the active node"
+            // A standby answers with a redirect to the active node while
+            // leadership moves. Redirects are never followed (the token would
+            // go to a host the operator did not name), so wait it out.
+            return Err(unavailable(format!(
+                "HTTP {status}: redirects are not followed; if this persists, point the \
+                 address at the active node"
             )));
         }
         if !status.is_success() {
@@ -351,6 +362,31 @@ fn forbidden_to_message(e: CryptoError) -> CryptoError {
     }
 }
 
+/// Largest response body accepted from OpenBao; real replies are well under 1 KiB.
+const MAX_RESPONSE_BYTES: usize = 1 << 20;
+
+/// Classifies a failed request. A rejected server certificate is a
+/// configuration error (wrong `transit_ca_file`, wrong host) that waiting does
+/// not fix, so it is permanent and reported at once. Everything else (refused
+/// connection, DNS, timeout, reset) is transient: OpenBao may still be
+/// starting.
+fn request_error(e: reqwest::Error) -> CryptoError {
+    let mut chain = e.to_string();
+    let mut src = std::error::Error::source(&e);
+    while let Some(s) = src {
+        chain.push_str(": ");
+        chain.push_str(&s.to_string());
+        src = s.source();
+    }
+    if chain.to_ascii_lowercase().contains("certificate") {
+        return transit_err(format!(
+            "TLS verification of the OpenBao server failed (check transit_ca_file and \
+             transit_address): {chain}"
+        ));
+    }
+    unavailable(format!("request failed: {chain}"))
+}
+
 fn truncate(s: &str) -> String {
     s.chars().take(200).collect()
 }
@@ -412,9 +448,12 @@ impl KekProvider for TransitKek {
             .call("decrypt", &self.key, json!({"ciphertext": ciphertext}))
             .await?;
         let plain = decode_plaintext(&data)?;
-        let dek = plain
-            .strip_prefix(DEK_WRAP_AD)
-            .ok_or(CryptoError::WrappedDekSize)?;
+        // The ciphertext decrypted but does not carry our binding: it was
+        // not made by `wrap_dek`, typically because `transit_key_name` names
+        // a different key than the one that wrapped the DEK.
+        let dek = plain.strip_prefix(DEK_WRAP_AD).ok_or_else(|| {
+            transit_err("decrypted data lacks the DEK binding; check transit_key_name")
+        })?;
         let mut out = Zeroizing::new([0u8; 32]);
         if dek.len() != 32 {
             return Err(CryptoError::InvalidKeyLength);

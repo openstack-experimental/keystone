@@ -39,7 +39,7 @@ use cryptoki::session::{Session, UserType};
 use cryptoki::slot::Slot;
 use cryptoki::types::AuthPin;
 use openstack_keystone_storage_crypto::error::CryptoError;
-use openstack_keystone_storage_crypto::kek::KekProvider;
+use openstack_keystone_storage_crypto::kek::{KekProvider, run_blocking};
 use openstack_keystone_storage_crypto::random_bytes;
 use zeroize::Zeroizing;
 
@@ -266,6 +266,17 @@ fn generate_key(session: &Session, label: &str) -> Result<ObjectHandle, CryptoEr
 #[async_trait::async_trait]
 impl KekProvider for Pkcs11Kek {
     async fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
+        run_blocking(|| self.unwrap_blocking(wrapped))
+    }
+
+    async fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
+        run_blocking(|| self.wrap_blocking(dek))
+    }
+}
+
+// The PKCS#11 module call blocks, so it runs through `run_blocking`.
+impl Pkcs11Kek {
+    fn unwrap_blocking(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
         // Layout: [12-byte nonce][32-byte ciphertext][16-byte tag]
         if wrapped.len() != 12 + 32 + 16 {
             return Err(CryptoError::WrappedDekSize);
@@ -297,7 +308,7 @@ impl KekProvider for Pkcs11Kek {
         Ok(out)
     }
 
-    async fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
+    fn wrap_blocking(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
         if self.token_generated_iv {
             return self.wrap_token_iv(dek);
         }

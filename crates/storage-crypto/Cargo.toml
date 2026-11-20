@@ -49,6 +49,7 @@ nix = { workspace = true, features = ["mman", "feature"] }
 ring = { workspace = true, optional = true }
 rsa = { workspace = true, optional = true, features = ["sha2"] }
 thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing.workspace = true
 zeroize.workspace = true
 

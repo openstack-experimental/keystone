@@ -41,6 +41,20 @@ const DEK_WRAP_AD: &[u8] = b"keystone-dek-wrap-v1";
 /// HKDF info for the sub-key used to derive wrap nonces.
 const DEK_WRAP_NONCE_INFO: &[u8] = b"keystone-dek-wrap-nonce-v1";
 
+/// Runs a blocking provider call (PKCS#11 module, TPM command) from async
+/// code without stalling the runtime's other tasks.
+///
+/// On a multi-thread runtime the worker is handed over to other tasks for the
+/// duration of the call. On a current-thread runtime (unit tests) the call
+/// runs inline, since there is no other worker to hand over to.
+pub fn run_blocking<T>(f: impl FnOnce() -> T) -> T {
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    match Handle::try_current() {
+        Ok(h) if h.runtime_flavor() == RuntimeFlavor::MultiThread => tokio::task::block_in_place(f),
+        _ => f(),
+    }
+}
+
 /// Object-safe trait for Key Encryption Key operations.
 ///
 /// The methods are async because a provider may talk to a remote key store

@@ -27,6 +27,8 @@ use zeroize::Zeroizing;
 
 const FIRST_DELAY: Duration = Duration::from_millis(250);
 const MAX_DELAY: Duration = Duration::from_secs(30);
+/// After this long the retry is logged at `error` so an outage is not missed.
+const LOUD_AFTER: Duration = Duration::from_secs(300);
 
 /// [`KekProvider::unwrap_dek`], repeated with a capped exponential backoff
 /// for as long as the failure is [transient](CryptoError::is_transient).
@@ -44,10 +46,15 @@ async fn unwrap_with_backoff(
     max_delay: Duration,
 ) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
     let mut delay = first_delay;
+    let started = tokio::time::Instant::now();
     loop {
         match kek.unwrap_dek(wrapped).await {
             Err(e) if e.is_transient() => {
-                tracing::warn!(error = %e, retry_in = ?delay, "KEK unavailable; retrying DEK unwrap");
+                if started.elapsed() >= LOUD_AFTER {
+                    tracing::error!(error = %e, waited = ?started.elapsed(), retry_in = ?delay, "KEK still unavailable; DEK unwrap is blocked");
+                } else {
+                    tracing::warn!(error = %e, retry_in = ?delay, "KEK unavailable; retrying DEK unwrap");
+                }
                 tokio::time::sleep(delay).await;
                 delay = (delay * 2).min(max_delay);
             }

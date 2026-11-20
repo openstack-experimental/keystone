@@ -86,8 +86,11 @@ fn unwrap_rejects_foreign_plaintext_and_bad_blobs() {
             .json_body(json!({"data": {"plaintext": B64.encode([1u8; 32])}}));
     });
     let kek = TransitKek::new(params(&server, token_auth()), "kek").unwrap();
-    // Plaintext without the binding prefix.
-    assert!(run(kek.unwrap_dek(b"vault:v1:abc")).is_err());
+    // Plaintext without the binding prefix: a permanent error that does not
+    // blame the blob size.
+    let err = run(kek.unwrap_dek(b"vault:v1:abc")).unwrap_err();
+    assert!(matches!(err, CryptoError::Transit(_)), "{err}");
+    assert!(!err.is_transient());
     // Not a Transit ciphertext at all: no request is made.
     assert!(matches!(
         run(kek.unwrap_dek(b"not-transit")),
@@ -361,9 +364,24 @@ fn redirects_are_not_followed() {
             .header("Location", target.url("/v1/transit/encrypt/kek"));
     });
     let kek = TransitKek::new(params(&server, token_auth()), "kek").unwrap();
-    let err = run(kek.wrap_dek(&[0u8; 32])).unwrap_err().to_string();
-    assert!(err.contains("redirect"), "{err}");
+    let err = run(kek.wrap_dek(&[0u8; 32])).unwrap_err();
+    assert!(err.to_string().contains("redirect"), "{err}");
+    // A standby answers like this during a failover: wait, do not fail.
+    assert!(err.is_transient());
     hit.assert_calls(0);
+}
+
+#[test]
+fn oversized_responses_are_refused() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(POST).path("/v1/transit/encrypt/kek");
+        then.status(200).body("x".repeat(MAX_RESPONSE_BYTES + 1));
+    });
+    let kek = TransitKek::new(params(&server, token_auth()), "kek").unwrap();
+    let err = run(kek.wrap_dek(&[0u8; 32])).unwrap_err();
+    assert!(err.to_string().contains("larger than"), "{err}");
+    assert!(!err.is_transient());
 }
 
 #[test]
