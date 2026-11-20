@@ -117,6 +117,17 @@ pub enum KeystoneApiError {
 
     #[error("missing x-subject-token header")]
     SubjectTokenMissing,
+    /// OAuth2 invalid_request error (RFC 6749 §5.2).
+    #[error("OAuth2 invalid request: {0}")]
+    OAuth2InvalidRequest(String),
+
+    /// OAuth2 unsupported_grant_type error (RFC 6749 §5.2).
+    #[error("OAuth2 unsupported grant type: {0}")]
+    OAuth2UnsupportedGrantType(String),
+
+    /// OAuth2 invalid_client error (RFC 6749 §5.2).
+    #[error("OAuth2 invalid client: {0}")]
+    OAuth2InvalidClient(String),
 
     /// Request is syntactically valid but semantically invalid (RFC 4918
     /// §11.2 / RFC 7231 §6.5.1's `422` successor). Used for write-time

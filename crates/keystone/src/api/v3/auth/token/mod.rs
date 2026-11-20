@@ -17,7 +17,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::keystone::ServiceState;
 
 mod common;
-mod create;
+pub mod create;
 mod delete;
 mod show;
 pub mod types;

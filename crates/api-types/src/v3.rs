@@ -22,6 +22,7 @@ pub mod endpoint;
 pub mod group;
 pub mod limit;
 pub mod os_ec2_credential;
+pub mod os_oauth2;
 pub mod policy;
 pub mod project;
 pub mod region;

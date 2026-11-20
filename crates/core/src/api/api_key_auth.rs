@@ -125,6 +125,9 @@ fn api_key_failure_reason(error: &KeystoneApiError) -> &'static str {
         KeystoneApiError::TooManyRequests { .. } => "TooManyRequests",
         KeystoneApiError::QuotaExceeded(_) => "QuotaExceeded",
         KeystoneApiError::ServiceUnavailable(_) => "ServiceUnavailable",
+        KeystoneApiError::OAuth2InvalidRequest(_) => "OAuth2InvalidRequest",
+        KeystoneApiError::OAuth2UnsupportedGrantType(_) => "OAuth2UnsupportedGrantType",
+        KeystoneApiError::OAuth2InvalidClient(_) => "OAuth2InvalidClient",
     }
 }
 
