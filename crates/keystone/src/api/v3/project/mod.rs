@@ -20,7 +20,9 @@ use crate::keystone::ServiceState;
 mod create;
 mod delete;
 mod list;
+mod parents;
 mod show;
+mod subtree;
 mod tag;
 pub mod types;
 mod update;
@@ -53,5 +55,7 @@ pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(delete::remove))
         .routes(routes!(list::list))
         .routes(routes!(show::show, update::update))
+        .routes(routes!(parents::parents))
+        .routes(routes!(subtree::subtree))
         .merge(tag::openapi_router())
 }

@@ -625,3 +625,29 @@ mod tests {
         assert!(req.validate().is_err(), "update rejects name > 64");
     }
 }
+
+/// Parameters of the project parents and subtree listings.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+pub struct ProjectRelativesParameters {
+    /// Return the relatives as a nested object of the project IDs instead of
+    /// the flat list. Considered set when present with an empty value or any
+    /// value other than `false` or `0`.
+    pub as_ids: Option<String>,
+}
+
+/// Parents of the project (from the closest to the root).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ProjectParentsResponse {
+    /// Parents of the project visible to the caller.
+    pub parents: ProjectHierarchy,
+}
+
+/// Descendants of the project.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ProjectSubtreeResponse {
+    /// Descendants of the project visible to the caller.
+    pub subtree: ProjectHierarchy,
+}

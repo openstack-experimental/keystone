@@ -37,7 +37,7 @@ use openstack_keystone_core::auth::{ExecutionContext, ValidatedSecurityContext};
 
 /// Whether the boolean query flag is set: present with the empty value or any
 /// value other than `false` or `0`.
-fn flag(value: &Option<String>) -> bool {
+pub(super) fn flag(value: &Option<String>) -> bool {
     value
         .as_deref()
         .is_some_and(|x| !matches!(x.to_ascii_lowercase().as_str(), "false" | "0"))
@@ -46,7 +46,7 @@ fn flag(value: &Option<String>) -> bool {
 /// Keep only the projects the caller is allowed to see.
 ///
 /// Every project is checked individually with the `show` policy.
-async fn filter_visible(
+pub(super) async fn filter_visible(
     state: &ServiceState,
     user_auth: &ValidatedSecurityContext,
     projects: Vec<ProviderProject>,
@@ -71,7 +71,7 @@ async fn filter_visible(
     Ok(res)
 }
 
-fn to_list(projects: Vec<ProviderProject>) -> ProjectHierarchy {
+pub(super) fn to_list(projects: Vec<ProviderProject>) -> ProjectHierarchy {
     ProjectHierarchy::List(
         projects
             .into_iter()
@@ -83,7 +83,7 @@ fn to_list(projects: Vec<ProviderProject>) -> ProjectHierarchy {
 }
 
 /// Nested `{id: {id: null}}` object for the chain of parents (closest first).
-fn parents_to_ids(projects: &[ProviderProject]) -> ProjectHierarchy {
+pub(super) fn parents_to_ids(projects: &[ProviderProject]) -> ProjectHierarchy {
     let mut nested = Value::Null;
     for project in projects.iter().rev() {
         nested = json!({ project.id.as_str(): nested });
@@ -95,7 +95,7 @@ fn parents_to_ids(projects: &[ProviderProject]) -> ProjectHierarchy {
 ///
 /// Projects not visible to the caller are skipped and their visible
 /// descendants are attached to the closest visible ancestor.
-fn subtree_to_ids(
+pub(super) fn subtree_to_ids(
     root: &str,
     all: &[ProviderProject],
     visible: &[ProviderProject],
