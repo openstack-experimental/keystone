@@ -31,6 +31,7 @@ use openstack_keystone_core::{
     db::{create_index, create_table},
     error::DatabaseError,
 };
+use openstack_keystone_core_types::auth::IdentityInfo;
 use openstack_keystone_core_types::freshness::Freshness;
 use openstack_keystone_core_types::identity::*;
 
@@ -198,8 +199,14 @@ impl IdentityBackend for SqlBackend {
         let config = state.config_manager.config.read().await;
         let result =
             authenticate::authenticate_by_password(&config, &state.db.connection(), auth).await;
-        // The authentication may rehash and store the password.
-        self.caches.invalidate();
+        // A successful authentication may rehash and store the password of
+        // that user. A failure writes nothing the caches depend on, so bad
+        // logins cannot be used to flush them.
+        if let Ok(auth_result) = &result
+            && let IdentityInfo::User(info) = &auth_result.principal.identity
+        {
+            self.caches.invalidate_user(&info.user_id);
+        }
         Ok(result?)
     }
 
@@ -292,7 +299,9 @@ impl IdentityBackend for SqlBackend {
     ) -> Result<UserResponse, IdentityProviderError> {
         let config = state.config_manager.config.read().await;
         let result = user::create(&config, &state.db.connection(), user).await;
-        self.caches.invalidate();
+        if let Ok(created) = &result {
+            self.caches.invalidate_user(&created.id);
+        }
         Ok(result?)
     }
 
@@ -328,7 +337,7 @@ impl IdentityBackend for SqlBackend {
         user_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
         let result = user::delete(&state.db.connection(), user_id).await;
-        self.caches.invalidate();
+        self.caches.invalidate_user(user_id);
         Ok(result?)
     }
 
@@ -794,7 +803,7 @@ impl IdentityBackend for SqlBackend {
     ) -> Result<UserResponse, IdentityProviderError> {
         let config = state.config_manager.config.read().await;
         let result = user::update(&config, &state.db.connection(), user_id, user).await;
-        self.caches.invalidate();
+        self.caches.invalidate_user(user_id);
         Ok(result?)
     }
 
@@ -825,7 +834,7 @@ impl IdentityBackend for SqlBackend {
             new_password,
         )
         .await;
-        self.caches.invalidate();
+        self.caches.invalidate_user(user_id);
         result
     }
 }

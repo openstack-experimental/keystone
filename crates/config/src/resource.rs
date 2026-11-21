@@ -35,9 +35,7 @@ pub struct ResourceProvider {
     /// through this process;
     /// a project removed by another process (or directly in the database)
     /// and re-created with the same ID in a different place keeps the old
-    /// entry until restart, unless `[database] table_watermark_interval_ms`
-    /// is set: the caches are then emptied whenever the `project` table
-    /// changes, wherever the change was made.
+    /// entry until restart.
     #[serde(default)]
     pub caching: bool,
 }

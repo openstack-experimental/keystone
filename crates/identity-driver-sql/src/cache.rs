@@ -62,10 +62,10 @@ impl Default for UserCaches {
 }
 
 impl UserCaches {
-    /// Forget everything: this replica wrote to a user, its options or its
-    /// password and must see the result immediately.
-    pub fn invalidate(&self) {
-        self.options.invalidate();
-        self.password_expiry.invalidate();
+    /// Forget the projections of one user: this replica wrote to the user,
+    /// its options or its password and must see the result immediately.
+    pub fn invalidate_user(&self, user_id: &str) {
+        self.options.invalidate_key(user_id);
+        self.password_expiry.invalidate_key(user_id);
     }
 }

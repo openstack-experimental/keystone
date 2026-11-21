@@ -230,15 +230,24 @@ async fn ensure_version_table<C: ConnectionTrait>(conn: &C) -> Result<(), Databa
 ///
 /// Written out per backend: sea-query renders `do_nothing()` as the invalid
 /// `ON DUPLICATE KEY IGNORE` on MySQL.
+///
+/// The counter starts at the current Unix time in milliseconds rather than at
+/// a small constant: after an uninstall/install cycle or a rebuilt
+/// `table_version` table it then cannot count up to a value that an older
+/// cache entry was stamped with.
 pub fn seed_counter_statement(backend: DatabaseBackend, table: &str) -> String {
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(1);
     match backend {
         DatabaseBackend::MySql => {
             format!(
-                "INSERT IGNORE INTO {VERSION_TABLE} (table_name, version) VALUES ('{table}', 1)"
+                "INSERT IGNORE INTO {VERSION_TABLE} (table_name, version) VALUES ('{table}', {seed})"
             )
         }
         _ => format!(
-            "INSERT INTO {VERSION_TABLE} (table_name, version) VALUES ('{table}', 1) \
+            "INSERT INTO {VERSION_TABLE} (table_name, version) VALUES ('{table}', {seed}) \
              ON CONFLICT (table_name) DO NOTHING"
         ),
     }
@@ -376,6 +385,12 @@ pub struct TableWatermarks {
     /// when there was no poll. A write committed after it is not part of the
     /// counters, so `now - snapshot` bounds how stale they can be.
     snapshot_ms: AtomicU64,
+    /// Bumped by [`Self::reset`]: a poll that started in an earlier epoch
+    /// read another connection and must not publish.
+    epoch: AtomicU64,
+    /// Serializes the writers (publish, reset, mirror) so the epoch check and
+    /// the stores of a publish are atomic with respect to a reset.
+    write_lock: std::sync::Mutex<()>,
 }
 
 impl Default for TableWatermarks {
@@ -394,6 +409,8 @@ impl TableWatermarks {
             interval_ms: AtomicU64::new(0),
             failing: AtomicBool::new(false),
             snapshot_ms: AtomicU64::new(0),
+            epoch: AtomicU64::new(0),
+            write_lock: std::sync::Mutex::new(()),
         }
     }
 
@@ -420,6 +437,16 @@ impl TableWatermarks {
 
     /// Publish counters that were read at `read_at` (see [`now_ms`]).
     fn publish_read_at(&self, versions: HashMap<String, i64>, read_at: u64) {
+        let epoch = self.epoch.load(Ordering::Acquire);
+        self.publish_in_epoch(versions, read_at, epoch);
+    }
+
+    /// Publish counters read in `epoch`; dropped when a reset happened since.
+    fn publish_in_epoch(&self, versions: HashMap<String, i64>, read_at: u64, epoch: u64) {
+        let _guard = self.write_lock.lock();
+        if self.epoch.load(Ordering::Acquire) != epoch {
+            return;
+        }
         self.versions.store(Arc::new(versions));
         self.snapshot_ms.store(read_at + 1, Ordering::Release);
         self.last_ok.store(now_ms() + 1, Ordering::Release);
@@ -428,6 +455,8 @@ impl TableWatermarks {
     /// Forget the published counters, e.g. after the connection was replaced
     /// by one that may point to another database.
     pub fn reset(&self) {
+        let _guard = self.write_lock.lock();
+        self.epoch.fetch_add(1, Ordering::AcqRel);
         self.last_ok.store(0, Ordering::Release);
         self.snapshot_ms.store(0, Ordering::Release);
         self.versions.store(Arc::new(HashMap::new()));
@@ -448,6 +477,7 @@ impl TableWatermarks {
             other.reset();
             return;
         }
+        let _guard = other.write_lock.lock();
         other.versions.store(self.versions.load_full());
         other.snapshot_ms.store(snapshot, Ordering::Release);
         other
@@ -546,6 +576,7 @@ impl TableWatermarks {
     /// Read the counters and publish them.
     pub async fn poll(&self, conn: &DatabaseConnection) -> Result<(), DbErr> {
         let backend = conn.get_database_backend();
+        let epoch = self.epoch.load(Ordering::Acquire);
         let read_at = now_ms();
         let rows = conn
             .query_all_raw(Statement::from_string(
@@ -559,7 +590,7 @@ impl TableWatermarks {
             let version: i64 = row.try_get("", "version")?;
             versions.insert(name, version);
         }
-        self.publish_read_at(versions, read_at);
+        self.publish_in_epoch(versions, read_at, epoch);
         Ok(())
     }
 
@@ -629,6 +660,15 @@ mod tests {
 
     fn versions(pairs: &[(&str, i64)]) -> HashMap<String, i64> {
         pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    }
+
+    #[test]
+    fn test_publish_from_before_a_reset_is_dropped() {
+        let wm = registry(100);
+        let epoch = wm.epoch.load(Ordering::Acquire);
+        wm.reset();
+        wm.publish_in_epoch(versions(&[("a", 1)]), now_ms(), epoch);
+        assert!(wm.stamp(&["a"]).is_none());
     }
 
     #[test]
@@ -728,9 +768,10 @@ mod tests {
 
     #[test]
     fn test_seed_statement_per_backend() {
-        assert_eq!(
-            "INSERT IGNORE INTO table_version (table_name, version) VALUES ('role', 1)",
-            seed_counter_statement(DatabaseBackend::MySql, "role")
+        assert!(
+            seed_counter_statement(DatabaseBackend::MySql, "role").starts_with(
+                "INSERT IGNORE INTO table_version (table_name, version) VALUES ('role', "
+            )
         );
         for backend in [DatabaseBackend::Postgres, DatabaseBackend::Sqlite] {
             assert!(

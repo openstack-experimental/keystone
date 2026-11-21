@@ -31,11 +31,13 @@
 //! reader keeps the entries warm for the relaxed ones.
 //!
 //! The driver invalidates the cache itself on the writes it performs
-//! ([`ProjectionCache::invalidate`]): the watermark only reaches this replica
+//! ([`ProjectionCache::invalidate_key`], or [`ProjectionCache::invalidate`]
+//! when the affected keys are unknown): the watermark only reaches this replica
 //! after the next poll, and a replica must see its own writes.
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -48,10 +50,14 @@ use crate::table_watermark::TableWatermarks;
 /// watermark poller to say that it is outdated.
 pub const ANY_TTL_WITHOUT_POLLER: Duration = Duration::from_secs(60);
 
+/// Number of invalidation shards. A write to one key also drops the entries
+/// loaded concurrently for keys of the same shard, which is harmless.
+const SHARDS: usize = 64;
+
 struct Entry<V> {
     /// Counters of the tables before the load, `None` without a poller.
     stamp: Option<u64>,
-    /// Local invalidation generation before the load.
+    /// Invalidation generation of the key's shard before the load.
     generation: u64,
     loaded_at: Instant,
     value: V,
@@ -61,32 +67,53 @@ struct Entry<V> {
 pub struct ProjectionCache<V> {
     tables: &'static [&'static str],
     capacity: usize,
-    generation: AtomicU64,
+    generations: Vec<AtomicU64>,
     entries: Mutex<HashMap<String, Entry<V>>>,
 }
 
 impl<V: Clone> ProjectionCache<V> {
     /// Create a cache of projections that depend on the `tables`.
     ///
-    /// When `capacity` entries are reached the cache is emptied: a crude but
-    /// bounded policy, good enough while the projections are tiny.
+    /// When `capacity` entries are reached an arbitrary entry is evicted.
     pub fn new(tables: &'static [&'static str], capacity: usize) -> Self {
         Self {
             tables,
             capacity,
-            generation: AtomicU64::new(0),
+            generations: (0..SHARDS).map(|_| AtomicU64::new(0)).collect(),
             entries: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Drop everything, e.g. after the driver wrote to one of the tables.
+    fn shard(&self, key: &str) -> &AtomicU64 {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        // The modulo keeps the value below SHARDS, so the index is in range.
+        let index = usize::try_from(hasher.finish() % SHARDS as u64).unwrap_or(0);
+        &self.generations[index]
+    }
+
+    /// Drop everything, e.g. after the driver wrote rows whose keys it does
+    /// not know.
     ///
     /// A load that started before the call cannot repopulate the cache with a
     /// result that predates the write.
     pub fn invalidate(&self) {
-        self.generation.fetch_add(1, Ordering::AcqRel);
+        for generation in &self.generations {
+            generation.fetch_add(1, Ordering::AcqRel);
+        }
         if let Ok(mut entries) = self.entries.lock() {
             entries.clear();
+        }
+    }
+
+    /// Drop the projection of one `key`, e.g. after the driver wrote it.
+    ///
+    /// A load of the key that started before the call cannot store a result
+    /// that predates the write.
+    pub fn invalidate_key(&self, key: &str) {
+        self.shard(key).fetch_add(1, Ordering::AcqRel);
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.remove(key);
         }
     }
 
@@ -149,7 +176,7 @@ impl<V: Clone> ProjectionCache<V> {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<V, E>>,
     {
-        let generation = self.generation.load(Ordering::Acquire);
+        let generation = self.shard(key).load(Ordering::Acquire);
         if let Some(hit) = self.lookup(watermarks, key, freshness, generation) {
             return Ok(hit);
         }
@@ -176,7 +203,7 @@ impl<V: Clone> ProjectionCache<V> {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Option<V>, E>>,
     {
-        let generation = self.generation.load(Ordering::Acquire);
+        let generation = self.shard(key).load(Ordering::Acquire);
         if let Some(hit) = self.lookup(watermarks, key, freshness, generation) {
             return Ok(Some(hit));
         }
@@ -193,11 +220,14 @@ impl<V: Clone> ProjectionCache<V> {
             return;
         };
         // An invalidation since the load started: the value may predate it.
-        if self.generation.load(Ordering::Acquire) != generation {
+        if self.shard(key).load(Ordering::Acquire) != generation {
             return;
         }
-        if entries.len() >= self.capacity {
-            entries.clear();
+        if entries.len() >= self.capacity && !entries.contains_key(key) {
+            let victim = entries.keys().next().cloned();
+            if let Some(victim) = victim {
+                entries.remove(&victim);
+            }
         }
         entries.insert(
             key.to_string(),
@@ -240,6 +270,36 @@ mod tests {
             })
             .await
             .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn invalidating_a_key_keeps_the_others() {
+        let cache = ProjectionCache::new(TABLES, 8);
+        let wm = watermarks(1000, 1);
+        let relaxed = Freshness::MaxStaleness(10 * SEC);
+        for key in ["a", "b"] {
+            let _ = cache
+                .get_or_load::<(), _, _>(&wm, key, relaxed, || async { Ok(1u32) })
+                .await;
+        }
+        cache.invalidate_key("a");
+        assert_eq!(cache.len(), 1);
+        let hit = cache
+            .get_or_load::<(), _, _>(&wm, "b", relaxed, || async { Ok(2u32) })
+            .await;
+        assert_eq!(hit, Ok(1));
+    }
+
+    #[tokio::test]
+    async fn full_cache_evicts_one_entry() {
+        let cache = ProjectionCache::new(TABLES, 2);
+        let wm = watermarks(1000, 1);
+        for key in ["a", "b", "c"] {
+            let _ = cache
+                .get_or_load::<(), _, _>(&wm, key, Freshness::Any, || async { Ok(1u32) })
+                .await;
+        }
+        assert_eq!(cache.len(), 2);
     }
 
     #[tokio::test]

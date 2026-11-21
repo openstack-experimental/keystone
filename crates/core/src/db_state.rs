@@ -102,6 +102,8 @@ impl DbState {
         // The new connection may point to another database: its counters are
         // unrelated to the ones read so far.
         self.watermarks.reset();
+        // What the poller mirrored from the old database must go as well.
+        TableWatermarks::global().reset();
         tokio::spawn(async move {
             if let Err(error) = old.close_by_ref().await {
                 warn!(%error, "Failed to close superseded database connection");
