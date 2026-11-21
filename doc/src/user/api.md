@@ -69,6 +69,17 @@ and projects the caller is not allowed to see are omitted. In `subtree_as_ids`
 the visible descendants of an omitted project are attached to its closest
 visible ancestor.
 
+keystone-rs also serves the relatives as separate collections. These
+endpoints are not available in python keystone:
+
+```console
+curl "${KEYSTONE_URL}/v4/projects/${PROJECT_ID}/parents" -H "X-Auth-Token: ${TOKEN}"
+curl "${KEYSTONE_URL}/v4/projects/${PROJECT_ID}/subtree?as_ids" -H "X-Auth-Token: ${TOKEN}"
+```
+
+They return `{"parents": [...]}` / `{"subtree": [...]}`, or the nested ID
+object with `as_ids`, and apply the same per-project `show` policy filtering.
+
 ### Users
 
 ```console

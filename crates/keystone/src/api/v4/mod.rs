@@ -36,6 +36,7 @@ pub mod delegatable_service;
 pub mod group;
 pub mod mapping;
 pub mod oauth2;
+pub mod project;
 pub mod role;
 pub mod role_assignment;
 pub mod scim_realm;
@@ -58,6 +59,7 @@ use crate::api::types::*;
       (path = "k8s_auth", api = k8s_auth::ApiDoc),
       (path = "mappings", api = mapping::ApiDoc),
       (path = "oauth2", api = oauth2::ApiDoc),
+      (path = "projects", api = project::ApiDoc),
       (path = "scim_realms", api = scim_realm::ApiDoc),
       (path = "service-grants", api = service_grant::ApiDoc),
       (path = "spiffe", api = spiffe::ApiDoc),
@@ -81,6 +83,7 @@ pub(super) fn openapi_router(oauth2_enabled: bool) -> OpenApiRouter<ServiceState
         .nest("/mappings", mapping::openapi_router())
         .nest("/federation", federation::openapi_router())
         .nest("/k8s_auth", k8s_auth::openapi_router())
+        .nest("/projects", project::openapi_router())
         .nest("/roles", role::openapi_router())
         .nest("/scim_realms", scim_realm::openapi_router())
         .nest("/service-grants", service_grant::openapi_router())
