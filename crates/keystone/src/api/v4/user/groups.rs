@@ -15,13 +15,14 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use serde_json::json;
 
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::group::types::{Group, GroupList};
 use crate::keystone::ServiceState;
@@ -43,6 +44,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 #[tracing::instrument(name = "api::user_list", level = "debug", skip(state))]
 pub(super) async fn groups(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     Path(user_id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -84,7 +86,7 @@ pub(super) async fn groups(
                     )
                     .await
                 {
-                    Ok(_) => groups.push(Group::from(group)),
+                    Ok(_) => groups.push(with_self_link(Group::from(group), &original_url)),
                     Err(PolicyError::Forbidden(_)) => continue,
                     Err(error) => return Err(error.into()),
                 }
@@ -184,6 +186,9 @@ mod tests {
             vec![
                 ApiGroupBuilder::default()
                     .id("1")
+                    .links(openstack_keystone_api_types::ResourceLinks::new(
+                        "/v3/groups/1".into()
+                    ))
                     .name("2")
                     .domain_id("did")
                     .build()

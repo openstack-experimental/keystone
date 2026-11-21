@@ -19,6 +19,7 @@ use crate::v3::credential as api_types;
 impl From<provider_types::Credential> for api_types::Credential {
     fn from(value: provider_types::Credential) -> Self {
         Self {
+            links: None,
             id: value.id,
             blob: value.blob,
             project_id: value.project_id,

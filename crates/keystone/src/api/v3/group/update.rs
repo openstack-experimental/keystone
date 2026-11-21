@@ -14,7 +14,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -23,6 +23,7 @@ use validator::Validate;
 
 use super::types::{Group, GroupResponse, GroupUpdateRequest};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -42,6 +43,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 #[tracing::instrument(name = "api::update_group", level = "debug", skip(state))]
 pub(super) async fn update(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     Path(group_id): Path<String>,
     State(state): State<ServiceState>,
     Json(req): Json<GroupUpdateRequest>,
@@ -82,7 +84,7 @@ pub(super) async fn update(
             Ok((
                 StatusCode::OK,
                 Json(GroupResponse {
-                    group: Group::from(group),
+                    group: with_self_link(Group::from(group), &original_url),
                 }),
             )
                 .into_response())

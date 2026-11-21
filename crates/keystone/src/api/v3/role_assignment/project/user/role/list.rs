@@ -15,7 +15,7 @@
 //! Project user role: list.
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -27,6 +27,7 @@ use openstack_keystone_api_types::v3::role_assignment::{Role, RoleAssignmentRole
 use openstack_keystone_core_types::assignment::RoleAssignmentListParameters;
 
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -57,6 +58,7 @@ pub(super) async fn list(
     Auth(user_auth): Auth,
     Path((project_id, user_id)): Path<(String, String)>,
     State(state): State<ServiceState>,
+    OriginalUri(original_url): OriginalUri,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     let query_params = RoleAssignmentListParameters {
         user_id: Some(user_id.clone()),
@@ -118,6 +120,7 @@ pub(super) async fn list(
         .map(|a| a.try_into())
         .collect::<Result<std::collections::HashSet<_>, _>>()?
         .into_iter()
+        .map(|role| with_self_link(role, &original_url))
         .collect();
 
     Ok((StatusCode::OK, Json(RoleAssignmentRoleList { roles })).into_response())
@@ -470,6 +473,12 @@ mod tests {
 
         // 4 assignments but only 2 unique roles
         assert_eq!(res.roles.len(), 2);
+        for role in &res.roles {
+            assert_eq!(
+                role.links.as_ref().map(|l| l.self_link.clone()),
+                Some(format!("/v3/roles/{}", role.id))
+            );
+        }
         let role_ids: Vec<_> = res.roles.iter().map(|r| &r.id).collect();
         assert!(role_ids.contains(&&"role1".to_string()));
         assert!(role_ids.contains(&&"role2".to_string()));

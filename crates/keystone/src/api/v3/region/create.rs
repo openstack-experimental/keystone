@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Create region API
 use axum::{
-    extract::{Json, Path, State},
+    extract::{Json, OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -22,6 +22,7 @@ use validator::Validate;
 
 use super::types::{RegionCreateRequest, RegionResponse, RegionUpdate, RegionUpdateRequest};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -40,6 +41,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 #[tracing::instrument(name = "api::v3::region_create", level = "debug", skip(state))]
 pub(super) async fn create(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
     Json(payload): Json<RegionCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -69,7 +71,7 @@ pub(super) async fn create(
     Ok((
         StatusCode::CREATED,
         Json(RegionResponse {
-            region: created_region.into(),
+            region: with_self_link(created_region.into(), &original_url),
         }),
     )
         .into_response())
@@ -95,6 +97,7 @@ pub(super) async fn create(
 pub(super) async fn create_with_id(
     Auth(user_auth): Auth,
     Path(region_id): Path<String>,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
     Json(mut payload): Json<RegionCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -153,7 +156,7 @@ pub(super) async fn create_with_id(
     Ok((
         StatusCode::CREATED,
         Json(RegionResponse {
-            region: region.into(),
+            region: with_self_link(region.into(), &original_url),
         }),
     )
         .into_response())
@@ -229,6 +232,9 @@ mod tests {
         assert_eq!(
             ApiRegion {
                 id: "new_region_id".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/regions/new_region_id".into()
+                )),
                 description: None,
                 parent_region_id: None,
                 extra: std::collections::HashMap::new(),

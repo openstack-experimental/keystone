@@ -57,6 +57,10 @@ pub struct Policy {
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub id: String,
 
+    /// Links of the resource.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<crate::ResourceLinks>,
+
     /// The MIME media type of the serialized policy blob.
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub r#type: String,
@@ -272,6 +276,7 @@ mod tests {
     fn test_policy_input_is_allowlisted() {
         let policy = Policy {
             id: "pid".into(),
+            links: None,
             r#type: "application/json".into(),
             blob: serde_json::json!("s3cr3t-blob"),
             extra: HashMap::from([

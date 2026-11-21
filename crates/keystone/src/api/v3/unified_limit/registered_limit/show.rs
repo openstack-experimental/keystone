@@ -14,7 +14,7 @@
 //! # Show registered limit API
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -22,6 +22,7 @@ use serde_json::json;
 
 use super::types::{RegisteredLimit, RegisteredLimitResponse};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -42,6 +43,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 pub(super) async fn show(
     Auth(user_auth): Auth,
     Path(registered_limit_id): Path<String>,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     let current = state
@@ -68,7 +70,7 @@ pub(super) async fn show(
         Some(current) => Ok((
             StatusCode::OK,
             Json(RegisteredLimitResponse {
-                registered_limit: current,
+                registered_limit: with_self_link(current, &original_url),
             }),
         )
             .into_response()),

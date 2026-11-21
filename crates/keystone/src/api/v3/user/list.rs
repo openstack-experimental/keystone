@@ -26,7 +26,7 @@ use openstack_keystone_core_types::ListPagination;
 
 use super::types::{User, UserList, UserListParameters};
 use crate::api::auth::Auth;
-use crate::api::common::paginate_forward;
+use crate::api::common::{paginate_forward, with_self_link};
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -81,7 +81,11 @@ pub(super) async fn list(
         )
         .await?
         .into_iter()
-        .map(Into::into)
+        .map(
+            |user: openstack_keystone_core_types::identity::UserResponse| {
+                with_self_link(User::from(user), &original_url)
+            },
+        )
         .collect();
 
     let (users, links) = paginate_forward(
@@ -163,6 +167,9 @@ mod tests {
             vec![
                 ApiUser::default()
                     .id("1")
+                    .links(openstack_keystone_api_types::ResourceLinks::new(
+                        "/v3/users/1".into()
+                    ))
                     .name("2")
                     .domain_id("user_domain_id")
                     .enabled(true)

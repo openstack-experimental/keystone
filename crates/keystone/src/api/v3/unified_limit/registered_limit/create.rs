@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Create registered limits API
 use axum::{
-    extract::{Json, State},
+    extract::{Json, OriginalUri, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -22,6 +22,7 @@ use validator::Validate;
 
 use super::types::{RegisteredLimit, RegisteredLimitCreateRequest, RegisteredLimitList};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -51,6 +52,7 @@ use openstack_keystone_core_types::limit as provider_types;
 )]
 pub(super) async fn create(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
     Json(payload): Json<RegisteredLimitCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -80,7 +82,10 @@ pub(super) async fn create(
     Ok((
         StatusCode::CREATED,
         Json(RegisteredLimitList {
-            registered_limits: created.into_iter().map(RegisteredLimit::from).collect(),
+            registered_limits: created
+                .into_iter()
+                .map(|x| with_self_link(RegisteredLimit::from(x), &original_url))
+                .collect(),
             links: None,
         }),
     )

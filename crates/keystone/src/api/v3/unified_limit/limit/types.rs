@@ -19,3 +19,5 @@ impl crate::api::common::ResourceIdentifier for Limit {
         self.id.clone()
     }
 }
+
+crate::api::common::impl_self_linked!(Limit, "limits");

@@ -19,6 +19,7 @@ use crate::v3::region as api_types;
 impl From<provider_types::Region> for api_types::Region {
     fn from(value: provider_types::Region) -> Self {
         Self {
+            links: None,
             id: value.id,
             description: value.description,
             parent_region_id: value.parent_region_id,

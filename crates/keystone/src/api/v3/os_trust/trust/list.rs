@@ -14,7 +14,7 @@
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{OriginalUri, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -22,6 +22,7 @@ use serde_json::json;
 
 use super::types::{Trust, TrustList, TrustListParameters};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -50,6 +51,7 @@ use openstack_keystone_core::policy::PolicyError;
 pub(super) async fn list(
     Auth(user_auth): Auth,
     Query(query): Query<TrustListParameters>,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     state
@@ -83,7 +85,7 @@ pub(super) async fn list(
             )
             .await
         {
-            Ok(_) => trusts.push(Trust::from(item)),
+            Ok(_) => trusts.push(with_self_link(Trust::from(item), &original_url)),
             Err(PolicyError::Forbidden(_)) => continue,
             Err(err) => return Err(err.into()),
         }

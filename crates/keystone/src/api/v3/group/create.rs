@@ -11,12 +11,18 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json, debug_handler,
+    extract::{OriginalUri, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
 use serde_json::json;
 use validator::Validate;
 
 use super::types::{Group, GroupCreateRequest, GroupResponse};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -34,6 +40,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 #[debug_handler]
 pub async fn create(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
     Json(req): Json<GroupCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -56,7 +63,7 @@ pub async fn create(
     Ok((
         StatusCode::CREATED,
         Json(GroupResponse {
-            group: Group::from(res),
+            group: with_self_link(Group::from(res), &original_url),
         }),
     )
         .into_response())

@@ -27,7 +27,7 @@ use openstack_keystone_core_types::ListPagination;
 
 use super::types::{User, UserList, UserListParameters};
 use crate::api::auth::Auth;
-use crate::api::common::paginate_bidirectional;
+use crate::api::common::{paginate_bidirectional, with_self_link};
 use crate::api::error::KeystoneApiError;
 
 use crate::keystone::ServiceState;
@@ -83,7 +83,7 @@ pub(super) async fn list(
         )
         .await?
         .into_iter()
-        .map(Into::into)
+        .map(|user| with_self_link(User::from(user), &original_url))
         .collect();
 
     let (users, links) = paginate_bidirectional(
@@ -141,7 +141,8 @@ mod tests {
         )
         .await;
 
-        let mut api = openapi_router()
+        let mut api = utoipa_axum::router::OpenApiRouter::new()
+            .nest("/v4/users", openapi_router())
             .layer(TraceLayer::new_for_http())
             .with_state(state);
 
@@ -149,7 +150,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/")
+                    .uri("/v4/users")
                     .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
@@ -165,6 +166,9 @@ mod tests {
             vec![
                 ApiUser::default()
                     .id("1")
+                    .links(openstack_keystone_api_types::ResourceLinks::new(
+                        "/v4/users/1".into()
+                    ))
                     .domain_id("did")
                     .name("2")
                     .enabled(true)

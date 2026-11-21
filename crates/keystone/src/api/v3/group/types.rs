@@ -19,3 +19,5 @@ impl crate::api::common::ResourceIdentifier for Group {
         self.id.clone()
     }
 }
+
+crate::api::common::impl_self_linked!(Group, "groups");

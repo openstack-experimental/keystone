@@ -14,7 +14,7 @@
 //! # Show limit API
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -22,6 +22,7 @@ use serde_json::json;
 
 use super::types::{Limit, LimitResponse};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -42,6 +43,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 pub(super) async fn show(
     Auth(user_auth): Auth,
     Path(limit_id): Path<String>,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     let exec = ExecutionContext::from_auth(&state, &user_auth);
@@ -67,9 +69,13 @@ pub(super) async fn show(
         .await?;
 
     match current {
-        Some(current) => {
-            Ok((StatusCode::OK, Json(LimitResponse { limit: current })).into_response())
-        }
+        Some(current) => Ok((
+            StatusCode::OK,
+            Json(LimitResponse {
+                limit: with_self_link(current, &original_url),
+            }),
+        )
+            .into_response()),
         None => Err(KeystoneApiError::NotFound {
             resource: "limit".into(),
             identifier: limit_id,

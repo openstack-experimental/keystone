@@ -15,13 +15,14 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
 
 use super::types::{Policy, PolicyResponse};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -47,6 +48,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 pub(super) async fn show(
     Auth(user_auth): Auth,
     Path(policy_id): Path<String>,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     let current = state
@@ -72,7 +74,13 @@ pub(super) async fn show(
         .await?;
 
     match current {
-        Some(policy) => Ok((StatusCode::OK, Json(PolicyResponse { policy })).into_response()),
+        Some(policy) => Ok((
+            StatusCode::OK,
+            Json(PolicyResponse {
+                policy: with_self_link(policy, &original_url),
+            }),
+        )
+            .into_response()),
         None => Err(KeystoneApiError::NotFound {
             resource: "policy".into(),
             identifier: policy_id,

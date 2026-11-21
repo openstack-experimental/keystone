@@ -60,7 +60,7 @@ impl Link {
 }
 
 /// Links of a single resource.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ResourceLinks {
     /// Link to the resource itself.

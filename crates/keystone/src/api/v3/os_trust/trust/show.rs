@@ -14,7 +14,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -23,6 +23,7 @@ use serde_json::json;
 use openstack_keystone_api_types::v3::trust::{Trust, TrustResponse};
 
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -43,6 +44,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 pub(super) async fn show(
     Auth(user_auth): Auth,
     Path(trust_id): Path<String>,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     let current = state
@@ -65,7 +67,7 @@ pub(super) async fn show(
         Some(current) => Ok((
             StatusCode::OK,
             Json(TrustResponse {
-                trust: Trust::from(current),
+                trust: with_self_link(Trust::from(current), &original_url),
             }),
         )
             .into_response()),
@@ -143,6 +145,9 @@ mod tests {
         assert_eq!(
             ApiTrust {
                 id: "foo".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/OS-TRUST/trusts/foo".into()
+                )),
                 trustor_user_id: "trustor".into(),
                 trustee_user_id: "trustee".into(),
                 project_id: None,

@@ -36,6 +36,7 @@ impl From<provider_types::Role> for api_types::Role {
     fn from(value: provider_types::Role) -> Self {
         let opts: api_types::RoleOptions = value.options.into();
         Self {
+            links: None,
             id: value.id,
             domain_id: value.domain_id,
             name: value.name,

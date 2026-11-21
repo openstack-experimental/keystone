@@ -25,7 +25,9 @@ use openstack_keystone_core_types::ListPagination;
 
 use super::types::{Credential, CredentialList, CredentialListParameters};
 use crate::api::auth::Auth;
-use crate::api::common::{AuthorizedPage, collect_authorized_page, paginate_forward_filtered};
+use crate::api::common::{
+    AuthorizedPage, collect_authorized_page, paginate_forward_filtered, with_self_link,
+};
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -126,7 +128,7 @@ pub(super) async fn list(
         items: page
             .items
             .into_iter()
-            .map(Credential::from)
+            .map(|x| with_self_link(Credential::from(x), &original_url))
             .collect::<Vec<Credential>>(),
         scan_budget_exhausted: page.scan_budget_exhausted,
     };
