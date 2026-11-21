@@ -15,4 +15,5 @@
 mod authorization;
 mod create;
 mod list;
+mod password;
 mod update;

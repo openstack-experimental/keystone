@@ -421,6 +421,7 @@ impl BootstrapCommand {
                 .json(&RoleCreateRequest {
                     role: RoleCreateBuilder::default()
                         .name(role_name.as_ref())
+                        .options(RoleOptionsBuilder::default().immutable(true).build()?)
                         .build()?,
                 })
                 .send()
@@ -1147,6 +1148,38 @@ mod tests {
         let role = cmd.upsert_role(&client, &config, "test-role", &base).await;
         assert!(role.is_ok());
         assert_eq!(role.unwrap().id, "new-role-id");
+    }
+
+    /// Bootstrapped roles are created as immutable.
+    #[tokio::test]
+    async fn test_upsert_role_creation_is_immutable() {
+        let server = MockServer::start();
+        let base = server.base_url();
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/roles")
+                .query_param("name", "test-role");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({ "roles": [] }));
+        });
+        let create = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/v3/roles")
+                .json_body_includes(r#"{"role": {"options": {"immutable": true}}}"#);
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "role": { "id": "rid", "name": "test-role" }
+                }));
+        });
+
+        let role = test_command()
+            .upsert_role(&new_client(), &test_config(), "test-role", &base)
+            .await
+            .unwrap();
+        assert_eq!(role.id, "rid");
+        create.assert();
     }
 
     // ─── upsert_service ──────────────────────────────────────────────────
