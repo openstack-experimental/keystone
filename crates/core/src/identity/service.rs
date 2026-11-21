@@ -1339,7 +1339,13 @@ impl IdentityApi for IdentityService {
             return Ok(Some(user));
         }
         let (backend, local_id) = self.resolve_public_id(ctx, user_id).await?;
-        let mut user = backend.get_user(ctx.state(), &local_id).await?;
+        let mut user = if ctx.freshness().is_linearizable() {
+            backend.get_user(ctx.state(), &local_id).await?
+        } else {
+            backend
+                .get_user_with_freshness(ctx.state(), &local_id, ctx.freshness())
+                .await?
+        };
         if !Arc::ptr_eq(&backend, &self.backend_driver)
             && let Some(user) = &mut user
         {
@@ -1378,7 +1384,13 @@ impl IdentityApi for IdentityService {
             return Ok(Some(core));
         }
         let (backend, local_id) = self.resolve_public_id(ctx, user_id).await?;
-        let mut core = backend.get_user_core(ctx.state(), &local_id).await?;
+        let mut core = if ctx.freshness().is_linearizable() {
+            backend.get_user_core(ctx.state(), &local_id).await?
+        } else {
+            backend
+                .get_user_core_with_freshness(ctx.state(), &local_id, ctx.freshness())
+                .await?
+        };
         if !Arc::ptr_eq(&backend, &self.backend_driver)
             && let Some(core) = &mut core
         {

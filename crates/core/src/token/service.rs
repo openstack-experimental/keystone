@@ -397,14 +397,23 @@ impl TokenService {
             );
             TokenProviderError::UserNotFound(token.user_id().clone())
         };
+        // The validation tolerates a bounded staleness of the cacheable
+        // projections of the user (options, password expiry). Nothing else
+        // reads through this relaxed context: the user record itself, with
+        // `enabled`, is always read.
+        let freshness = crate::table_watermark::validation_freshness(
+            &*state.config_manager.config.read().await,
+        );
+        let user_ctx = ctx.clone().with_freshness(freshness);
+        let user_ctx = &user_ctx;
         let user_fut = async {
             match user_detail {
                 UserDetail::Full => identity_provider
-                    .get_user(ctx, token.user_id())
+                    .get_user(user_ctx, token.user_id())
                     .await?
                     .map(|user| (UserCore::from(&user), Some(user))),
                 UserDetail::Core => identity_provider
-                    .get_user_core(ctx, token.user_id())
+                    .get_user_core(user_ctx, token.user_id())
                     .await?
                     .map(|core| (core, None)),
             }

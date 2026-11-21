@@ -144,6 +144,33 @@ pub async fn load_local_user_by_id<C: ConnectionTrait>(
 /// # Returns
 /// A `Result` containing an `Option` with the `(local_user::Model,
 /// Option<PasswordExpiry>)` if found, or an `Error`.
+/// Load the expiry of the latest password of the local user of `user_id`.
+///
+/// Only the expiry columns are selected: the password hash is not read.
+pub async fn load_password_expiry<C: ConnectionTrait>(
+    db: &C,
+    user_id: &str,
+) -> Result<Option<PasswordExpiry>, IdentityProviderError> {
+    Ok(Password::find()
+        .select_only()
+        .column(password::Column::ExpiresAt)
+        .column(password::Column::ExpiresAtInt)
+        .filter(
+            password::Column::LocalUserId.in_subquery(
+                Query::select()
+                    .column(local_user::Column::Id)
+                    .from(LocalUser)
+                    .and_where(local_user::Column::UserId.eq(user_id))
+                    .to_owned(),
+            ),
+        )
+        .order_by(password::Column::CreatedAtInt, Order::Desc)
+        .into_model::<PasswordExpiry>()
+        .one(db)
+        .await
+        .context("fetching latest user password expiration")?)
+}
+
 pub async fn load_local_user_with_password_expiry<C: ConnectionTrait>(
     db: &C,
     user_id: &str,
@@ -152,47 +179,14 @@ pub async fn load_local_user_with_password_expiry<C: ConnectionTrait>(
         LocalUser::find()
             .filter(local_user::Column::UserId.eq(user_id))
             .one(db),
-        Password::find()
-            .select_only()
-            .column(password::Column::ExpiresAt)
-            .column(password::Column::ExpiresAtInt)
-            .filter(
-                password::Column::LocalUserId.in_subquery(
-                    Query::select()
-                        .column(local_user::Column::Id)
-                        .from(LocalUser)
-                        .and_where(local_user::Column::UserId.eq(user_id))
-                        .to_owned(),
-                ),
-            )
-            .order_by(password::Column::CreatedAtInt, Order::Desc)
-            .into_model::<PasswordExpiry>()
-            .one(db)
+        load_password_expiry(db, user_id)
     );
     let Some(local_user) = local_user.context("fetching local user")? else {
         return Ok(None);
     };
-    Ok(Some((
-        local_user,
-        expiry.context("fetching latest user password expiration")?,
-    )))
+    Ok(Some((local_user, expiry?)))
 }
 
-/// Load local user record with only its latest password from database.
-///
-/// Same lookup as [`load_local_user_with_passwords`] but for callers that
-/// only ever consult the newest password (auth, display) and don't need the
-/// full history, avoiding pulling every password row for the user.
-///
-/// # Parameters
-/// - `db`: The database connection.
-/// - `user_id`: The optional user ID.
-/// - `name`: The optional user name.
-/// - `domain_id`: The optional domain ID.
-///
-/// # Returns
-/// A `Result` containing an `Option` with the `(local_user::Model,
-/// Option<password::Model>)` if found, or an `Error`.
 pub async fn load_local_user_with_latest_password<
     C: ConnectionTrait,
     S1: AsRef<str>,

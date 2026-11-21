@@ -5501,6 +5501,7 @@ dependencies = [
  "openstack-keystone-core-types",
  "openstack-keystone-password-hashing",
  "sea-orm",
+ "sea-orm-migration",
  "secrecy",
  "serde",
  "serde_json",

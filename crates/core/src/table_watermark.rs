@@ -57,6 +57,8 @@ use sea_orm::sea_query::{Alias, ColumnDef, Table};
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr, Statement};
 use tracing::{debug, info, warn};
 
+use openstack_keystone_core_types::freshness::Freshness;
+
 use crate::error::{DatabaseError, DbContextExt};
 use crate::keystone::ServiceState;
 
@@ -69,6 +71,30 @@ pub const CATALOG_TABLES: &[&str] = &["service", "endpoint"];
 pub const ROLE_TABLES: &[&str] = &["role", "role_option", "implied_role"];
 /// Tables the project caches depend on.
 pub const PROJECT_TABLES: &[&str] = &["project"];
+/// The hard ceiling of `[database] projection_max_staleness_ms`.
+pub const MAX_PROJECTION_STALENESS: Duration = Duration::from_secs(300);
+
+/// The tolerance of the token validation path reads: what
+/// `[database] projection_max_staleness_ms` allows, capped at
+/// [`MAX_PROJECTION_STALENESS`]; linearizable when unset.
+pub fn validation_freshness(config: &openstack_keystone_config::Config) -> Freshness {
+    match config.database.projection_max_staleness_ms {
+        0 => Freshness::Linearizable,
+        ms => Freshness::MaxStaleness(Duration::from_millis(ms).min(MAX_PROJECTION_STALENESS)),
+    }
+}
+
+/// Tables the identity driver caches projections of: the user options and
+/// the passwords (only the expiry of the latest one; the hash is never
+/// cached).
+///
+/// `local_user` is deliberately not watched: every failed login writes its
+/// authentication counters, which would serialize concurrent logins on the
+/// counter row and let anyone invalidate the caches by guessing passwords.
+/// The projections do not need it: the link of a user to its local user is
+/// read on every request, and a password row changes only through its own
+/// table.
+pub const IDENTITY_TABLES: &[&str] = &["user_option", "password"];
 
 /// Poll interval used while the poller is disabled to notice a
 /// configuration change.
@@ -346,6 +372,10 @@ pub struct TableWatermarks {
     interval_ms: AtomicU64,
     /// Whether the previous poll failed; used to log transitions only.
     failing: AtomicBool,
+    /// `now_ms() + 1` of the moment the published counters were *read*; `0`
+    /// when there was no poll. A write committed after it is not part of the
+    /// counters, so `now - snapshot` bounds how stale they can be.
+    snapshot_ms: AtomicU64,
 }
 
 impl Default for TableWatermarks {
@@ -363,6 +393,7 @@ impl TableWatermarks {
             last_ok: AtomicU64::new(0),
             interval_ms: AtomicU64::new(0),
             failing: AtomicBool::new(false),
+            snapshot_ms: AtomicU64::new(0),
         }
     }
 
@@ -384,8 +415,57 @@ impl TableWatermarks {
 
     /// Publish the counters of a successful poll.
     pub fn publish(&self, versions: HashMap<String, i64>) {
+        self.publish_read_at(versions, now_ms());
+    }
+
+    /// Publish counters that were read at `read_at` (see [`now_ms`]).
+    fn publish_read_at(&self, versions: HashMap<String, i64>, read_at: u64) {
         self.versions.store(Arc::new(versions));
+        self.snapshot_ms.store(read_at + 1, Ordering::Release);
         self.last_ok.store(now_ms() + 1, Ordering::Release);
+    }
+
+    /// Forget the published counters, e.g. after the connection was replaced
+    /// by one that may point to another database.
+    pub fn reset(&self) {
+        self.last_ok.store(0, Ordering::Release);
+        self.snapshot_ms.store(0, Ordering::Release);
+        self.versions.store(Arc::new(HashMap::new()));
+    }
+
+    /// Copy what this registry observed into `other`.
+    ///
+    /// The providers that are built without a service state (catalog, role)
+    /// still validate against [`Self::global`]; the poller of the connection
+    /// feeds it until they read the counters of their connection like the
+    /// drivers do.
+    fn mirror_to(&self, other: &Self) {
+        other
+            .interval_ms
+            .store(self.interval_ms.load(Ordering::Acquire), Ordering::Release);
+        let snapshot = self.snapshot_ms.load(Ordering::Acquire);
+        if snapshot == 0 {
+            other.reset();
+            return;
+        }
+        other.versions.store(self.versions.load_full());
+        other.snapshot_ms.store(snapshot, Ordering::Release);
+        other
+            .last_ok
+            .store(self.last_ok.load(Ordering::Acquire), Ordering::Release);
+    }
+
+    /// The configured poll interval; zero when the poller is disabled.
+    pub fn interval(&self) -> Duration {
+        Duration::from_millis(self.interval_ms.load(Ordering::Acquire))
+    }
+
+    /// How long ago the published counters were read.
+    pub fn snapshot_age(&self) -> Option<Duration> {
+        match self.snapshot_ms.load(Ordering::Acquire) {
+            0 => None,
+            read_at => Some(Duration::from_millis(now_ms().saturating_sub(read_at - 1))),
+        }
     }
 
     /// Whether the counters are recent enough to be trusted.
@@ -420,6 +500,30 @@ impl TableWatermarks {
         Some(stamp)
     }
 
+    /// The stamp a read that tolerates `freshness` may validate its cache
+    /// entry against; `None` when the read has to go to the database.
+    ///
+    /// - [`Freshness::Linearizable`] never uses a stamp.
+    /// - A tolerance below the poll interval cannot be guaranteed by a poller
+    ///   that looks every interval, so it is a forced read.
+    /// - A tolerance the current snapshot is already older than is a forced
+    ///   read as well (a late or failing poller).
+    pub fn stamp_for(&self, tables: &[&str], freshness: Freshness) -> Option<u64> {
+        match freshness {
+            Freshness::Linearizable => None,
+            Freshness::MaxStaleness(bound) => {
+                if bound.is_zero() || bound < self.interval() {
+                    return None;
+                }
+                if self.snapshot_age()? > bound {
+                    return None;
+                }
+                self.stamp(tables)
+            }
+            Freshness::Any => self.stamp(tables),
+        }
+    }
+
     /// Whether a value loaded at `loaded_at` under `loaded_stamp` (see
     /// [`Self::stamp`], taken *before* loading) may still be served.
     ///
@@ -442,6 +546,7 @@ impl TableWatermarks {
     /// Read the counters and publish them.
     pub async fn poll(&self, conn: &DatabaseConnection) -> Result<(), DbErr> {
         let backend = conn.get_database_backend();
+        let read_at = now_ms();
         let rows = conn
             .query_all_raw(Statement::from_string(
                 backend,
@@ -454,7 +559,7 @@ impl TableWatermarks {
             let version: i64 = row.try_get("", "version")?;
             versions.insert(name, version);
         }
-        self.publish(versions);
+        self.publish_read_at(versions, read_at);
         Ok(())
     }
 
@@ -484,7 +589,7 @@ impl TableWatermarks {
 /// configuration reload.
 pub fn spawn(state: ServiceState) {
     tokio::spawn(async move {
-        let watermarks = TableWatermarks::global();
+        let watermarks = state.db.watermarks();
         loop {
             let interval = Duration::from_millis(
                 state
@@ -496,12 +601,15 @@ pub fn spawn(state: ServiceState) {
                     .table_watermark_interval_ms,
             );
             watermarks.configure(interval);
+            let global = TableWatermarks::global();
             if interval.is_zero() {
+                watermarks.mirror_to(&global);
                 tokio::time::sleep(DISABLED_RECHECK).await;
                 continue;
             }
             let result = watermarks.poll(&state.db.connection()).await;
             watermarks.record_poll(&result);
+            watermarks.mirror_to(&global);
             tokio::time::sleep(interval).await;
         }
     });

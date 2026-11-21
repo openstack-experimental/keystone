@@ -326,7 +326,16 @@ impl AssignmentService {
                 .state()
                 .provider
                 .get_resource_provider()
-                .get_project_domain_id(ctx, target_id)
+                // The domain of a project is immutable: a bounded
+                // staleness only matters for a project created or deleted
+                // on another replica a moment ago.
+                .get_project_domain_id(
+                    &ctx.clone()
+                        .with_freshness(crate::table_watermark::validation_freshness(
+                            &*ctx.state().config_manager.config.read().await,
+                        )),
+                    target_id,
+                )
                 .await?
                 .ok_or_else(|| {
                     AssignmentProviderError::from(ResourceProviderError::ProjectNotFound(

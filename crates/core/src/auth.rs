@@ -20,6 +20,7 @@ use tracing::{debug, warn};
 use openstack_keystone_core_types::assignment::{
     AssignmentProviderError, RoleAssignmentListParametersBuilder,
 };
+use openstack_keystone_core_types::freshness::Freshness;
 use openstack_keystone_core_types::identity::IdentityProviderError;
 use openstack_keystone_core_types::mapping::authorization::Authorization;
 use openstack_keystone_core_types::resource::ResourceProviderError;
@@ -592,6 +593,10 @@ pub struct ExecutionContext<'a> {
     /// `None` when called from internal code paths that have no auth context
     /// yet (e.g., token validation, internal provider delegation).
     ctx: Option<&'a ValidatedSecurityContext>,
+
+    /// How stale the data read through this context may be. Providers hand it
+    /// to the drivers, which serve cached projections only when it permits.
+    freshness: Freshness,
 }
 
 impl<'a> ExecutionContext<'a> {
@@ -601,6 +606,7 @@ impl<'a> ExecutionContext<'a> {
         Self {
             state,
             ctx: Some(ctx),
+            freshness: Freshness::Linearizable,
         }
     }
 
@@ -608,7 +614,39 @@ impl<'a> ExecutionContext<'a> {
     /// (e.g. token validation, trust chain resolution).
     #[must_use]
     pub fn internal(state: &'a ServiceState) -> Self {
-        Self { state, ctx: None }
+        Self {
+            state,
+            ctx: None,
+            freshness: Freshness::Linearizable,
+        }
+    }
+
+    /// The same context with the read tolerance set by the code owning the
+    /// endpoint policy (e.g. token validation).
+    ///
+    /// Everything reading through the context starts as
+    /// [`Freshness::Linearizable`]; only the endpoint owner relaxes it. A
+    /// tolerance coming from a request must go through
+    /// [`Self::tighten_freshness`] instead.
+    #[must_use]
+    pub fn with_freshness(mut self, freshness: Freshness) -> Self {
+        self.freshness = freshness;
+        self
+    }
+
+    /// Apply a tolerance requested by a client: it can only make the reads
+    /// stricter than the endpoint policy allows, never looser.
+    #[must_use]
+    pub fn tighten_freshness(mut self, requested: Freshness) -> Self {
+        self.freshness = self.freshness.tighten(requested);
+        self
+    }
+
+    /// The read tolerance of this context. Linearizable unless a caller
+    /// stated otherwise.
+    #[must_use]
+    pub fn freshness(&self) -> Freshness {
+        self.freshness
     }
 
     /// The service state.

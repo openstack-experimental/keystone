@@ -14,6 +14,7 @@
 
 use async_trait::async_trait;
 
+use openstack_keystone_core_types::freshness::Freshness;
 use openstack_keystone_core_types::resource::*;
 
 use crate::keystone::ServiceState;
@@ -210,6 +211,38 @@ pub trait ResourceBackend: Send + Sync {
         state: &ServiceState,
         project_id: &'a str,
     ) -> Result<Option<String>, ResourceProviderError>;
+
+    /// Get the ID of the domain a project belongs to, tolerating the stated
+    /// staleness. The default ignores the tolerance and reads through.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    /// - `freshness`: How stale the result may be.
+    async fn get_project_domain_id_with_freshness<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        _freshness: Freshness,
+    ) -> Result<Option<String>, ResourceProviderError> {
+        self.get_project_domain_id(state, project_id).await
+    }
+
+    /// Get the IDs of the project parents, tolerating the stated staleness.
+    /// The default ignores the tolerance and reads through.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    /// - `freshness`: How stale the result may be.
+    async fn get_project_parent_ids_with_freshness<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        _freshness: Freshness,
+    ) -> Result<Option<Vec<String>>, ResourceProviderError> {
+        self.get_project_parent_ids(state, project_id).await
+    }
 
     /// Get the short representation of a project (without options and tags).
     ///

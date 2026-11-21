@@ -32,7 +32,10 @@ pub use create::create;
 pub use delete::delete;
 pub use find_by_name::find_by_name_ci;
 pub(super) use get::get_main_entry;
-pub use get::{check_user_exist, get, get_core, get_user_domain_id};
+pub use get::{
+    Projections, check_user_exist, get, get_core, get_core_with_projections, get_user_domain_id,
+    get_with_projections,
+};
 pub use list::list;
 pub use set::reset_last_active;
 pub use update::update;

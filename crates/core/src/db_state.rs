@@ -37,9 +37,12 @@ use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbErr};
 use std::sync::Arc;
 use tracing::warn;
 
+use crate::table_watermark::TableWatermarks;
+
 /// Shared, hot-reloadable database connection held by the Keystone service.
 pub struct DbState {
     current: ArcSwap<DatabaseConnection>,
+    watermarks: Arc<TableWatermarks>,
 }
 
 impl DbState {
@@ -47,7 +50,17 @@ impl DbState {
     pub fn new(conn: DatabaseConnection) -> Self {
         Self {
             current: ArcSwap::new(Arc::new(conn)),
+            watermarks: Arc::new(TableWatermarks::new()),
         }
+    }
+
+    /// The table watermarks observed through this connection.
+    ///
+    /// Drivers validate their cached projections against them. The poller
+    /// that feeds them reads through [`Self::connection`], and the counters
+    /// are forgotten when the connection is replaced.
+    pub fn watermarks(&self) -> Arc<TableWatermarks> {
+        self.watermarks.clone()
     }
 
     /// Return a cheap clone of the currently active connection.
@@ -86,6 +99,9 @@ impl DbState {
         new_conn.ping().await?;
 
         let old = self.current.swap(Arc::new(new_conn));
+        // The new connection may point to another database: its counters are
+        // unrelated to the ones read so far.
+        self.watermarks.reset();
         tokio::spawn(async move {
             if let Err(error) = old.close_by_ref().await {
                 warn!(%error, "Failed to close superseded database connection");

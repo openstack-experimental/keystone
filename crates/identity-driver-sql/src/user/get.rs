@@ -21,10 +21,13 @@ use openstack_keystone_config::Config;
 use openstack_keystone_core::auth::AuthenticationError;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_core::table_watermark::TableWatermarks;
+use openstack_keystone_core_types::freshness::Freshness;
 use openstack_keystone_core_types::identity::{
     UserCore, UserOptions, UserResponse, UserResponseBuilder,
 };
 
+use crate::cache::UserCaches;
 use crate::entity::{
     federated_user as db_federated_user, local_user as db_local_user,
     nonlocal_user as db_nonlocal_user,
@@ -35,7 +38,7 @@ use crate::federated_user::MergeFederatedUserData;
 use crate::local_user;
 use crate::local_user::MergeLocalUserData;
 use crate::nonlocal_user::MergeNonlocalUserData;
-use crate::password::MergePasswordData;
+use crate::password::{MergePasswordData, PasswordExpiry};
 use crate::user::MergeUserData;
 
 /// Get the `user` table entry by the `user_id`.
@@ -57,6 +60,77 @@ pub async fn get_main_entry<U: AsRef<str>>(
         .context("fetching user by ID")?)
 }
 
+/// Where the cacheable projections of a user come from.
+///
+/// Only the user options and the expiry of the latest password are ever
+/// served from a cache. The main `user` row, the local user and everything
+/// secret are always read from the database.
+#[derive(Clone, Copy)]
+pub struct Projections<'a> {
+    /// The projection caches of the driver.
+    pub caches: &'a UserCaches,
+    /// The table counters of the connection.
+    pub watermarks: &'a TableWatermarks,
+    /// How stale the projections may be.
+    pub freshness: Freshness,
+}
+
+/// Load the options of the user.
+async fn load_user_options(
+    db: &DatabaseConnection,
+    user_id: &str,
+) -> Result<UserOptions, IdentityProviderError> {
+    Ok(UserOptions::from_iter(
+        UserOption::find()
+            .filter(db_user_option::Column::UserId.eq(user_id))
+            .all(db)
+            .await
+            .context("fetching user options")?,
+    ))
+}
+
+/// The options of the user, from the cache when `projections` allow it.
+async fn user_options(
+    db: &DatabaseConnection,
+    projections: Option<Projections<'_>>,
+    user_id: &str,
+) -> Result<UserOptions, IdentityProviderError> {
+    match projections {
+        Some(p) => {
+            p.caches
+                .options
+                .get_or_load(p.watermarks, user_id, p.freshness, || {
+                    load_user_options(db, user_id)
+                })
+                .await
+        }
+        None => load_user_options(db, user_id).await,
+    }
+}
+
+/// The expiry of the latest password of the user, from the cache when
+/// `projections` allow it. The password hash is never part of it.
+///
+/// A user without a password is not cached: the absence of a password is
+/// not a fact worth serving stale.
+async fn password_expiry(
+    db: &DatabaseConnection,
+    projections: Option<Projections<'_>>,
+    user_id: &str,
+) -> Result<Option<PasswordExpiry>, IdentityProviderError> {
+    match projections {
+        Some(p) => {
+            p.caches
+                .password_expiry
+                .get_or_load_some(p.watermarks, user_id, p.freshness, || {
+                    local_user::load_password_expiry(db, user_id)
+                })
+                .await
+        }
+        None => local_user::load_password_expiry(db, user_id).await,
+    }
+}
+
 /// Get a user by its ID.
 ///
 /// # Parameters
@@ -72,6 +146,26 @@ pub async fn get(
     db: &DatabaseConnection,
     user_id: &str,
 ) -> Result<Option<UserResponse>, IdentityProviderError> {
+    get_with_projections(conf, db, None, user_id).await
+}
+
+/// Get a user by its ID, serving the cacheable projections from `projections`.
+///
+/// # Parameters
+/// - `conf`: The system configuration.
+/// - `db`: The database connection.
+/// - `projections`: The cached projections, or `None` to read everything.
+/// - `user_id`: The user ID.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `UserResponse` if found, or an
+/// `Error`.
+pub async fn get_with_projections(
+    conf: &Config,
+    db: &DatabaseConnection,
+    projections: Option<Projections<'_>>,
+    user_id: &str,
+) -> Result<Option<UserResponse>, IdentityProviderError> {
     // Independent statements: issue them together instead of one after the
     // other.
     //
@@ -80,17 +174,32 @@ pub async fn get(
     // when `password_expires_days` is not configured.
     let (user_entry, user_opts, local_user_with_passwords) = tokio::join!(
         get_main_entry(db, user_id),
-        UserOption::find()
-            .filter(db_user_option::Column::UserId.eq(user_id))
-            .all(db),
-        local_user::load_local_user_with_password_expiry(db, user_id)
+        user_options(db, projections, user_id),
+        async {
+            match projections {
+                None => local_user::load_local_user_with_password_expiry(db, user_id).await,
+                Some(_) => {
+                    // The local user (the name, the authentication
+                    // counters) is read every time; only the expiry of the
+                    // password may come from the cache.
+                    let (local_user, expiry) = tokio::join!(
+                        local_user::load_local_user_by_id(db, user_id, false),
+                        password_expiry(db, projections, user_id)
+                    );
+                    match local_user? {
+                        Some((local_user, _)) => Ok(Some((local_user, expiry?))),
+                        None => Ok(None),
+                    }
+                }
+            }
+        }
     );
 
     if let Some(user) = user_entry? {
         let mut user_builder = UserResponseBuilder::default();
         user_builder.merge_user_data(
             &user,
-            &UserOptions::from_iter(user_opts.context("fetching user options")?),
+            &user_opts?,
             conf.security_compliance
                 .get_user_last_activity_cutof_date()
                 .as_ref(),
@@ -152,20 +261,29 @@ pub async fn get_core(
     db: &DatabaseConnection,
     user_id: &str,
 ) -> Result<Option<UserCore>, IdentityProviderError> {
+    get_core_with_projections(conf, db, None, user_id).await
+}
+
+/// Get the minimal user data required to authorize a request, serving the
+/// user options from `projections`.
+///
+/// The main `user` row is always read: `enabled` and `last_active_at` move
+/// with every request and decide whether the user may act.
+pub async fn get_core_with_projections(
+    conf: &Config,
+    db: &DatabaseConnection,
+    projections: Option<Projections<'_>>,
+    user_id: &str,
+) -> Result<Option<UserCore>, IdentityProviderError> {
     let Some(user) = get_main_entry(db, user_id).await? else {
         return Ok(None);
     };
     let cutoff = conf.security_compliance.get_user_last_activity_cutof_date();
     let ignore_user_inactivity = if cutoff.is_some() && user.last_active_at.is_some() {
-        UserOptions::from_iter(
-            UserOption::find()
-                .filter(db_user_option::Column::UserId.eq(user_id))
-                .all(db)
-                .await
-                .context("fetching user options")?,
-        )
-        .ignore_user_inactivity
-        .is_some_and(|val| val)
+        user_options(db, projections, user_id)
+            .await?
+            .ignore_user_inactivity
+            .is_some_and(|val| val)
     } else {
         false
     };

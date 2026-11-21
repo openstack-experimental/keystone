@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # OpenStack Keystone SQL driver for the resource provider
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, Schema, TransactionTrait};
@@ -21,11 +21,13 @@ use sea_orm::{DatabaseConnection, Schema, TransactionTrait};
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::plugin_manager::BackendRegistration;
+use openstack_keystone_core::projection_cache::ProjectionCache;
 use openstack_keystone_core::resource::{ResourceProviderError, backend::ResourceBackend};
 use openstack_keystone_core::table_watermark;
 use openstack_keystone_core::{
     SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
 };
+use openstack_keystone_core_types::freshness::Freshness;
 use openstack_keystone_core_types::resource::*;
 
 mod domain;
@@ -37,8 +39,41 @@ mod project_tag;
 #[cfg(test)]
 mod sqlite_tests;
 
+/// Projections of the projects that readers tolerating some staleness may be
+/// served from. Both depend on the `project` table only.
+struct ProjectCaches {
+    /// The domain of a project by project ID.
+    domain_id: ProjectionCache<String>,
+    /// The IDs of the parents of a project by project ID, closest first.
+    parent_ids: ProjectionCache<Vec<String>>,
+}
+
+/// Entries per cache.
+const CACHE_CAPACITY: usize = 10_000;
+
+impl Default for ProjectCaches {
+    fn default() -> Self {
+        Self {
+            domain_id: ProjectionCache::new(table_watermark::PROJECT_TABLES, CACHE_CAPACITY),
+            parent_ids: ProjectionCache::new(table_watermark::PROJECT_TABLES, CACHE_CAPACITY),
+        }
+    }
+}
+
+impl ProjectCaches {
+    /// Forget everything: this replica wrote to the project tree and must
+    /// see the result immediately.
+    fn invalidate(&self) {
+        self.domain_id.invalidate();
+        self.parent_ids.invalidate();
+    }
+}
+
 #[derive(Default)]
-pub struct SqlBackend {}
+pub struct SqlBackend {
+    /// Per driver instance: it belongs to the connection it reads through.
+    caches: LazyLock<ProjectCaches>,
+}
 
 /// Linkage anchor — see ADR-0018. Referenced by the `keystone` crate's
 /// `build.rs`-generated `_ANCHORS` static so the linker extracts `.rlib`
@@ -47,7 +82,9 @@ pub struct SqlBackend {}
 pub fn anchor() {}
 
 // Submit the plugin to the registry at compile-time
-static PLUGIN: SqlBackend = SqlBackend {};
+static PLUGIN: SqlBackend = SqlBackend {
+    caches: LazyLock::new(ProjectCaches::default),
+};
 inventory::submit! {
     SqlDriverRegistration { driver: &PLUGIN }
 }
@@ -112,7 +149,9 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         domain: DomainCreate,
     ) -> Result<Domain, ResourceProviderError> {
-        Ok(domain::create(&state.db.connection(), domain).await?)
+        let result = domain::create(&state.db.connection(), domain).await;
+        self.caches.invalidate();
+        Ok(result?)
     }
 
     /// Create new project.
@@ -136,9 +175,12 @@ impl ResourceBackend for SqlBackend {
             .await
             .context("starting the project create transaction")?;
         let created = project::create(&txn, project).await?;
-        txn.commit()
+        let committed = txn
+            .commit()
             .await
-            .context("committing the project create transaction")?;
+            .context("committing the project create transaction");
+        self.caches.invalidate();
+        committed?;
         Ok(created)
     }
 
@@ -158,7 +200,9 @@ impl ResourceBackend for SqlBackend {
         domain_id: &'a str,
         domain: DomainUpdate,
     ) -> Result<Domain, ResourceProviderError> {
-        Ok(domain::update(&state.db.connection(), domain_id, domain).await?)
+        let result = domain::update(&state.db.connection(), domain_id, domain).await;
+        self.caches.invalidate();
+        Ok(result?)
     }
 
     /// Update a project.
@@ -184,9 +228,12 @@ impl ResourceBackend for SqlBackend {
             .await
             .context("starting the project update transaction")?;
         let updated = project::update(&txn, project_id, project).await?;
-        txn.commit()
+        let committed = txn
+            .commit()
             .await
-            .context("committing the project update transaction")?;
+            .context("committing the project update transaction");
+        self.caches.invalidate();
+        committed?;
         Ok(updated)
     }
 
@@ -201,7 +248,9 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), ResourceProviderError> {
-        Ok(domain::delete(&state.db.connection(), id).await?)
+        let result = domain::delete(&state.db.connection(), id).await;
+        self.caches.invalidate();
+        Ok(result?)
     }
 
     /// Delete project by the ID.
@@ -215,7 +264,9 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), ResourceProviderError> {
-        Ok(project::delete(&state.db.connection(), id).await?)
+        let result = project::delete(&state.db.connection(), id).await;
+        self.caches.invalidate();
+        Ok(result?)
     }
 
     /// Get single domain by ID.
@@ -312,6 +363,54 @@ impl ResourceBackend for SqlBackend {
         project_id: &'a str,
     ) -> Result<Option<String>, ResourceProviderError> {
         Ok(project::get_project_domain_id(&state.db.connection(), project_id).await?)
+    }
+
+    /// Get the ID of the domain a project belongs to, from the projection
+    /// cache when `freshness` allows it. A missing project is never cached.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `project_id`: The ID of the project.
+    /// - `freshness`: How stale the result may be.
+    #[tracing::instrument(name = "driver.sql.resource.get_project_domain_id_with_freshness", level = "debug", skip_all, fields(project_id = %project_id, freshness = ?freshness))]
+    async fn get_project_domain_id_with_freshness<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        freshness: Freshness,
+    ) -> Result<Option<String>, ResourceProviderError> {
+        let watermarks = state.db.watermarks();
+        let db = state.db.connection();
+        self.caches
+            .domain_id
+            .get_or_load_some(&watermarks, project_id, freshness, || {
+                project::get_project_domain_id(&db, project_id)
+            })
+            .await
+    }
+
+    /// Get the IDs of the project parents, from the projection cache when
+    /// `freshness` allows it. A missing project is never cached.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `project_id`: The ID of the project.
+    /// - `freshness`: How stale the result may be.
+    #[tracing::instrument(name = "driver.sql.resource.get_project_parent_ids_with_freshness", level = "debug", skip_all, fields(project_id = %project_id, freshness = ?freshness))]
+    async fn get_project_parent_ids_with_freshness<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        freshness: Freshness,
+    ) -> Result<Option<Vec<String>>, ResourceProviderError> {
+        let watermarks = state.db.watermarks();
+        let db = state.db.connection();
+        self.caches
+            .parent_ids
+            .get_or_load_some(&watermarks, project_id, freshness, || {
+                project::get_project_parent_ids(&db, project_id)
+            })
+            .await
     }
 
     /// Get the short representation of a project (no options and tags).

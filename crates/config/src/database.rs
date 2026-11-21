@@ -77,6 +77,21 @@ pub struct DatabaseSection {
     /// triggers installed (`keystone-manage db sync` or `db up`).
     #[serde(default)]
     pub table_watermark_interval_ms: u64,
+
+    /// How stale (in milliseconds) the non-secret projections the SQL
+    /// drivers cache may be for the reads of the token validation path
+    /// (the options and the password expiry of the user, the domain of a
+    /// project). `0` (default) disables the projection caches: every read
+    /// goes to the database.
+    ///
+    /// The projections are validated against the table watermarks (see
+    /// `table_watermark_interval_ms`). A value below the watermark poll
+    /// interval cannot be guaranteed and results in a database read, as
+    /// does an unhealthy poller. Authentication, password verification and
+    /// every write path always read the database. The value is capped at
+    /// 300000 (5 minutes).
+    #[serde(default)]
+    pub projection_max_staleness_ms: u64,
 }
 
 impl DatabaseSection {

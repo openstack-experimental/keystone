@@ -4,8 +4,9 @@
 
 ## Status
 
-Prototype (implemented for the catalog, role and project tables of the SQL
-drivers; opt-in, disabled by default).
+Prototype (opt-in, disabled by default). Process-wide provider caches for the
+catalog and role tables; driver-side projection caches with a stated read
+freshness for users and projects (see "Projection caches and read freshness").
 
 ## Reference
 
@@ -86,7 +87,64 @@ the counter rows.
 - The poll query runs every interval on every node, regardless of traffic.
 - Raft-backed drivers do not use this; their log index is the natural watermark.
 
+## Projection caches and read freshness
+
+Caching in the provider on data the driver already combined from several tables
+cannot be validated by a table counter, and the provider cannot know which
+tables a driver read. Raft drivers have no tables at all. The SQL drivers
+therefore cache **projections** themselves: small, derived, non-secret facts,
+each declaring the tables it depends on.
+
+| Projection                | Depends on    | Never cached                                      |
+| ------------------------- | ------------- | ------------------------------------------------- |
+| user options              | `user_option` | the `user` row (`enabled`, `last_active_at`)      |
+| expiry of latest password | `password`    | the password hash, `local_user` auth counters     |
+| domain of a project       | `project`     | missing projects (a stale "not found" is refused) |
+| parent IDs of a project   | `project`     |                                                   |
+
+The reader states how stale the result may be (`Freshness` in `core-types`):
+`Linearizable` (the default of every `ExecutionContext`), `MaxStaleness(d)` or
+`Any`. The backend traits gain `*_with_freshness` methods whose default ignores
+the tolerance and reads through, so a driver without a cache (LDAP, Raft) stays
+correct. A SQL driver serves a cached projection only when
+
+- the counters of its tables are unchanged since the entry was loaded, **and**
+- the counters are recent enough for the tolerance: a tolerance below the poll
+  interval cannot be guaranteed by a poller that looks once per interval and is
+  a **forced read**, as is a snapshot older than the tolerance (stalled poller),
+  and an unhealthy poller or a missing trigger.
+
+Without the poller the age of the entry decides. A read that is not served from
+the cache still refreshes it. The driver invalidates its caches on its own
+writes (a replica sees its own writes at once), and a load that started before
+an invalidation cannot repopulate the cache.
+
+Who relaxes the tolerance is the owner of the endpoint, never a request:
+`ExecutionContext::with_freshness` sets it (token validation, from
+`[database] projection_max_staleness_ms`, capped at 5 minutes, `0` = off);
+`tighten_freshness` is what a client-supplied hint may use. Password expiry is
+served stale only on the token validation path. Authentication, password
+verification and every write path read the database. This follows ADR 0045:
+validation belongs to the evaluation plane (bounded staleness), authentication
+to the core plane (linearizable).
+
+Security consequence: an administrator who shortens or forces a password expiry
+on one replica is not honoured by token validation on another one for up to the
+poll interval plus the tolerance (the same bound as the revocation events of ADR
+0045). Extending an expiry fails closed for that long.
+
+Not covered yet: the catalog and role caches still live in the providers and use
+the process-wide registry fed by the poller; the assignment driver reads the
+project parents with an internal, linearizable context.
+
 ## Open points
+
+- Column-aware triggers (a watermark that ignores `failed_auth_*` churn) would
+  let `local_user` and `user` back into the dependency sets; they are excluded
+  because every failed login writes them.
+- MySQL does not fire triggers for rows removed by `ON DELETE CASCADE`; the
+  projections tolerate it today because the parents (`user`, `project`) are
+  always read or part of the set, but it needs a test per backend.
 
 - Enable by default and raise the cache TTLs once the poller has proven itself.
 - Extend to further read-mostly tables (domains are rows of `project`, so they

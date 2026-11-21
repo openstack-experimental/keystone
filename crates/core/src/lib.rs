@@ -117,6 +117,7 @@ pub mod plugin_manager;
 pub mod policy;
 pub mod policy_metrics;
 pub mod policy_store;
+pub mod projection_cache;
 pub mod provider;
 pub mod rate_limit;
 pub mod rate_limit_metrics;

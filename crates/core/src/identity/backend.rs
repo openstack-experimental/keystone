@@ -17,6 +17,7 @@ use chrono::{DateTime, Utc};
 use secrecy::SecretString;
 use std::collections::HashSet;
 
+use openstack_keystone_core_types::freshness::Freshness;
 use openstack_keystone_core_types::identity::*;
 
 use crate::auth::AuthenticationResult;
@@ -235,6 +236,43 @@ pub trait IdentityBackend: Send + Sync {
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<Option<UserResponse>, IdentityProviderError>;
+
+    /// Get single user by ID, tolerating the stated staleness.
+    ///
+    /// Only the parts of the user that change rarely and are not secret (the
+    /// user options, the expiry of the password) may come from a cache, and
+    /// only within `freshness`. The main user record, the authentication
+    /// state and every secret are always read. The default ignores the
+    /// tolerance and reads through, which is always correct.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to retrieve.
+    /// - `freshness`: How stale the cacheable parts may be.
+    async fn get_user_with_freshness<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        _freshness: Freshness,
+    ) -> Result<Option<UserResponse>, IdentityProviderError> {
+        self.get_user(state, user_id).await
+    }
+
+    /// Get the minimal user data required to authorize a request, tolerating
+    /// the stated staleness. The default ignores the tolerance.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to retrieve.
+    /// - `freshness`: How stale the cacheable parts may be.
+    async fn get_user_core_with_freshness<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        _freshness: Freshness,
+    ) -> Result<Option<UserCore>, IdentityProviderError> {
+        self.get_user_core(state, user_id).await
+    }
 
     /// Get the minimal user data required to authorize a request.
     ///

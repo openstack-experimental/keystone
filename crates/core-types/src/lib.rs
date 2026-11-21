@@ -30,6 +30,7 @@ pub mod domain_config;
 pub mod error;
 pub mod events;
 pub mod federation;
+pub mod freshness;
 pub mod identity;
 pub mod idmapping;
 pub mod k8s_auth;

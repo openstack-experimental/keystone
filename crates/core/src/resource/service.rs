@@ -31,7 +31,6 @@ use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 use crate::request_cache::{cache_get, cache_remove, cache_set};
 use crate::resource::{ResourceApi, ResourceProviderError, backend::ResourceBackend};
-use crate::table_watermark::{PROJECT_TABLES, TableWatermarks};
 
 /// Request-cache namespace for [`Domain`] lookups by `domain_id`.
 const DOMAIN_CACHE_NS: &str = "resource.domain";
@@ -67,12 +66,6 @@ const PROCESS_CACHE_MAX_ENTRIES: usize = 100_000;
 
 pub struct ResourceService {
     backend_driver: Arc<dyn ResourceBackend>,
-    /// Table watermarks (see [`crate::table_watermark`]). While they are
-    /// healthy the process caches below are dropped whenever the `project`
-    /// table changed, wherever the change was made.
-    watermarks: Arc<TableWatermarks>,
-    /// The `project` stamp the process caches were last checked against.
-    seen_stamp: std::sync::Mutex<Option<u64>>,
     /// Caching flag (`[resource] caching`). When enabled the facts that never
     /// change for a project are kept in the process memory.
     caching: bool,
@@ -106,42 +99,11 @@ impl ResourceService {
 
     /// Create the service on top of the backend driver.
     pub(crate) fn with_backend(backend_driver: Arc<dyn ResourceBackend>, caching: bool) -> Self {
-        Self::with_backend_and_watermarks(backend_driver, caching, TableWatermarks::global())
-    }
-
-    /// Create the service validating its process caches against the given
-    /// table watermarks.
-    pub(crate) fn with_backend_and_watermarks(
-        backend_driver: Arc<dyn ResourceBackend>,
-        caching: bool,
-        watermarks: Arc<TableWatermarks>,
-    ) -> Self {
         Self {
             backend_driver,
-            watermarks,
-            seen_stamp: std::sync::Mutex::new(None),
             caching,
             project_domain_id_cache: RwLock::new(HashMap::new()),
             project_parent_ids_cache: RwLock::new(HashMap::new()),
-        }
-    }
-
-    /// Drop the process caches when the `project` table changed since the
-    /// last call, or when the watermark became (un)available.
-    async fn sync_watermark(&self) {
-        let current = self.watermarks.stamp(PROJECT_TABLES);
-        let moved = {
-            let mut seen = self
-                .seen_stamp
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let moved = *seen != current;
-            *seen = current;
-            moved
-        };
-        if moved {
-            self.project_domain_id_cache.write().await.clear();
-            self.project_parent_ids_cache.write().await.clear();
         }
     }
 
@@ -860,22 +822,23 @@ impl ResourceApi for ResourceService {
         if let Some(domain_id) = cache_get::<String>(PROJECT_DOMAIN_ID_CACHE_NS, project_id) {
             return Ok(Some(domain_id));
         }
-        if self.caching {
-            self.sync_watermark().await;
-            if let Some(domain_id) = self.project_domain_id_cache.read().await.get(project_id) {
-                return Ok(Some(domain_id.clone()));
-            }
+        if self.caching
+            && let Some(domain_id) = self.project_domain_id_cache.read().await.get(project_id)
+        {
+            return Ok(Some(domain_id.clone()));
         }
-        // Stamp taken before the load: a value read before a change must not
-        // be stored after it.
-        let stamp = self.watermarks.stamp(PROJECT_TABLES);
-        let domain_id = self
-            .backend_driver
-            .get_project_domain_id(ctx.state(), project_id)
-            .await?;
+        let domain_id = if ctx.freshness().is_linearizable() {
+            self.backend_driver
+                .get_project_domain_id(ctx.state(), project_id)
+                .await?
+        } else {
+            self.backend_driver
+                .get_project_domain_id_with_freshness(ctx.state(), project_id, ctx.freshness())
+                .await?
+        };
         if let Some(domain_id) = &domain_id {
             cache_set(PROJECT_DOMAIN_ID_CACHE_NS, project_id, domain_id.clone());
-            if self.caching && self.watermarks.stamp(PROJECT_TABLES) == stamp {
+            if self.caching {
                 let mut cache = self.project_domain_id_cache.write().await;
                 if cache.len() >= PROCESS_CACHE_MAX_ENTRIES {
                     cache.clear();
@@ -909,20 +872,23 @@ impl ResourceApi for ResourceService {
         if let Some(parents) = cache_get::<Vec<Project>>(PROJECT_PARENTS_CACHE_NS, project_id) {
             return Ok(Some(parents.into_iter().map(|parent| parent.id).collect()));
         }
-        if self.caching {
-            self.sync_watermark().await;
-            if let Some(parents) = self.project_parent_ids_cache.read().await.get(project_id) {
-                return Ok(Some(parents.clone()));
-            }
+        if self.caching
+            && let Some(parents) = self.project_parent_ids_cache.read().await.get(project_id)
+        {
+            return Ok(Some(parents.clone()));
         }
-        let stamp = self.watermarks.stamp(PROJECT_TABLES);
-        let parents = self
-            .backend_driver
-            .get_project_parent_ids(ctx.state(), project_id)
-            .await?;
+        let parents = if ctx.freshness().is_linearizable() {
+            self.backend_driver
+                .get_project_parent_ids(ctx.state(), project_id)
+                .await?
+        } else {
+            self.backend_driver
+                .get_project_parent_ids_with_freshness(ctx.state(), project_id, ctx.freshness())
+                .await?
+        };
         if let Some(parents) = &parents {
             cache_set(PROJECT_PARENT_IDS_CACHE_NS, project_id, parents.clone());
-            if self.caching && self.watermarks.stamp(PROJECT_TABLES) == stamp {
+            if self.caching {
                 let mut cache = self.project_parent_ids_cache.write().await;
                 if cache.len() >= PROCESS_CACHE_MAX_ENTRIES {
                     cache.clear();
@@ -2633,64 +2599,6 @@ mod tests {
                 provider.get_project_domain_id(&ctx, "pid").await.unwrap()
             );
         }
-    }
-
-    fn project_watermarks(version: i64) -> Arc<TableWatermarks> {
-        let wm = Arc::new(TableWatermarks::new());
-        wm.configure(std::time::Duration::from_secs(1));
-        wm.publish([("project".to_string(), version)].into_iter().collect());
-        wm
-    }
-
-    #[tokio::test]
-    async fn test_process_caches_dropped_when_project_watermark_moves() {
-        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
-        let mut backend = MockResourceBackend::default();
-        backend
-            .expect_get_project_domain_id()
-            .times(2)
-            .returning(|_, _| Ok(Some("did".into())));
-        backend
-            .expect_get_project_parent_ids()
-            .times(2)
-            .returning(|_, _| Ok(Some(vec!["did".into()])));
-        let wm = project_watermarks(1);
-        let provider =
-            ResourceService::with_backend_and_watermarks(Arc::new(backend), true, wm.clone());
-
-        let ctx = ExecutionContext::internal(&state);
-        for _ in 0..2 {
-            provider.get_project_domain_id(&ctx, "pid").await.unwrap();
-            provider.get_project_parent_ids(&ctx, "pid").await.unwrap();
-        }
-        // A change made by another process.
-        wm.publish([("project".to_string(), 2)].into_iter().collect());
-        for _ in 0..2 {
-            provider.get_project_domain_id(&ctx, "pid").await.unwrap();
-            provider.get_project_parent_ids(&ctx, "pid").await.unwrap();
-        }
-    }
-
-    #[tokio::test]
-    async fn test_process_caches_ignore_other_tables_watermark() {
-        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
-        let mut backend = MockResourceBackend::default();
-        backend
-            .expect_get_project_domain_id()
-            .times(1)
-            .returning(|_, _| Ok(Some("did".into())));
-        let wm = project_watermarks(1);
-        let provider =
-            ResourceService::with_backend_and_watermarks(Arc::new(backend), true, wm.clone());
-
-        let ctx = ExecutionContext::internal(&state);
-        provider.get_project_domain_id(&ctx, "pid").await.unwrap();
-        wm.publish(
-            [("project".to_string(), 1), ("role".to_string(), 7)]
-                .into_iter()
-                .collect(),
-        );
-        provider.get_project_domain_id(&ctx, "pid").await.unwrap();
     }
 
     #[tokio::test]
