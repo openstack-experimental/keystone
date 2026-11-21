@@ -65,6 +65,8 @@ pub async fn update_password(
                 ))
             })?;
 
+    let user_opts = crate::user_option::list_by_user_id(db, user_id).await?;
+
     // Get the latest password hash for verification
     let passwords_vec: Vec<db_password::Model> = passwords.into_iter().collect();
     let latest_password =
@@ -90,9 +92,26 @@ pub async fn update_password(
         return Err(AuthenticationError::UserNameOrPasswordWrong.into());
     }
 
+    // `lock_password` forbids the user to change its own password. The check
+    // happens only after the original password is verified so that the
+    // (unauthenticated) endpoint does not disclose the option to anyone who
+    // does not know the current password.
+    if user_opts.lock_password.is_some_and(|val| val) {
+        return Err(IdentityProviderError::PasswordLocked(user_id.to_string()));
+    }
+
     // Set the new password (reuse pre-loaded passwords, history check is
     // inside)
-    super::password::set_new_password(db, conf, local_user.id, new_password, passwords_vec).await?;
+    super::password::set_new_password(
+        db,
+        conf,
+        local_user.id,
+        new_password,
+        passwords_vec,
+        true,
+        &user_opts,
+    )
+    .await?;
 
     Ok(())
 }
@@ -263,6 +282,8 @@ pub mod tests {
                 "user_id",
                 original_password,
             )])
+            // Fetch user options (empty)
+            .append_query_results([Vec::<crate::entity::user_option::Model>::new()])
             // unique=0: delete 1 existing password (id=1)
             .append_exec_results([MockExecResult {
                 rows_affected: 1,
@@ -294,6 +315,68 @@ pub mod tests {
     }
 
     #[tokio::test]
+    async fn test_update_password_locked() {
+        let config = get_config_none_hashing();
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([get_local_user_with_password_hash_mock("user_id", "old")])
+            .append_query_results([vec![crate::entity::user_option::Model {
+                user_id: "user_id".into(),
+                option_id: "1003".into(),
+                option_value: Some("true".into()),
+            }]])
+            .into_connection();
+
+        let result = update_password(
+            &db,
+            &config,
+            "user_id",
+            SecretString::from("old"),
+            SecretString::from("new_password"),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(IdentityProviderError::PasswordLocked(_))),
+            "locked password must not be changed by the user, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_password_locked_wrong_original_password() {
+        let config = get_config_none_hashing();
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([get_local_user_with_password_hash_mock("user_id", "old")])
+            .append_query_results([vec![crate::entity::user_option::Model {
+                user_id: "user_id".into(),
+                option_id: "1003".into(),
+                option_value: Some("true".into()),
+            }]])
+            .into_connection();
+
+        let result = update_password(
+            &db,
+            &config,
+            "user_id",
+            SecretString::from("bogus"),
+            SecretString::from("new_password"),
+        )
+        .await;
+
+        // The lock must not be disclosed without the valid original password.
+        assert!(
+            matches!(
+                result,
+                Err(IdentityProviderError::Authentication {
+                    source: AuthenticationError::UserNameOrPasswordWrong
+                })
+            ),
+            "wrong password must win over the lock, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
     async fn test_update_password_wrong_original_password() {
         let config = get_config_none_hashing();
         let stored_password = "correct_password";
@@ -303,6 +386,8 @@ pub mod tests {
                 "user_id",
                 stored_password,
             )])
+            // Fetch user options (empty)
+            .append_query_results([Vec::<crate::entity::user_option::Model>::new()])
             .into_connection();
 
         let result = update_password(
@@ -375,6 +460,8 @@ pub mod tests {
 
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![(lu, password_no_hash)]])
+            // Fetch user options (empty)
+            .append_query_results([Vec::<crate::entity::user_option::Model>::new()])
             .into_connection();
 
         let result = update_password(
@@ -409,6 +496,8 @@ pub mod tests {
                     old_password_2.to_string(),
                 ],
             )])
+            // Fetch user options (empty)
+            .append_query_results([Vec::<crate::entity::user_option::Model>::new()])
             .into_connection();
 
         let result = update_password(
@@ -446,6 +535,8 @@ pub mod tests {
                     old_password_2.to_string(),
                 ],
             )])
+            // Fetch user options (empty)
+            .append_query_results([Vec::<crate::entity::user_option::Model>::new()])
             // Expire newest 1 (current_password, id=1)
             .append_query_results([vec![
                 db_password::ModelBuilder::default().id(1).build().unwrap(),
@@ -496,6 +587,8 @@ pub mod tests {
                 "user_id",
                 vec![current_password.to_string(), current_password.to_string()],
             )])
+            // Fetch user options (empty)
+            .append_query_results([Vec::<crate::entity::user_option::Model>::new()])
             // unique=0: delete all 2 existing passwords
             .append_exec_results([
                 MockExecResult {

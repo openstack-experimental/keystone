@@ -16,13 +16,32 @@
 use openstack_keystone_config::Config;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::identity::IdentityProviderError;
-use openstack_keystone_core_types::identity::{UserResponse, UserUpdate};
+use openstack_keystone_core_types::identity::{UserOptions, UserResponse, UserUpdate};
 use sea_orm::DatabaseConnection;
+use sea_orm::QueryFilter;
 use sea_orm::TransactionTrait;
 use sea_orm::entity::*;
 
-use crate::entity::{local_user as db_local_user, password as db_password, user as db_user};
+use crate::entity::{
+    local_user as db_local_user, password as db_password, user as db_user,
+    user_option as db_user_option,
+};
 use crate::local_user::load_local_user_with_passwords;
+
+/// Options that apply to the password being set.
+///
+/// The options sent with the very same update request take precedence over
+/// the stored ones, so e.g. a reset that also sets
+/// `ignore_change_password_upon_first_use` honours it.
+fn effective_options(mut stored: UserOptions, requested: Option<&UserOptions>) -> UserOptions {
+    if let Some(requested) = requested
+        && requested.ignore_change_password_upon_first_use.is_some()
+    {
+        stored.ignore_change_password_upon_first_use =
+            requested.ignore_change_password_upon_first_use;
+    }
+    stored
+}
 
 /// Update an existing user.
 ///
@@ -102,12 +121,22 @@ pub async fn update(
         }
 
         let passwords_vec: Vec<db_password::Model> = passwords.into_iter().collect();
+        let stored_opts = UserOptions::from_iter(
+            db_user_option::Entity::find()
+                .filter(db_user_option::Column::UserId.eq(user_id))
+                .all(&txn)
+                .await
+                .context("fetching user options")?,
+        );
+        let user_opts = effective_options(stored_opts, user.options.as_ref());
         crate::password::set_new_password(
             &txn,
             conf,
             local_user.id,
             new_password.clone(),
             passwords_vec,
+            false,
+            &user_opts,
         )
         .await?;
     } else if let Some(ref new_name) = user.name {
@@ -315,6 +344,8 @@ mod tests {
             .append_query_results([vec![get_user_mock("1")]])
             // 3. load_local_user_with_passwords (local_user has 1 existing password)
             .append_query_results([get_local_user_with_password_mock("1", 1)])
+            // Fetch user options (empty)
+            .append_query_results([Vec::<db_user_option::Model>::new()])
             // 4. set_new_password -> check_history passes -> unique_count=0 -> keep_count=0
             //    split_at(0, 1) = ([], [pw]) -> expire: 0, delete: 1
             .append_exec_results([MockExecResult {
@@ -378,6 +409,8 @@ mod tests {
             .append_query_results([vec![get_user_mock("1")]])
             // 3. load_local_user_with_passwords (LEFT JOIN returns pairs + existing passwords)
             .append_query_results([get_local_user_with_passwords_mock("1", &existing)])
+            // Fetch user options (empty)
+            .append_query_results([Vec::<db_user_option::Model>::new()])
             // 4. set_new_password -> check_history passes, expire 1 newest
             .append_query_results([vec![
                 db_password::ModelBuilder::default()
@@ -433,6 +466,8 @@ mod tests {
             .append_query_results([vec![get_user_mock("1")]])
             // 3. load_local_user_with_passwords (with 1 existing password)
             .append_query_results([get_local_user_with_password_mock("1", 1)])
+            // Fetch user options (empty)
+            .append_query_results([Vec::<db_user_option::Model>::new()])
             // 4. set_new_password -> check_history passes -> unique=0 -> split_at -> delete 1
             .append_exec_results([MockExecResult {
                 rows_affected: 1,
@@ -466,6 +501,120 @@ mod tests {
         assert!(result.is_ok(), "update failed: {:?}", result.err());
     }
 
+    /// Run an administrative password reset and return the statement that
+    /// inserted the new password.
+    async fn reset_password_insert(
+        conf: &Config,
+        stored_opts: Vec<db_user_option::Model>,
+        req_opts: Option<UserOptions>,
+    ) -> String {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_user_mock("1")]])
+            .append_query_results([vec![get_user_mock("1")]])
+            .append_query_results([get_local_user_with_password_mock("1", 1)])
+            // user options
+            .append_query_results([stored_opts])
+            // delete the old password
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
+            // insert the new password
+            .append_query_results([vec![make_pwd(10, 999, false)]])
+            // user::get()
+            .append_query_results([vec![get_user_mock("1")]])
+            .append_query_results([Vec::<db_user_option::Model>::new()])
+            .append_query_results([vec![get_local_user_mock("1")]])
+            .append_query_results([vec![get_local_user_with_password_mock("1", 1).remove(0).1]])
+            .into_connection();
+
+        let req = UserUpdate {
+            password: Some("new_password".into()),
+            options: req_opts,
+            ..Default::default()
+        };
+        let result = update(conf, &db, "1", req).await;
+        assert!(result.is_ok(), "update failed: {:?}", result.err());
+
+        db.into_transaction_log()
+            .iter()
+            .flat_map(|t| t.statements())
+            .find(|st| st.sql.starts_with("INSERT INTO \"password\""))
+            .map(|st| {
+                st.sql
+                    .split(" RETURNING")
+                    .next()
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .unwrap_or_else(|| panic!("no password insert"))
+    }
+
+    fn first_use_conf() -> Config {
+        let mut conf = Config::default();
+        conf.security_compliance.unique_last_password_count = Some(0);
+        conf.security_compliance.change_password_upon_first_use = true;
+        conf
+    }
+
+    #[tokio::test]
+    async fn test_update_password_first_use_expired() {
+        let conf = first_use_conf();
+        let baseline = reset_password_insert(&Config::default(), vec![], None).await;
+        let sot = reset_password_insert(&conf, vec![], None).await;
+        // `expires_at` is set to now only when the feature is enabled.
+        assert!(!baseline.contains("expires_at\""), "{baseline}");
+        assert!(sot.contains("expires_at\""), "{sot}");
+    }
+
+    #[tokio::test]
+    async fn test_update_password_first_use_ignored_stored() {
+        let conf = first_use_conf();
+        let sot = reset_password_insert(
+            &conf,
+            vec![db_user_option::Model {
+                user_id: "1".into(),
+                option_id: "1000".into(),
+                option_value: Some("true".into()),
+            }],
+            None,
+        )
+        .await;
+        assert!(!sot.contains("expires_at\""), "{sot}");
+    }
+
+    #[tokio::test]
+    async fn test_update_password_first_use_ignored_in_request() {
+        let conf = first_use_conf();
+        let sot = reset_password_insert(
+            &conf,
+            vec![],
+            Some(UserOptions {
+                ignore_change_password_upon_first_use: Some(true),
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert!(!sot.contains("expires_at\""), "{sot}");
+    }
+
+    #[test]
+    fn test_effective_options() {
+        let stored = UserOptions {
+            ignore_change_password_upon_first_use: Some(false),
+            lock_password: Some(true),
+            ..Default::default()
+        };
+        let requested = UserOptions {
+            ignore_change_password_upon_first_use: Some(true),
+            ..Default::default()
+        };
+        let sot = effective_options(stored.clone(), Some(&requested));
+        assert_eq!(sot.ignore_change_password_upon_first_use, Some(true));
+        assert_eq!(sot.lock_password, Some(true));
+        assert_eq!(effective_options(stored.clone(), None), stored);
+    }
+
     #[tokio::test]
     async fn test_update_name_and_password() {
         let mut conf = Config::default();
@@ -480,6 +629,8 @@ mod tests {
             .append_query_results([get_local_user_with_password_mock("1", 1)])
             // 3. Update local_user (name change)
             .append_query_results([vec![get_local_user_mock("1")]])
+            // Fetch user options (empty)
+            .append_query_results([Vec::<db_user_option::Model>::new()])
             // 4. set_new_password -> check_history passes -> unique=0 -> delete 1 existing
             .append_exec_results([MockExecResult {
                 rows_affected: 1,
@@ -542,6 +693,8 @@ mod tests {
             .append_query_results([vec![get_user_mock("1")]])
             // 3. load_local_user_with_passwords (with 2 existing passwords)
             .append_query_results([get_local_user_with_passwords_mock("1", &existing)])
+            // Fetch user options (empty)
+            .append_query_results([Vec::<db_user_option::Model>::new()])
             // set_new_password -> check_history rejects immediately, no further operations
             .into_connection();
 

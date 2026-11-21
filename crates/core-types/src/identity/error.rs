@@ -168,6 +168,11 @@ pub enum IdentityProviderError {
     #[error("operation not permitted: backend is read-only ({0})")]
     Readonly(String),
 
+    /// The user has the `lock_password` option set and therefore must not
+    /// change its own password. An administrative reset is still allowed.
+    #[error("password of the user {0} is locked and cannot be changed by the user")]
+    PasswordLocked(String),
+
     /// Resource provider error.
     #[error(transparent)]
     ResourceProvider {

@@ -16,7 +16,7 @@ use secrecy::SecretString;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core::identity::IdentityProviderError;
-use openstack_keystone_core_types::identity::UserResponseBuilder;
+use openstack_keystone_core_types::identity::{UserOptions, UserResponseBuilder};
 use openstack_keystone_password_hashing as password_hashing;
 
 use openstack_keystone_config::PasswordHashingQueueFull;
@@ -66,6 +66,14 @@ pub(crate) fn hash_error(err: PasswordHashError) -> IdentityProviderError {
 /// - `password`: The plaintext password to set.
 /// - `existing_passwords`: Pre-loaded existing passwords sorted DESC by
 ///   creation.
+/// - `self_service`: Whether the password is set by the user itself (as
+///   opposed to creation or an administrative reset).
+/// - `user_opts`: The options of the user.
+///
+/// When `[security_compliance] change_password_upon_first_use` is enabled and
+/// the password is not set by the user itself, the new password is created
+/// already expired, unless the user has `ignore_change_password_upon_first_use`
+/// option set.
 ///
 /// # Returns
 /// A `Result` containing the created `db_password::Model` if successful, or an
@@ -76,6 +84,8 @@ pub async fn set_new_password<C: ConnectionTrait>(
     local_user_id: i32,
     password: SecretString,
     existing_passwords: Vec<db_password::Model>,
+    self_service: bool,
+    user_opts: &UserOptions,
 ) -> Result<db_password::Model, IdentityProviderError> {
     conf.security_compliance
         .validate_password(&password)
@@ -91,7 +101,7 @@ pub async fn set_new_password<C: ConnectionTrait>(
         .await
         .map_err(hash_error)?;
 
-    let expires_at = conf.security_compliance.get_password_expires_at(now);
+    let expires_at = new_password_expires_at(conf, self_service, user_opts, now);
     set::set_new_password(
         db,
         local_user_id,
@@ -101,6 +111,31 @@ pub async fn set_new_password<C: ConnectionTrait>(
         existing_passwords,
     )
     .await
+}
+
+/// Determine the expiration of a newly set password.
+///
+/// With `[security_compliance] change_password_upon_first_use` the password
+/// that is not set by the user itself (creation, administrative reset) is
+/// created already expired, unless the user has the
+/// `ignore_change_password_upon_first_use` option set. Otherwise the regular
+/// `password_expires_days` applies.
+fn new_password_expires_at(
+    conf: &Config,
+    self_service: bool,
+    user_opts: &UserOptions,
+    now: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
+    if conf.security_compliance.change_password_upon_first_use
+        && !self_service
+        && !user_opts
+            .ignore_change_password_upon_first_use
+            .is_some_and(|val| val)
+    {
+        Some(now)
+    } else {
+        conf.security_compliance.get_password_expires_at(now)
+    }
 }
 
 /// Verify whether the password has expired or not.
@@ -283,6 +318,42 @@ pub mod tests {
     }
 
     #[test]
+    fn test_new_password_expires_at_first_use() {
+        let now = Utc::now();
+        let mut conf = Config::default();
+        let opts = UserOptions::default();
+        // feature disabled
+        assert_eq!(new_password_expires_at(&conf, false, &opts, now), None);
+
+        conf.security_compliance.change_password_upon_first_use = true;
+        // admin set/reset: expired immediately
+        assert_eq!(new_password_expires_at(&conf, false, &opts, now), Some(now));
+        // self service change: not forced
+        assert_eq!(new_password_expires_at(&conf, true, &opts, now), None);
+        // user ignores the requirement
+        let ignore = UserOptions {
+            ignore_change_password_upon_first_use: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(new_password_expires_at(&conf, false, &ignore, now), None);
+        // explicit false does not bypass
+        let no_ignore = UserOptions {
+            ignore_change_password_upon_first_use: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(
+            new_password_expires_at(&conf, false, &no_ignore, now),
+            Some(now)
+        );
+        // falls back to the regular expiry
+        conf.security_compliance.password_expires_days = Some(90);
+        assert_eq!(
+            new_password_expires_at(&conf, false, &ignore, now),
+            Some(now + chrono::TimeDelta::days(90))
+        );
+    }
+
+    #[test]
     fn test_is_password_expired_not() {
         let now = Utc::now();
         assert!(
@@ -375,8 +446,16 @@ pub mod tests {
 
         let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
 
-        let result =
-            set_new_password(&db, &conf, 1, SecretString::from("abcdefg"), Vec::new()).await;
+        let result = set_new_password(
+            &db,
+            &conf,
+            1,
+            SecretString::from("abcdefg"),
+            Vec::new(),
+            false,
+            &UserOptions::default(),
+        )
+        .await;
 
         assert!(
             matches!(
