@@ -17,10 +17,9 @@ use url::Url;
 
 use crate::keystone::ServiceState;
 
-/// Builds the absolute `meta.location` URL from a base endpoint, mirroring
-/// [`crate::api::common::build_pagination_links`]'s
-/// fallback-to-`http://localhost` behavior when `public_endpoint` isn't
-/// configured.
+/// Builds the absolute `meta.location` URL from a base endpoint, falling back
+/// to `http://localhost` when `public_endpoint` isn't configured (the same
+/// behavior as the pagination link builders of `crate::api::common`).
 pub(crate) fn scim_location(
     base: &Url,
     domain_id: &str,
