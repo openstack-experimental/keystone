@@ -9,7 +9,7 @@ keystone-manage --config /etc/keystone/keystone.conf <command>
 
 | Command | Purpose |
 | --- | --- |
-| `bootstrap` | Create or update the initial domain, project, user, roles, assignments, and optional catalog endpoints. |
+| `bootstrap` | Create or update the initial domain, project, user, roles, assignments, and optional catalog endpoints. Newly created domain, project and roles are marked `immutable` (see below). |
 | `catalog service` | Create, list, show, update, or delete catalog services. |
 | `catalog endpoint` | Create, list, show, update, or delete catalog endpoints. |
 | `credential setup|migrate|rotate` | Manage credential-encryption keys and re-encryption. |
@@ -30,3 +30,19 @@ for [Fernet tokens](../tokens/fernet.md),
 [OAuth2/OIDC](../features/oauth2.md), or
 [distributed storage](../storage/distributed.md); command help describes
 syntax, while the runbook describes ordering and safety constraints.
+
+## Immutable bootstrap roles
+
+`bootstrap` creates the `admin`, `manager`, `member` and `reader` roles with the
+resource option `immutable: true`, as Python Keystone does. Update and delete
+requests for an immutable role are rejected with `403 Forbidden` until an
+administrator clears the option by setting `options.immutable` to `false` in an
+update request. The default domain and the bootstrap project are not immutable.
+
+Roles that already exist are left untouched, so re-running `bootstrap` on an
+existing installation does not protect them. To protect an existing role, set
+the option explicitly:
+
+```console
+openstack role set --immutable <role>
+```
