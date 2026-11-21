@@ -20,7 +20,7 @@ use crate::keystone::ServiceState;
 mod create;
 mod delete;
 mod list;
-mod show;
+pub(crate) mod show;
 mod tag;
 pub mod types;
 mod update;

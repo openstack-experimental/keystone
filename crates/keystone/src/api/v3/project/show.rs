@@ -37,16 +37,47 @@ use openstack_keystone_core::auth::{ExecutionContext, ValidatedSecurityContext};
 
 /// Whether the boolean query flag is set: present with the empty value or any
 /// value other than `false` or `0`.
-fn flag(value: &Option<String>) -> bool {
+pub(crate) fn flag(value: &Option<String>) -> bool {
     value
         .as_deref()
         .is_some_and(|x| !matches!(x.to_ascii_lowercase().as_str(), "false" | "0"))
 }
 
+/// Load the target project and make sure the caller is allowed to see it.
+///
+/// The `show` policy is evaluated before the existence check so that the
+/// answer does not leak whether a project exists.
+pub(crate) async fn get_visible_project(
+    state: &ServiceState,
+    ctx: &ExecutionContext<'_>,
+    user_auth: &ValidatedSecurityContext,
+    project_id: &str,
+) -> Result<ProviderProject, KeystoneApiError> {
+    let current = state
+        .provider
+        .get_resource_provider()
+        .get_project(ctx, project_id)
+        .await?;
+
+    state
+        .policy_enforcer
+        .enforce(
+            "identity/resource/project/show",
+            user_auth,
+            Value::Null,
+            Some(json!({"project": current})),
+        )
+        .await?;
+    current.ok_or_else(|| KeystoneApiError::NotFound {
+        resource: "project".to_string(),
+        identifier: project_id.to_string(),
+    })
+}
+
 /// Keep only the projects the caller is allowed to see.
 ///
 /// Every project is checked individually with the `show` policy.
-async fn filter_visible(
+pub(crate) async fn filter_visible(
     state: &ServiceState,
     user_auth: &ValidatedSecurityContext,
     projects: Vec<ProviderProject>,
@@ -71,7 +102,7 @@ async fn filter_visible(
     Ok(res)
 }
 
-fn to_list(projects: Vec<ProviderProject>) -> ProjectHierarchy {
+pub(crate) fn to_list(projects: Vec<ProviderProject>) -> ProjectHierarchy {
     ProjectHierarchy::List(
         projects
             .into_iter()
@@ -83,7 +114,7 @@ fn to_list(projects: Vec<ProviderProject>) -> ProjectHierarchy {
 }
 
 /// Nested `{id: {id: null}}` object for the chain of parents (closest first).
-fn parents_to_ids(projects: &[ProviderProject]) -> ProjectHierarchy {
+pub(crate) fn parents_to_ids(projects: &[ProviderProject]) -> ProjectHierarchy {
     let mut nested = Value::Null;
     for project in projects.iter().rev() {
         nested = json!({ project.id.as_str(): nested });
@@ -95,7 +126,7 @@ fn parents_to_ids(projects: &[ProviderProject]) -> ProjectHierarchy {
 ///
 /// Projects not visible to the caller are skipped and their visible
 /// descendants are attached to the closest visible ancestor.
-fn subtree_to_ids(
+pub(crate) fn subtree_to_ids(
     root: &str,
     all: &[ProviderProject],
     visible: &[ProviderProject],
@@ -174,27 +205,7 @@ pub(super) async fn show(
         ));
     }
     let ctx = ExecutionContext::from_auth(&state, &user_auth);
-    let current = state
-        .provider
-        .get_resource_provider()
-        .get_project(&ctx, &project_id)
-        .await?;
-
-    state
-        .policy_enforcer
-        .enforce(
-            "identity/resource/project/show",
-            &user_auth,
-            serde_json::Value::Null,
-            Some(json!({"project": current})),
-        )
-        .await?;
-    let Some(current) = current else {
-        return Err(KeystoneApiError::NotFound {
-            resource: "project".to_string(),
-            identifier: project_id.clone(),
-        });
-    };
+    let current = get_visible_project(&state, &ctx, &user_auth, &project_id).await?;
 
     let mut parents = None;
     if flag(&query.parents_as_list) || flag(&query.parents_as_ids) {
