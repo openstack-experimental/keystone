@@ -183,7 +183,8 @@ mod tests {
             vec![ApiAssignment {
                 role: Role {
                     id: "role".into(),
-                    name: Some("rn".into())
+                    name: Some("rn".into()),
+                    links: None,
                 },
                 user: Some(User { id: "actor".into() }),
                 scope: Scope::Project(Project {

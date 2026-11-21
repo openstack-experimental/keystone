@@ -13,3 +13,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub use openstack_keystone_api_types::v3::trust::*;
+
+impl crate::api::common::ResourceIdentifier for Trust {
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
+}
+
+crate::api::common::impl_self_linked!(Trust, "OS-TRUST/trusts");

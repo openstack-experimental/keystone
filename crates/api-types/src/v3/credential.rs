@@ -33,6 +33,10 @@ pub struct Credential {
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub id: String,
 
+    /// Links of the resource.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<crate::ResourceLinks>,
+
     /// The decrypted secret blob, as a JSON-encoded string.
     pub blob: String,
 

@@ -14,7 +14,7 @@
 //! # Create policy API
 
 use axum::{
-    extract::{Json, State},
+    extract::{Json, OriginalUri, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -22,6 +22,7 @@ use validator::Validate;
 
 use super::types::{Policy, PolicyCreateRequest, PolicyResponse};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -52,6 +53,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 )]
 pub(super) async fn create(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
     Json(payload): Json<PolicyCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -79,7 +81,7 @@ pub(super) async fn create(
     Ok((
         StatusCode::CREATED,
         Json(PolicyResponse {
-            policy: Policy::from(created),
+            policy: with_self_link(Policy::from(created), &original_url),
         }),
     )
         .into_response())

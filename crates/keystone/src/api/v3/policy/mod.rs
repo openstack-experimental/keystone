@@ -294,6 +294,9 @@ mod tests {
     fn test_policy_input_never_leaks_blob_or_extra() {
         let policy = Policy {
             id: "pid".into(),
+            links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                "/v3/policies/pid".into(),
+            )),
             r#type: "application/json".into(),
             blob: serde_json::json!("{\"secret\": \"s3cr3t\"}"),
             extra: HashMap::from([

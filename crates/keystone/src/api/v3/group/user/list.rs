@@ -26,7 +26,7 @@ use openstack_keystone_core::policy::PolicyError;
 use openstack_keystone_core_types::ListPagination;
 
 use crate::api::auth::Auth;
-use crate::api::common::{collect_authorized_page, paginate_forward_filtered};
+use crate::api::common::{collect_authorized_page, paginate_forward_filtered, with_self_link};
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::user::types::{User, UserList, UserListParameters};
 use crate::keystone::ServiceState;
@@ -143,6 +143,11 @@ pub(super) async fn list(
         &original_url,
     )?;
 
+    let users = users
+        .into_iter()
+        .map(|user| with_self_link(user, &original_url))
+        .collect();
+
     Ok((StatusCode::OK, Json(UserList { users, links })).into_response())
 }
 
@@ -224,6 +229,31 @@ mod tests {
         assert_eq!(
             res.users.into_iter().map(|u| u.id).collect::<Vec<_>>(),
             vec!["u1", "u2"]
+        );
+    }
+
+    /// `links.self` follows the API version the request was received on.
+    #[tokio::test]
+    async fn test_list_links_follow_request_version() {
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_identity(identity(true, vec![user("u1", "did")])),
+            true,
+            None,
+        )
+        .await;
+        let mut api = utoipa_axum::router::OpenApiRouter::new()
+            .nest("/v4/groups", openapi_router())
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let mut req = request(true);
+        *req.uri_mut() = "/v4/groups/g/users".parse().unwrap();
+        let response = api.as_service().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res: UserList = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            res.users[0].links.as_ref().map(|l| l.self_link.as_str()),
+            Some("/v4/users/u1")
         );
     }
 

@@ -22,6 +22,7 @@ impl From<provider_types::Service> for api_types::Service {
         let mut extra = value.extra;
         extra.remove("name");
         Self {
+            links: None,
             id: value.id,
             r#type: value.r#type,
             enabled: value.enabled,

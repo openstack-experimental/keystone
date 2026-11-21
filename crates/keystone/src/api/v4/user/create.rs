@@ -13,12 +13,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //! User: create.
 
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json,
+    extract::{OriginalUri, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
 use serde_json::json;
 use validator::Validate;
 
 use super::types::{User, UserCreateRequest, UserResponse};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -36,6 +42,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 #[tracing::instrument(name = "api::create_user", level = "debug", skip(state))]
 pub(super) async fn create(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
     Json(req): Json<UserCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -60,7 +67,7 @@ pub(super) async fn create(
     Ok((
         StatusCode::CREATED,
         Json(UserResponse {
-            user: User::from(user),
+            user: with_self_link(User::from(user), &original_url),
         }),
     )
         .into_response())

@@ -716,6 +716,7 @@ mod tests {
             federated: None,
             options: None,
             password_expires_at: None,
+            links: None,
         }
     }
 
@@ -727,6 +728,7 @@ mod tests {
             description: None,
             extra: HashMap::new(),
             options: None,
+            links: None,
         }
     }
 
@@ -1158,6 +1160,7 @@ mod tests {
             enabled: true,
             name: Some("keystone".to_string()),
             extra: HashMap::new(),
+            links: None,
         }
     }
 

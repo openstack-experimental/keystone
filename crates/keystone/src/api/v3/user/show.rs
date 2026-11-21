@@ -14,7 +14,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -22,6 +22,7 @@ use serde_json::json;
 
 use super::types::{User, UserResponse};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -40,6 +41,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 #[tracing::instrument(name = "api::user_get", level = "debug", skip(state))]
 pub(super) async fn show(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     Path(user_id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -62,7 +64,7 @@ pub(super) async fn show(
         Some(current) => Ok((
             StatusCode::OK,
             Json(UserResponse {
-                user: User::from(current),
+                user: with_self_link(User::from(current), &original_url),
             }),
         )),
         _ => Err(KeystoneApiError::NotFound {
@@ -158,6 +160,9 @@ mod tests {
         assert_eq!(
             ApiUser::default()
                 .id("bar")
+                .links(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/users/bar".into()
+                ))
                 .domain_id("user_domain_id")
                 .enabled(true)
                 .name("name")

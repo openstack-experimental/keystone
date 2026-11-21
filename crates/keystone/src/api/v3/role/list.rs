@@ -25,7 +25,7 @@ use openstack_keystone_core_types::ListPagination;
 
 use super::types::{Role, RoleList, RoleListParameters};
 use crate::api::auth::Auth;
-use crate::api::common::paginate_forward;
+use crate::api::common::{paginate_forward, with_self_link};
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -77,7 +77,7 @@ pub(super) async fn list(
         )
         .await?
         .into_iter()
-        .map(Into::into)
+        .map(|x| with_self_link(x.into(), &original_url))
         .collect();
 
     let (roles, links) = paginate_forward(
@@ -149,6 +149,9 @@ mod tests {
         assert_eq!(
             vec![ApiRole {
                 id: "1".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/roles/1".into()
+                )),
                 name: "2".into(),
                 extra: std::collections::HashMap::new(),
                 description: None,

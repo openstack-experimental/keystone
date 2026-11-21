@@ -25,7 +25,7 @@ use openstack_keystone_core_types::ListPagination;
 
 use super::types::{Group, GroupList, GroupListParameters};
 use crate::api::auth::Auth;
-use crate::api::common::paginate_forward;
+use crate::api::common::{paginate_forward, with_self_link};
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -78,7 +78,9 @@ pub async fn list(
         )
         .await?
         .into_iter()
-        .map(Into::into)
+        .map(|group: openstack_keystone_core_types::identity::Group| {
+            with_self_link(Group::from(group), &original_url)
+        })
         .collect();
 
     let (groups, links) = paginate_forward(
@@ -158,6 +160,9 @@ mod tests {
             vec![
                 ApiGroupBuilder::default()
                     .id("1")
+                    .links(openstack_keystone_api_types::ResourceLinks::new(
+                        "/v3/groups/1".into()
+                    ))
                     .name("2")
                     .domain_id("did")
                     .build()

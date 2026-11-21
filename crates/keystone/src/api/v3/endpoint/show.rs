@@ -14,7 +14,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -23,6 +23,7 @@ use serde_json::json;
 use openstack_keystone_api_types::v3::endpoint::{Endpoint, EndpointResponse};
 
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -43,6 +44,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 pub(super) async fn show(
     Auth(user_auth): Auth,
     Path(endpoint_id): Path<String>,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     let current = state
@@ -68,7 +70,7 @@ pub(super) async fn show(
         Some(current) => Ok((
             StatusCode::OK,
             Json(EndpointResponse {
-                endpoint: Endpoint::from(current),
+                endpoint: with_self_link(Endpoint::from(current), &original_url),
             }),
         )
             .into_response()),
@@ -147,6 +149,9 @@ mod tests {
         assert_eq!(
             ApiEndpoint {
                 id: "foo".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/endpoints/foo".into()
+                )),
                 interface: "public".into(),
                 region_id: None,
                 region: None,

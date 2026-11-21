@@ -74,6 +74,11 @@ pub struct User {
     #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
 
+    /// Links of the resource.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<crate::ResourceLinks>,
+
     /// User name.
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: String,

@@ -18,7 +18,7 @@ use std::net::SocketAddr;
 use axum::{extract::FromRequestParts, http::Uri, http::request::Parts};
 use url::{Url, form_urlencoded};
 
-use openstack_keystone_api_types::{Link, PaginationQuery};
+use openstack_keystone_api_types::{Link, PaginationQuery, ResourceLinks};
 use openstack_keystone_config::{Config, ListLimitConfig};
 use openstack_keystone_core::net::public_ingress_peer_addr;
 use openstack_keystone_core_types::resource::Domain;
@@ -191,6 +191,36 @@ pub trait ResourceIdentifier {
     /// Get the unique resource identifier.
     fn get_id(&self) -> String;
 }
+
+/// API resource exposing `links.self`.
+///
+/// The conversion from the provider types leaves `links` unset: the version
+/// prefix of the link depends on the API version the request was received on,
+/// which only the handler knows. Handlers fill the link in with
+/// [`with_self_link`]. The collection name is declared once, together with the
+/// [`ResourceIdentifier`] implementation of the type (see
+/// [`impl_self_linked`]).
+pub trait SelfLinked: ResourceIdentifier {
+    /// Collection name as used in the URL (i.e. `groups`).
+    const COLLECTION: &'static str;
+
+    /// Set the resource links.
+    fn set_links(&mut self, links: ResourceLinks);
+}
+
+/// Implement [`SelfLinked`] for the API resource with the `links` field.
+macro_rules! impl_self_linked {
+    ($resource:ty, $collection:literal) => {
+        impl $crate::api::common::SelfLinked for $resource {
+            const COLLECTION: &'static str = $collection;
+
+            fn set_links(&mut self, links: openstack_keystone_api_types::ResourceLinks) {
+                self.links = Some(links);
+            }
+        }
+    };
+}
+pub(crate) use impl_self_linked;
 
 /// Pagination controls, which a generated link replaces rather than inherits.
 const PAGINATION_PARAMS: [&str; 3] = ["limit", "marker", "page_reverse"];
@@ -573,12 +603,81 @@ pub fn paginate_bidirectional<T: ResourceIdentifier>(
     Ok((items, if links.is_empty() { None } else { Some(links) }))
 }
 
+/// Set `links.self` of the `resource` to the API version the request was
+/// received on.
+pub fn with_self_link<T: SelfLinked>(mut resource: T, original_uri: &Uri) -> T {
+    let links = request_resource_links(original_uri, T::COLLECTION, &resource.get_id());
+    resource.set_links(links);
+    resource
+}
+
+/// Build `links.self` of the resource `id` of the `collection` (e.g. `groups`)
+/// pointing to the API version the request was received on.
+///
+/// Handlers are shared between the API versions (i.e. `v4` reuses `v3`
+/// group handlers), therefore the version prefix is taken from the original
+/// request path. Falls back to `v3` when the path does not start with a
+/// version segment.
+///
+/// The service is expected to be served at the root, i.e. a path prefix added
+/// by a proxy mount (`/identity/v4/...`) is not preserved.
+fn request_resource_links(
+    original_uri: &Uri,
+    collection: &str,
+    id: &str,
+) -> openstack_keystone_api_types::ResourceLinks {
+    let version = original_uri
+        .path()
+        .split('/')
+        .find(|segment| !segment.is_empty())
+        .filter(|segment| {
+            segment
+                .strip_prefix('v')
+                .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+        })
+        .unwrap_or("v3");
+    openstack_keystone_api_types::ResourceLinks::new(format!("/{version}/{collection}/{id}"))
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
     use rstest::rstest;
+
+    #[rstest]
+    #[case("/v3/groups", "v3")]
+    #[case("/v4/groups/abc", "v4")]
+    #[case("/v4/users/u/groups", "v4")]
+    #[case("/", "v3")]
+    #[case("/1", "v3")]
+    #[case("/v/groups", "v3")]
+    fn test_request_resource_links(#[case] path: &str, #[case] version: &str) {
+        let uri: Uri = path.parse().unwrap();
+        assert_eq!(
+            format!("/{version}/groups/gid"),
+            super::request_resource_links(&uri, "groups", "gid").self_link
+        );
+    }
+
+    #[test]
+    fn test_with_self_link_collection_name() {
+        let uri: Uri = "/v3/OS-TRUST/trusts".parse().unwrap();
+        let trust = with_self_link(
+            crate::api::v3::os_trust::trust::types::Trust::from(
+                openstack_keystone_core_types::trust::Trust {
+                    id: "tid".into(),
+                    ..Default::default()
+                },
+            ),
+            &uri,
+        );
+        assert_eq!(
+            Some("/v3/OS-TRUST/trusts/tid"),
+            trust.links.as_ref().map(|l| l.self_link.as_str())
+        );
+    }
 
     use openstack_keystone_config::Config;
     use openstack_keystone_core_types::resource::Domain;

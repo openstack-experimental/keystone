@@ -25,7 +25,7 @@ use openstack_keystone_core_types::ListPagination;
 
 use super::types::{Limit, LimitList, LimitListParameters};
 use crate::api::auth::Auth;
-use crate::api::common::{collect_authorized_page, paginate_forward_filtered};
+use crate::api::common::{collect_authorized_page, paginate_forward_filtered, with_self_link};
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -80,7 +80,7 @@ pub(super) async fn list(
     let auth = &user_auth;
     let state_ref = &state;
 
-    let page = collect_authorized_page(
+    let mut page = collect_authorized_page(
         limit,
         pagination.marker.clone(),
         |marker| {
@@ -117,6 +117,11 @@ pub(super) async fn list(
         },
     )
     .await?;
+    page.items = page
+        .items
+        .into_iter()
+        .map(|x| with_self_link(x, &original_url))
+        .collect();
 
     let (limits, links) = paginate_forward_filtered(
         &config,
