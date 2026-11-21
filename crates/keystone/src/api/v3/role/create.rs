@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Create role API
 use axum::{
-    extract::{Json, State},
+    extract::{Json, OriginalUri, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -22,6 +22,7 @@ use validator::Validate;
 
 use super::types::{RoleCreateRequest, RoleResponse};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -40,6 +41,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 #[tracing::instrument(name = "api::v3::role_create", level = "debug", skip(state))]
 pub(super) async fn create(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
     Json(payload): Json<RoleCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -69,7 +71,7 @@ pub(super) async fn create(
     Ok((
         StatusCode::CREATED,
         Json(RoleResponse {
-            role: created_role.into(),
+            role: with_self_link(created_role.into(), &original_url),
         }),
     )
         .into_response())
@@ -152,6 +154,9 @@ mod tests {
         assert_eq!(
             ApiRole {
                 id: "new_role_id".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/roles/new_role_id".into()
+                )),
                 name: "new_role".into(),
                 domain_id: Some("domain1".into()),
                 description: Some("A new role".into()),

@@ -20,6 +20,8 @@ impl crate::api::common::ResourceIdentifier for Credential {
     }
 }
 
+crate::api::common::impl_self_linked!(Credential, "credentials");
+
 /// Marker for the *domain* credential so `collect_authorized_page` can advance
 /// its marker over raw backend rows.
 ///

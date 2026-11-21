@@ -27,6 +27,10 @@ pub struct Endpoint {
     /// Endpoint ID.
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub id: String,
+
+    /// Links of the resource.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<crate::ResourceLinks>,
     /// The interface type, which describes the visibility of the endpoint
     /// (`public`, `internal`, or `admin`).
     #[cfg_attr(feature = "validate", validate(length(max = 8)))]

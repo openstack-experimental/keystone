@@ -15,7 +15,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -23,6 +23,7 @@ use validator::Validate;
 
 use super::types::{Policy, PolicyResponse, PolicyUpdateRequest};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -60,6 +61,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 pub(super) async fn update(
     Auth(user_auth): Auth,
     Path(policy_id): Path<String>,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
     Json(req): Json<PolicyUpdateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -112,7 +114,7 @@ pub(super) async fn update(
             Ok((
                 StatusCode::OK,
                 Json(PolicyResponse {
-                    policy: Policy::from(updated),
+                    policy: with_self_link(Policy::from(updated), &original_url),
                 }),
             )
                 .into_response())

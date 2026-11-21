@@ -19,3 +19,5 @@ impl crate::api::common::ResourceIdentifier for RegisteredLimit {
         self.id.clone()
     }
 }
+
+crate::api::common::impl_self_linked!(RegisteredLimit, "registered_limits");

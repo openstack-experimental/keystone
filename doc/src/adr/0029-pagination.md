@@ -64,6 +64,12 @@ ignores fields it doesn't declare. This is the mechanism used throughout.
   API-facing response type (the type actually returned to the handler after
   provider conversion). See "RoleAssignment" below for the one domain that
   deviates from this.
+- **`SelfLinked`** trait (same module): a supertrait of `ResourceIdentifier`
+  that declares the URL collection name once per API type
+  (`impl_self_linked!(Group, "groups")`). Handlers fill `links.self` with
+  `with_self_link`, which takes the API version prefix from the request path, so
+  handlers shared between `v3` and `v4` emit links of the version the client
+  called.
 
 ### Over-fetch-and-trim helpers (`crates/keystone/src/api/common.rs`)
 

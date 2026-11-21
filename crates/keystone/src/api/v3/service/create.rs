@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Create service API
 use axum::{
-    extract::{Json, State},
+    extract::{Json, OriginalUri, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -22,6 +22,7 @@ use validator::Validate;
 
 use super::types::{ServiceCreateRequest, ServiceResponse};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -40,6 +41,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 #[tracing::instrument(name = "api::v3::service_create", level = "debug", skip(state))]
 pub(super) async fn create(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
     Json(payload): Json<ServiceCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -69,7 +71,7 @@ pub(super) async fn create(
     Ok((
         StatusCode::CREATED,
         Json(ServiceResponse {
-            service: created_service.into(),
+            service: with_self_link(created_service.into(), &original_url),
         }),
     )
         .into_response())
@@ -160,6 +162,9 @@ mod tests {
         assert_eq!(
             ApiService {
                 id: "new_service_id".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/services/new_service_id".into()
+                )),
                 r#type: Some("identity".into()),
                 enabled: true,
                 name: Some("new_service".into()),

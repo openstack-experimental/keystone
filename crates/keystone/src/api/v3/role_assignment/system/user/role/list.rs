@@ -15,7 +15,7 @@
 //! System user role: list.
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -27,6 +27,7 @@ use openstack_keystone_api_types::v3::role_assignment::{Role, RoleAssignmentRole
 use openstack_keystone_core_types::assignment::RoleAssignmentListParameters;
 
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::role_assignment::system::policy_target;
 use crate::keystone::ServiceState;
@@ -57,6 +58,7 @@ pub(super) async fn list(
     Auth(user_auth): Auth,
     Path(user_id): Path<String>,
     State(state): State<ServiceState>,
+    OriginalUri(original_url): OriginalUri,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     let query_params = RoleAssignmentListParameters {
         user_id: Some(user_id.clone()),
@@ -106,6 +108,7 @@ pub(super) async fn list(
         .map(|a| a.try_into())
         .collect::<Result<std::collections::HashSet<_>, _>>()?
         .into_iter()
+        .map(|role| with_self_link(role, &original_url))
         .collect();
 
     Ok((StatusCode::OK, Json(RoleAssignmentRoleList { roles })).into_response())

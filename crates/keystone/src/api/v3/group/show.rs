@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -21,6 +21,7 @@ use serde_json::json;
 
 use super::types::{Group, GroupResponse};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -39,6 +40,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 #[tracing::instrument(name = "api::group_get", level = "debug", skip(state))]
 pub async fn show(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     Path(group_id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -61,7 +63,7 @@ pub async fn show(
         Some(current) => Ok((
             StatusCode::OK,
             Json(GroupResponse {
-                group: Group::from(current),
+                group: with_self_link(Group::from(current), &original_url),
             }),
         )
             .into_response()),
@@ -156,6 +158,9 @@ mod tests {
         assert_eq!(
             ApiGroupBuilder::default()
                 .id("bar")
+                .links(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/groups/bar".into()
+                ))
                 .name("name")
                 .domain_id("did")
                 .build()

@@ -19,6 +19,7 @@ use crate::v3::endpoint as api_types;
 impl From<provider_types::Endpoint> for api_types::Endpoint {
     fn from(value: provider_types::Endpoint) -> Self {
         Self {
+            links: None,
             id: value.id,
             interface: value.interface,
             region: value.region_id.clone(),

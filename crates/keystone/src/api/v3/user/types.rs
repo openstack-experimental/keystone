@@ -19,3 +19,5 @@ impl crate::api::common::ResourceIdentifier for User {
         self.id.clone()
     }
 }
+
+crate::api::common::impl_self_linked!(User, "users");

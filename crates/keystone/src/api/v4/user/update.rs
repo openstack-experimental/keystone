@@ -15,7 +15,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -24,6 +24,7 @@ use validator::Validate;
 
 use super::types::{User, UserResponse, UserUpdateRequest};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -43,6 +44,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 #[tracing::instrument(name = "api::update_user", level = "debug", skip(state))]
 pub(super) async fn update(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     Path(user_id): Path<String>,
     State(state): State<ServiceState>,
     Json(req): Json<UserUpdateRequest>,
@@ -81,7 +83,7 @@ pub(super) async fn update(
             Ok((
                 StatusCode::OK,
                 Json(UserResponse {
-                    user: User::from(user),
+                    user: with_self_link(User::from(user), &original_url),
                 }),
             ))
         }

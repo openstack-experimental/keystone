@@ -43,6 +43,7 @@ impl From<api_types::TrustRoleRef> for ProviderRoleRef {
 impl From<provider_types::Trust> for api_types::Trust {
     fn from(value: provider_types::Trust) -> Self {
         Self {
+            links: None,
             id: value.id,
             trustor_user_id: value.trustor_user_id,
             trustee_user_id: value.trustee_user_id,

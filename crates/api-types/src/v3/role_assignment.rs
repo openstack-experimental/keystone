@@ -65,6 +65,10 @@ pub struct Role {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub name: Option<String>,
+
+    /// Links of the role. Only set in the role lists of a grant target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<crate::ResourceLinks>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

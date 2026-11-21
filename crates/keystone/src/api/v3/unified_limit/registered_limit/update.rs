@@ -14,7 +14,7 @@
 //! # Update registered limit API
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -23,6 +23,7 @@ use validator::Validate;
 
 use super::types::{RegisteredLimit, RegisteredLimitResponse, RegisteredLimitUpdateRequest};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -53,6 +54,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 pub(super) async fn update(
     Auth(user_auth): Auth,
     Path(registered_limit_id): Path<String>,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
     Json(req): Json<RegisteredLimitUpdateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -92,7 +94,7 @@ pub(super) async fn update(
     Ok((
         StatusCode::OK,
         Json(RegisteredLimitResponse {
-            registered_limit: updated.into(),
+            registered_limit: with_self_link(updated.into(), &original_url),
         }),
     )
         .into_response())

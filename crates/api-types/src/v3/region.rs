@@ -27,6 +27,10 @@ pub struct Region {
     /// Region ID.
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub id: String,
+
+    /// Links of the resource.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<crate::ResourceLinks>,
     /// The region description.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]

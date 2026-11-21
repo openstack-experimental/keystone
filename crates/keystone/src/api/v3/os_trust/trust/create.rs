@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Create trust API
 use axum::{
-    extract::{Json, State},
+    extract::{Json, OriginalUri, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -22,6 +22,7 @@ use validator::Validate;
 
 use super::types::{TrustCreateRequest, TrustResponse};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -48,6 +49,7 @@ use openstack_keystone_core_types::role::RoleListParametersBuilder;
 #[tracing::instrument(name = "api::v3::trust_create", level = "debug", skip(state))]
 pub(super) async fn create(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
     Json(mut payload): Json<TrustCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -102,7 +104,7 @@ pub(super) async fn create(
     Ok((
         StatusCode::CREATED,
         Json(TrustResponse {
-            trust: created.into(),
+            trust: with_self_link(created.into(), &original_url),
         }),
     )
         .into_response())
@@ -249,6 +251,9 @@ mod tests {
         assert_eq!(
             ApiTrust {
                 id: "new_trust_id".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/OS-TRUST/trusts/new_trust_id".into()
+                )),
                 trustor_user_id: "trustor".into(),
                 trustee_user_id: "trustee".into(),
                 project_id: None,

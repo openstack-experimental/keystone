@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Create endpoint API
 use axum::{
-    extract::{Json, State},
+    extract::{Json, OriginalUri, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -22,6 +22,7 @@ use validator::Validate;
 
 use super::types::{EndpointCreateRequest, EndpointResponse};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -41,6 +42,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 #[tracing::instrument(name = "api::v3::endpoint_create", level = "debug", skip(state))]
 pub(super) async fn create(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
     Json(mut payload): Json<EndpointCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -93,7 +95,7 @@ pub(super) async fn create(
     Ok((
         StatusCode::CREATED,
         Json(EndpointResponse {
-            endpoint: created_endpoint.into(),
+            endpoint: with_self_link(created_endpoint.into(), &original_url),
         }),
     )
         .into_response())
@@ -195,6 +197,9 @@ mod tests {
         assert_eq!(
             ApiEndpoint {
                 id: "new_endpoint_id".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/endpoints/new_endpoint_id".into()
+                )),
                 interface: "public".into(),
                 region_id: None,
                 region: None,

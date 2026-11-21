@@ -19,3 +19,5 @@ impl crate::api::common::ResourceIdentifier for Endpoint {
         self.id.clone()
     }
 }
+
+crate::api::common::impl_self_linked!(Endpoint, "endpoints");

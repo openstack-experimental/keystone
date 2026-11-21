@@ -14,6 +14,14 @@
 
 pub use openstack_keystone_api_types::v3::role_assignment::*;
 
+impl crate::api::common::ResourceIdentifier for Role {
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
+}
+
+crate::api::common::impl_self_linked!(Role, "roles");
+
 impl crate::api::common::ResourceIdentifier
     for openstack_keystone_core_types::assignment::Assignment
 {

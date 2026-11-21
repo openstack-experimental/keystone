@@ -25,6 +25,7 @@ impl TryFrom<provider_types::Assignment> for api_types::Assignment {
         builder.role(api_types::Role {
             id: value.role_id,
             name: value.role_name,
+            links: None,
         });
         match value.r#type {
             provider_types::AssignmentType::GroupDomain => {
@@ -125,6 +126,7 @@ impl TryFrom<provider_types::Assignment> for api_types::Role {
         Ok(api_types::Role {
             id: value.role_id,
             name: value.role_name,
+            links: None,
         })
     }
 }
@@ -140,7 +142,8 @@ mod tests {
             Assignment {
                 role: Role {
                     id: "role".into(),
-                    name: Some("role_name".into())
+                    name: Some("role_name".into()),
+                    links: None,
                 },
                 user: Some(User { id: "actor".into() }),
                 scope: Scope::Project(Project {
@@ -163,7 +166,8 @@ mod tests {
             Assignment {
                 role: Role {
                     id: "role".into(),
-                    name: None
+                    name: None,
+                    links: None,
                 },
                 user: Some(User { id: "actor".into() }),
                 scope: Scope::Domain(Domain {
@@ -186,7 +190,8 @@ mod tests {
             Assignment {
                 role: Role {
                     id: "role".into(),
-                    name: None
+                    name: None,
+                    links: None,
                 },
                 group: Some(Group { id: "actor".into() }),
                 scope: Scope::Project(Project {
@@ -209,7 +214,8 @@ mod tests {
             Assignment {
                 role: Role {
                     id: "role".into(),
-                    name: None
+                    name: None,
+                    links: None,
                 },
                 group: Some(Group { id: "actor".into() }),
                 scope: Scope::Domain(Domain {

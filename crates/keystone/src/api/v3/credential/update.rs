@@ -14,7 +14,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -22,6 +22,7 @@ use validator::Validate;
 
 use super::types::{Credential, CredentialResponse, CredentialUpdateRequest};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -46,6 +47,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 pub(super) async fn update(
     Auth(user_auth): Auth,
     Path(credential_id): Path<String>,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
     Json(req): Json<CredentialUpdateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -86,7 +88,7 @@ pub(super) async fn update(
             Ok((
                 StatusCode::OK,
                 Json(CredentialResponse {
-                    credential: Credential::from(updated),
+                    credential: with_self_link(Credential::from(updated), &original_url),
                 }),
             )
                 .into_response())

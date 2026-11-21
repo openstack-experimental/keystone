@@ -26,6 +26,8 @@ impl crate::api::common::ResourceIdentifier for Role {
     }
 }
 
+crate::api::common::impl_self_linked!(Role, "roles");
+
 //use crate::role::types;
 
 //impl From<types::Role> for Role {

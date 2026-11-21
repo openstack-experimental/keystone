@@ -14,7 +14,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -23,6 +23,7 @@ use validator::Validate;
 
 use super::types::{Region, RegionResponse, RegionUpdateRequest};
 use crate::api::auth::Auth;
+use crate::api::common::with_self_link;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -43,6 +44,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 pub(super) async fn update(
     Auth(user_auth): Auth,
     Path(region_id): Path<String>,
+    OriginalUri(original_url): OriginalUri,
     State(state): State<ServiceState>,
     Json(req): Json<RegionUpdateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -83,7 +85,7 @@ pub(super) async fn update(
             Ok((
                 StatusCode::OK,
                 Json(RegionResponse {
-                    region: Region::from(region),
+                    region: with_self_link(Region::from(region), &original_url),
                 }),
             )
                 .into_response())
@@ -171,6 +173,9 @@ mod tests {
         assert_eq!(
             ApiRegion {
                 id: "foo".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/regions/foo".into()
+                )),
                 description: Some("updated".into()),
                 parent_region_id: None,
                 extra: std::collections::HashMap::new(),
