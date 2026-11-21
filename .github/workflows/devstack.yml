@@ -67,10 +67,10 @@ jobs:
           sudo apt-get install -y protobuf-compiler libtss2-dev pkg-config
 
       - name: Build Keystone
-        run: cargo build --release
+        run: cargo build --profile skaffold
 
       - name: Move artifacts to the root
-        run: mv target/release/keystone target/release/keystone-manage ./
+        run: mv target/skaffold/keystone target/skaffold/keystone-manage ./
 
       - name: Upload built binaries
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
